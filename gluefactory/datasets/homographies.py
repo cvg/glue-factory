@@ -89,7 +89,7 @@ class HomographyDataset(BaseDataset):
         if not data_dir.exists():
             if conf.data_dir == "revisitop1m":
                 logger.info("Downloading the revisitop1m dataset.")
-                self.download_revisitop1m(data_dir)
+                self.download_revisitop1m()
             else:
                 raise FileNotFoundError(data_dir)
 
