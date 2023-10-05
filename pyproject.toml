@@ -1,0 +1,51 @@
+[project]
+name = "gluefactory"
+description = "Training and evaluation of local feature extraction and matching"
+version = "0.0"
+authors = [
+    {name = "Philipp Lindenberger"},
+    {name = "Paul-Edouard Sarlin"},
+    {name = "Rémi Pautrat"},
+    {name = "Iago Suárez"},
+]
+readme = "README.md"
+requires-python = ">=3.6"
+license = {file = "LICENSE"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "torch>=1.7",
+    "torchvision>=0.8",
+    "numpy",
+    "opencv-python",
+    "tqdm",
+    "matplotlib",
+    "scipy",
+    "h5py",
+    "omegaconf",
+    "tensorboard",
+    "albumentations",
+    "kornia",
+    "seaborn",
+    "joblib",
+]
+urls = {Repository = "https://github.com/cvg/glue-factory"}
+
+[project.optional-dependencies]
+extra = [
+    "jupyter",
+    "pycolmap",
+    "poselib @ git+https://github.com/PoseLib/PoseLib.git",
+    "pytlsd @ git+https://github.com/iago-suarez/pytlsd.git",
+    "deeplsd @ git+https://github.com/cvg/DeepLSD.git",
+    "homography_est @ git+https://github.com/rpautrat/homography_est.git",
+]
+
+[tool.setuptools]
+packages = ["gluefactory", "gluefactory_nonfree"]
+
+[tool.setuptools.package-data]
+gluefactory = ["datasets/megadepth_scene_lists/*.txt"]

@@ -1,0 +1,69 @@
+data:
+    name: gluefactory.datasets.megadepth
+    views: 2
+    preprocessing:
+        resize: 640
+        square_pad: True
+    batch_size: 60
+    num_workers: 15
+model:
+    name: gluefactory.models.two_view_pipeline
+    extractor:
+        name: gluefactory.models.lines.wireframe
+        trainable: False
+        point_extractor:
+            name: gluefactory.models.extractors.superpoint_open
+            # name: disk
+            # chunk: 10
+            max_num_keypoints: 1000
+            force_num_keypoints: true
+            trainable: False
+        line_extractor:
+            name: gluefactory.models.lines.lsd
+            max_num_lines: 250
+            force_num_lines: True
+            min_length: 15
+            trainable: False
+        wireframe_params:
+            merge_points: True
+            merge_line_endpoints: True
+            nms_radius: 4
+    detector:
+        name: null
+    descriptor:
+        name: null
+    ground_truth:
+        name: gluefactory.models.matchers.depth_matcher
+        trainable: False
+        use_points: True
+        use_lines: True
+        th_positive: 3
+        th_negative: 5
+    matcher:
+        name: gluefactory.models.matchers.gluestick
+        input_dim: 256  # 128 for DISK
+        descriptor_dim: 256  # 128 for DISK
+        inter_supervision: null
+        GNN_layers: [
+            self, cross, self, cross, self, cross,
+            self, cross, self, cross, self, cross,
+            self, cross, self, cross, self, cross,
+        ]
+        checkpointed: true
+train:
+    seed: 0
+    epochs: 200
+    log_every_iter: 10
+    eval_every_iter: 100
+    save_every_iter: 500
+    lr: 1e-4
+    lr_schedule:
+        type: exp  # exp or multi_step
+        start: 200e3
+        exp_div_10: 200e3
+        gamma: 0.5
+        step: 50e3
+        n_steps: 4
+    submodules: []
+    # clip_grad: 10  # Use only with mixed precision
+    load_experiment: gluestick_H

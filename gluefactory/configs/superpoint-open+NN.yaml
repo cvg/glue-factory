@@ -1,0 +1,25 @@
+model:
+    name: two_view_pipeline
+    extractor:
+        name: extractors.superpoint_open
+        max_num_keypoints: 2048
+        detection_threshold: 0.0
+        nms_radius: 3
+    matcher:
+        name: matchers.nearest_neighbor_matcher
+benchmarks:
+    megadepth1500:
+        data:
+        preprocessing:
+            side: long
+            resize: 1600
+        eval:
+            estimator: opencv
+            ransac_th: 1.0
+    hpatches:
+        eval:
+            estimator: opencv
+            ransac_th: 0.5
+        model:
+            extractor:
+                max_num_keypoints: 1024  # overwrite config above

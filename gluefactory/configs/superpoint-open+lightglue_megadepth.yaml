@@ -1,0 +1,71 @@
+data:
+    name: megadepth
+    preprocessing:
+        resize: 1024
+        side: long
+        square_pad: True
+    train_split: train_scenes_clean.txt
+    train_num_per_scene: 300
+    val_split: valid_scenes_clean.txt
+    val_pairs: valid_pairs.txt
+    min_overlap: 0.1
+    max_overlap: 0.7
+    num_overlap_bins: 3
+    read_depth: true
+    read_image: true
+    batch_size: 32
+    num_workers: 14
+    load_features:
+        do: false  # enable this if you have cached predictions
+        path: exports/megadepth-undist-depth-r1024_SP-open-k2048-nms3/{scene}.h5
+        padding_length: 2048
+        padding_fn: pad_local_features
+model:
+    name: two_view_pipeline
+    extractor:
+        name: extractors.superpoint_open
+        max_num_keypoints: 2048
+        force_num_keypoints: True
+        detection_threshold: -1
+        nms_radius: 3
+        trainable: False
+    matcher:
+        name: matchers.lightglue
+        filter_threshold: 0.1
+        flash: false
+        checkpointed: true
+    ground_truth:
+        name: matchers.depth_matcher
+        th_positive: 3
+        th_negative: 5
+        th_epi: 5
+    allow_no_extract: True
+train:
+    seed: 0
+    epochs: 50
+    log_every_iter: 100
+    eval_every_iter: 1000
+    lr: 1e-4
+    lr_schedule:
+        start: 30
+        type: exp
+        on_epoch: true
+        exp_div_10: 10
+    dataset_callback_fn: sample_new_items
+    plot: [5, 'gluefactory.visualization.visualize_batch.make_match_figures']
+benchmarks:
+    megadepth1500:
+        data:
+            preprocessing:
+                side: long
+                resize: 1600
+        eval:
+            estimator: opencv
+            ransac_th: 0.5
+    hpatches:
+        eval:
+            estimator: opencv
+            ransac_th: 0.5
+        model:
+            extractor:
+                max_num_keypoints: 1024
