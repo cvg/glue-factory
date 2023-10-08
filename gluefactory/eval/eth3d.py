@@ -1,4 +1,3 @@
-import torch
 from pathlib import Path
 from omegaconf import OmegaConf
 import matplotlib.pyplot as plt
@@ -24,8 +23,6 @@ from ..datasets import get_dataset
 
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (4096, rlimit[1]))
-
-torch.set_grad_enabled(False)
 
 
 def eval_dataset(loader, pred_file, suffix=""):

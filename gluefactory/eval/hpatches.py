@@ -1,4 +1,3 @@
-import torch
 from pathlib import Path
 from omegaconf import OmegaConf
 from pprint import pprint
@@ -32,8 +31,6 @@ from .eval_pipeline import EvalPipeline
 
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (4096, rlimit[1]))
-
-torch.set_grad_enabled(False)
 
 
 class HPatchesPipeline(EvalPipeline):

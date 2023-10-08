@@ -26,8 +26,6 @@ from .utils import eval_relative_pose_robust, eval_poses, eval_matches_epipolar
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (4096, rlimit[1]))
 
-torch.set_grad_enabled(False)
-
 
 class MegaDepth1500Pipeline(EvalPipeline):
     default_conf = {
