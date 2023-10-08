@@ -43,7 +43,7 @@ extra = [
     "deeplsd @ git+https://github.com/cvg/DeepLSD.git",
     "homography_est @ git+https://github.com/rpautrat/homography_est.git",
 ]
-dev = ["black", "flake8", "isort", "jupyter"]
+dev = ["black", "flake8", "isort"]
 
 [tool.setuptools.packages.find]
 include = ["gluefactory*"]
