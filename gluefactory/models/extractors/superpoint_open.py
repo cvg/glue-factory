@@ -5,10 +5,11 @@
    The implementation of this model and its trained weights are made
    available under the MIT license.
 """
-import torch.nn as nn
-import torch
 from collections import OrderedDict
 from types import SimpleNamespace
+
+import torch
+import torch.nn as nn
 
 from ..base_model import BaseModel
 from ..utils.misc import pad_and_stack

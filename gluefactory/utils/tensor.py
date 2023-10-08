@@ -3,8 +3,9 @@ Author: Paul-Edouard Sarlin (skydes)
 """
 
 import collections.abc as collections
-import torch
+
 import numpy as np
+import torch
 
 string_classes = (str, bytes)
 

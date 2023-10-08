@@ -1,14 +1,14 @@
+import argparse
 import logging
 from pathlib import Path
-import argparse
+
 import torch
 from omegaconf import OmegaConf
 
+from ..datasets import get_dataset
+from ..models import get_model
 from ..settings import DATA_PATH
 from ..utils.export_predictions import export_predictions
-from ..models import get_model
-from ..datasets import get_dataset
-
 
 resize = 1600
 

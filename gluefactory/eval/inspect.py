@@ -1,16 +1,16 @@
 import argparse
-from pathlib import Path
-import matplotlib.pyplot as plt
-import matplotlib
-from pprint import pprint
 from collections import defaultdict
+from pathlib import Path
+from pprint import pprint
+
+import matplotlib
+import matplotlib.pyplot as plt
 
 from ..settings import EVAL_PATH
 from ..visualization.global_frame import GlobalFrame
 from ..visualization.two_view_frame import TwoViewFrame
 from . import get_benchmark
 from .eval_pipeline import load_eval
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

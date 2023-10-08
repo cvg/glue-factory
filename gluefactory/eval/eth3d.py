@@ -1,23 +1,18 @@
-from pathlib import Path
-from omegaconf import OmegaConf
-import matplotlib.pyplot as plt
 from collections import defaultdict
-from tqdm import tqdm
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
+from omegaconf import OmegaConf
+from tqdm import tqdm
 
-from .io import (
-    parse_eval_args,
-    load_model,
-    get_eval_parser,
-)
-
-from .eval_pipeline import EvalPipeline, load_eval
-
-from ..utils.export_predictions import export_predictions
-from .utils import get_tp_fp_pts, aggregate_pr_results
-from ..settings import EVAL_PATH
-from ..models.cache_loader import CacheLoader
 from ..datasets import get_dataset
+from ..models.cache_loader import CacheLoader
+from ..settings import EVAL_PATH
+from ..utils.export_predictions import export_predictions
+from .eval_pipeline import EvalPipeline, load_eval
+from .io import get_eval_parser, load_model, parse_eval_args
+from .utils import aggregate_pr_results, get_tp_fp_pts
 
 
 def eval_dataset(loader, pred_file, suffix=""):

@@ -1,10 +1,8 @@
-from omegaconf import OmegaConf
 import torch.nn.functional as F
+from omegaconf import OmegaConf
 
-from ..base_model import BaseModel
 from .. import get_model
-
-# from ...geometry.depth import sample_fmap
+from ..base_model import BaseModel
 
 to_ctr = OmegaConf.to_container  # convert DictConfig to dict
 

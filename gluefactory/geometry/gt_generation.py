@@ -2,9 +2,9 @@ import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
 
-from .homography import warp_points_torch
+from .depth import project, sample_depth
 from .epipolar import T_to_E, sym_epipolar_distance_all
-from .depth import sample_depth, project
+from .homography import warp_points_torch
 
 IGNORE_FEATURE = -2
 UNMATCHED_FEATURE = -1

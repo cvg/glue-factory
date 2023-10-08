@@ -1,4 +1,5 @@
 import torch
+
 from ..utils.tools import get_class
 from .eval_pipeline import EvalPipeline
 

@@ -1,11 +1,12 @@
+import kornia
 import numpy as np
 import torch
-import kornia
-from ..geometry.epipolar import relative_pose_error, generalized_epi_dist
-from ..geometry.homography import sym_homography_error, homography_corner_error
+
+from ..geometry.epipolar import generalized_epi_dist, relative_pose_error
 from ..geometry.gt_generation import IGNORE_FEATURE
-from ..utils.tools import AUCMetric
+from ..geometry.homography import homography_corner_error, sym_homography_error
 from ..robust_estimators import load_estimator
+from ..utils.tools import AUCMetric
 
 
 def check_keys_recursive(d, pattern):

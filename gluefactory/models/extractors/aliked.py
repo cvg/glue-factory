@@ -1,10 +1,11 @@
+from typing import Callable, Optional
+
 import torch
-from torch import nn
 import torch.nn.functional as F
-from torchvision.models import resnet
-from typing import Optional, Callable
-from torch.nn.modules.utils import _pair
 import torchvision
+from torch import nn
+from torch.nn.modules.utils import _pair
+from torchvision.models import resnet
 
 from gluefactory.models.base_model import BaseModel
 

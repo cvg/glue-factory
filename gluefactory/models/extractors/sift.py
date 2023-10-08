@@ -1,12 +1,11 @@
-import numpy as np
-import torch
-import pycolmap
-from scipy.spatial import KDTree
-from omegaconf import OmegaConf
 import cv2
+import numpy as np
+import pycolmap
+import torch
+from omegaconf import OmegaConf
+from scipy.spatial import KDTree
 
 from ..base_model import BaseModel
-
 from ..utils.misc import pad_to_length
 
 EPS = 1e-6

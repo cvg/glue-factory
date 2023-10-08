@@ -1,5 +1,6 @@
-import torch
 import math
+
+import torch
 
 from ..base_model import BaseModel
 

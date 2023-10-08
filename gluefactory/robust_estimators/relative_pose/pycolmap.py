@@ -1,8 +1,8 @@
 import pycolmap
-from omegaconf import OmegaConf
 import torch
-from ...geometry.wrappers import Pose
+from omegaconf import OmegaConf
 
+from ...geometry.wrappers import Pose
 from ..base_estimator import BaseEstimator
 
 

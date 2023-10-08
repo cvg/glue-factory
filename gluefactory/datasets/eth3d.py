@@ -4,18 +4,18 @@ ETH3D multi-view benchmark, used for line matching evaluation.
 import logging
 import os
 import shutil
-
-import numpy as np
-import cv2
-import torch
-from pathlib import Path
 import zipfile
+from pathlib import Path
 
-from .base_dataset import BaseDataset
-from .utils import scale_intrinsics
+import cv2
+import numpy as np
+import torch
+
 from ..geometry.wrappers import Camera, Pose
 from ..settings import DATA_PATH
 from ..utils.image import ImagePreprocessor, load_image
+from .base_dataset import BaseDataset
+from .utils import scale_intrinsics
 
 logger = logging.getLogger(__name__)
 

@@ -11,25 +11,25 @@ import tarfile
 from pathlib import Path
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import omegaconf
 import torch
-import matplotlib.pyplot as plt
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
-from .augmentations import IdentityAugmentation, augmentations
-from .base_dataset import BaseDataset
-from ..settings import DATA_PATH
-from ..models.cache_loader import CacheLoader, pad_local_features
-from ..utils.image import read_image
 from ..geometry.homography import (
-    sample_homography_corners,
     compute_homography,
+    sample_homography_corners,
     warp_points,
 )
+from ..models.cache_loader import CacheLoader, pad_local_features
+from ..settings import DATA_PATH
+from ..utils.image import read_image
 from ..utils.tools import fork_rng
 from ..visualization.viz2d import plot_image_grid
+from .augmentations import IdentityAugmentation, augmentations
+from .base_dataset import BaseDataset
 
 logger = logging.getLogger(__name__)
 

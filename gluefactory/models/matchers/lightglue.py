@@ -1,15 +1,17 @@
 import warnings
+from pathlib import Path
+from typing import Callable, List, Optional
+
 import numpy as np
 import torch
-from torch import nn
 import torch.nn.functional as F
-from typing import Optional, List, Callable
-from torch.utils.checkpoint import checkpoint
 from omegaconf import OmegaConf
+from torch import nn
+from torch.utils.checkpoint import checkpoint
+
 from ...settings import DATA_PATH
 from ..utils.losses import NLLLoss
 from ..utils.metrics import matcher_metrics
-from pathlib import Path
 
 FLASH_AVAILABLE = hasattr(F, "scaled_dot_product_attention")
 

@@ -4,16 +4,17 @@ A set of utilities to manage and load checkpoints of training experiments.
 Author: Paul-Edouard Sarlin (skydes)
 """
 
-from pathlib import Path
 import logging
+import os
 import re
 import shutil
-from omegaconf import OmegaConf
-import torch
-import os
+from pathlib import Path
 
-from ..settings import TRAINING_PATH
+import torch
+from omegaconf import OmegaConf
+
 from ..models import get_model
+from ..settings import TRAINING_PATH
 
 logger = logging.getLogger(__name__)
 

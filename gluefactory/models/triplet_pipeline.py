@@ -9,9 +9,10 @@ Losses and metrics get accumulated accordingly.
 If no triplet is found, this falls back to two_view_pipeline.py
 """
 
-from .two_view_pipeline import TwoViewPipeline
 import torch
+
 from ..utils.misc import get_twoview, stack_twoviews, unstack_twoviews
+from .two_view_pipeline import TwoViewPipeline
 
 
 def has_triplet(data):

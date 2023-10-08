@@ -3,10 +3,11 @@ Base class for trainable models.
 """
 
 from abc import ABCMeta, abstractmethod
+from copy import copy
+
 import omegaconf
 from omegaconf import OmegaConf
 from torch import nn
-from copy import copy
 
 
 class MetaModel(ABCMeta):

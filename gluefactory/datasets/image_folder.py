@@ -2,13 +2,14 @@
 Simply load images from a folder or nested folders (does not have any split).
 """
 
-from pathlib import Path
-import torch
 import logging
-import omegaconf
+from pathlib import Path
 
+import omegaconf
+import torch
+
+from ..utils.image import ImagePreprocessor, load_image
 from .base_dataset import BaseDataset
-from ..utils.image import load_image, ImagePreprocessor
 
 
 class ImageFolder(BaseDataset, torch.utils.data.Dataset):

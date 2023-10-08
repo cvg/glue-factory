@@ -1,9 +1,9 @@
 import argparse
 import logging
-from pathlib import Path
-from collections.abc import Iterable
-import tarfile
 import shutil
+import tarfile
+from collections.abc import Iterable
+from pathlib import Path
 
 import h5py
 import matplotlib.pyplot as plt
@@ -12,18 +12,14 @@ import PIL.Image
 import torch
 from omegaconf import OmegaConf
 
-from .base_dataset import BaseDataset
-from .utils import (
-    scale_intrinsics,
-    rotate_intrinsics,
-    rotate_pose_inplane,
-)
 from ..geometry.wrappers import Camera, Pose
 from ..models.cache_loader import CacheLoader
-from ..utils.tools import fork_rng
-from ..utils.image import load_image, ImagePreprocessor
 from ..settings import DATA_PATH
-from ..visualization.viz2d import plot_image_grid, plot_heatmaps
+from ..utils.image import ImagePreprocessor, load_image
+from ..utils.tools import fork_rng
+from ..visualization.viz2d import plot_heatmaps, plot_image_grid
+from .base_dataset import BaseDataset
+from .utils import rotate_intrinsics, rotate_pose_inplane, scale_intrinsics
 
 logger = logging.getLogger(__name__)
 scene_lists_path = Path(__file__).parent / "megadepth_scene_lists"

@@ -1,7 +1,8 @@
-from omegaconf import OmegaConf
-import numpy as np
 import json
+
 import h5py
+import numpy as np
+from omegaconf import OmegaConf
 
 
 def load_eval(dir):

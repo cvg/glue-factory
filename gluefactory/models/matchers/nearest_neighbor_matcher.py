@@ -3,8 +3,9 @@ Nearest neighbor matcher for normalized descriptors.
 Optionally apply the mutual check and threshold the distance or ratio.
 """
 
-import torch
 import logging
+
+import torch
 import torch.nn.functional as F
 
 from ..base_model import BaseModel

@@ -1,8 +1,8 @@
 import torch
 from sklearn.cluster import DBSCAN
 
-from ..base_model import BaseModel
 from .. import get_model
+from ..base_model import BaseModel
 
 
 def sample_descriptors_corner_conv(keypoints, descriptors, s: int = 8):
