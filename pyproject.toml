@@ -48,4 +48,4 @@ dev = ["black", "flake8", "jupyter"]
 include = ["gluefactory*"]
 
 [tool.setuptools.package-data]
-gluefactory = ["datasets/megadepth_scene_lists/*.txt"]
+gluefactory = ["datasets/megadepth_scene_lists/*.txt", "configs/*.yaml"]
