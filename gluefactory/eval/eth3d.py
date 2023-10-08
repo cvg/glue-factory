@@ -1,7 +1,6 @@
 from pathlib import Path
 from omegaconf import OmegaConf
 import matplotlib.pyplot as plt
-import resource
 from collections import defaultdict
 from tqdm import tqdm
 import numpy as np
@@ -19,10 +18,6 @@ from .utils import get_tp_fp_pts, aggregate_pr_results
 from ..settings import EVAL_PATH
 from ..models.cache_loader import CacheLoader
 from ..datasets import get_dataset
-
-
-rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
-resource.setrlimit(resource.RLIMIT_NOFILE, (4096, rlimit[1]))
 
 
 def eval_dataset(loader, pred_file, suffix=""):
