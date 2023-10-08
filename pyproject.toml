@@ -44,8 +44,8 @@ extra = [
 ]
 dev = ["black", "flake8", "jupyter"]
 
-[tool.setuptools]
-packages = ["gluefactory", "gluefactory_nonfree"]
+[tool.setuptools.packages.find]
+include = ["gluefactory*"]
 
 [tool.setuptools.package-data]
 gluefactory = ["datasets/megadepth_scene_lists/*.txt"]
