@@ -3,7 +3,6 @@ from pathlib import Path
 from omegaconf import OmegaConf
 from pprint import pprint
 import matplotlib.pyplot as plt
-import resource
 from collections import defaultdict
 from collections.abc import Iterable
 from tqdm import tqdm
@@ -22,11 +21,6 @@ from ..datasets import get_dataset
 from .eval_pipeline import EvalPipeline
 
 from .utils import eval_relative_pose_robust, eval_poses, eval_matches_epipolar
-
-rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
-resource.setrlimit(resource.RLIMIT_NOFILE, (4096, rlimit[1]))
-
-torch.set_grad_enabled(False)
 
 
 class MegaDepth1500Pipeline(EvalPipeline):

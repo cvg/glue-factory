@@ -1,9 +1,7 @@
-import torch
 from pathlib import Path
 from omegaconf import OmegaConf
 from pprint import pprint
 import matplotlib.pyplot as plt
-import resource
 from collections import defaultdict
 from collections.abc import Iterable
 from tqdm import tqdm
@@ -28,12 +26,6 @@ from .utils import (
 from ..utils.tools import AUCMetric
 
 from .eval_pipeline import EvalPipeline
-
-
-rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
-resource.setrlimit(resource.RLIMIT_NOFILE, (4096, rlimit[1]))
-
-torch.set_grad_enabled(False)
 
 
 class HPatchesPipeline(EvalPipeline):

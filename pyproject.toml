@@ -31,6 +31,7 @@ dependencies = [
     "kornia",
     "seaborn",
     "joblib",
+    "lightglue @ git+https://github.com/cvg/LightGlue.git",
 ]
 urls = {Repository = "https://github.com/cvg/glue-factory"}
 
@@ -44,8 +45,8 @@ extra = [
 ]
 dev = ["black", "flake8", "jupyter"]
 
-[tool.setuptools]
-packages = ["gluefactory", "gluefactory_nonfree"]
+[tool.setuptools.packages.find]
+include = ["gluefactory*"]
 
 [tool.setuptools.package-data]
-gluefactory = ["datasets/megadepth_scene_lists/*.txt"]
+gluefactory = ["datasets/megadepth_scene_lists/*.txt", "configs/*.yaml"]
