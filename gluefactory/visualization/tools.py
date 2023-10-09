@@ -1,25 +1,25 @@
+import inspect
+import sys
+import warnings
+
 import matplotlib.pyplot as plt
+import torch
 from matplotlib.backend_tools import ToolToggleBase
 from matplotlib.widgets import RadioButtons, Slider
-import warnings
-import torch
 
+from ..geometry.epipolar import T_to_F, generalized_epi_dist
+from ..geometry.homography import sym_homography_error
 from ..visualization.viz2d import (
+    cm_ranking,
+    cm_RdGn,
+    draw_epipolar_line,
+    get_line,
+    plot_color_line_matches,
     plot_heatmaps,
     plot_keypoints,
     plot_lines,
     plot_matches,
-    plot_color_line_matches,
-    cm_RdGn,
-    cm_ranking,
-    get_line,
-    draw_epipolar_line,
 )
-from ..geometry.homography import sym_homography_error
-from ..geometry.epipolar import generalized_epi_dist, T_to_F
-
-import inspect
-import sys
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")

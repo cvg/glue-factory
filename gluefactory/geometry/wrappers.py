@@ -6,13 +6,14 @@ Based on PyTorch tensors: differentiable, batched, with GPU support.
 import functools
 import inspect
 import math
-from typing import Union, Tuple, List, Dict, NamedTuple, Optional
-import torch
+from typing import Dict, List, NamedTuple, Optional, Tuple, Union
+
 import numpy as np
+import torch
 
 from .utils import (
-    distort_points,
     J_distort_points,
+    distort_points,
     skew_symmetric,
     so3exp_map,
     to_homogeneous,

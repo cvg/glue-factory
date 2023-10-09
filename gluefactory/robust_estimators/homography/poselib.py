@@ -1,6 +1,6 @@
 import poselib
-from omegaconf import OmegaConf
 import torch
+from omegaconf import OmegaConf
 
 from ..base_estimator import BaseEstimator
 

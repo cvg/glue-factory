@@ -1,6 +1,7 @@
 import importlib.util
-from .base_model import BaseModel
+
 from ..utils.tools import get_class
+from .base_model import BaseModel
 
 
 def get_model(name):

@@ -1,9 +1,9 @@
 import cv2
 import numpy as np
 import torch
-from ...geometry.wrappers import Pose
-from ...geometry.utils import from_homogeneous
 
+from ...geometry.utils import from_homogeneous
+from ...geometry.wrappers import Pose
 from ..base_estimator import BaseEstimator
 
 

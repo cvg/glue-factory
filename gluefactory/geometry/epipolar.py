@@ -1,7 +1,8 @@
-import torch
-from .utils import skew_symmetric, to_homogeneous
-from .wrappers import Pose, Camera
 import numpy as np
+import torch
+
+from .utils import skew_symmetric, to_homogeneous
+from .wrappers import Camera, Pose
 
 
 def T_to_E(T: Pose):

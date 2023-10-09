@@ -1,5 +1,6 @@
-from omegaconf import OmegaConf
 from copy import copy
+
+from omegaconf import OmegaConf
 
 
 class BaseEstimator:

@@ -1,10 +1,9 @@
-import numpy as np
 import pprint
+
+import numpy as np
+
 from . import viz2d
-
-from .tools import __plot_dict__
-
-from .tools import RadioHideTool, ToggleTool
+from .tools import RadioHideTool, ToggleTool, __plot_dict__
 
 
 class FormatPrinter(pprint.PrettyPrinter):

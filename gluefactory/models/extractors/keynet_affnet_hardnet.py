@@ -1,5 +1,5 @@
-import torch
 import kornia
+import torch
 
 from ..base_model import BaseModel
 from ..utils.misc import pad_to_length

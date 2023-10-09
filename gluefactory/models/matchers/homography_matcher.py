@@ -1,8 +1,8 @@
-from ..base_model import BaseModel
 from ...geometry.gt_generation import (
-    gt_matches_from_homography,
     gt_line_matches_from_homography,
+    gt_matches_from_homography,
 )
+from ..base_model import BaseModel
 
 
 class HomographyMatcher(BaseModel):

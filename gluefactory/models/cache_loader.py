@@ -1,11 +1,12 @@
-import torch
 import string
-import h5py
 
-from .base_model import BaseModel
-from ..settings import DATA_PATH
+import h5py
+import torch
+
 from ..datasets.base_dataset import collate
+from ..settings import DATA_PATH
 from ..utils.tensor import batch_to_device
+from .base_model import BaseModel
 from .utils.misc import pad_to_length
 
 

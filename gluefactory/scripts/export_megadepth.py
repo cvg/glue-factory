@@ -1,14 +1,15 @@
+import argparse
 import logging
 from pathlib import Path
-import argparse
+
 import torch
 from omegaconf import OmegaConf
 
-from ..settings import DATA_PATH
-from ..utils.export_predictions import export_predictions
-from ..models import get_model
 from ..datasets import get_dataset
 from ..geometry.depth import sample_depth
+from ..models import get_model
+from ..settings import DATA_PATH
+from ..utils.export_predictions import export_predictions
 
 resize = 1024
 n_kpts = 2048

@@ -11,9 +11,9 @@ that corresponds to the keypoint i in image 0. m0[i] = -1 if i is unmatched.
 """
 
 from omegaconf import OmegaConf
-from .base_model import BaseModel
-from . import get_model
 
+from . import get_model
+from .base_model import BaseModel
 
 to_ctr = OmegaConf.to_container  # convert DictConfig to dict
 

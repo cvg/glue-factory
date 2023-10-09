@@ -4,11 +4,12 @@ Use a standalone script with `python3 -m dsfm.scipts.export_predictions dir`
 or call from another script.
 """
 
-import torch
-import numpy as np
 from pathlib import Path
-from tqdm import tqdm
+
 import h5py
+import numpy as np
+import torch
+from tqdm import tqdm
 
 from .tensor import batch_to_device
 

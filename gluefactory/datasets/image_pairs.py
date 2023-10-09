@@ -3,13 +3,14 @@ Simply load images from a folder or nested folders (does not have any split).
 """
 
 from pathlib import Path
-import torch
-import numpy as np
-from .base_dataset import BaseDataset
-from ..utils.image import load_image, ImagePreprocessor
 
-from ..settings import DATA_PATH
+import numpy as np
+import torch
+
 from ..geometry.wrappers import Camera, Pose
+from ..settings import DATA_PATH
+from ..utils.image import ImagePreprocessor, load_image
+from .base_dataset import BaseDataset
 
 
 def names_to_pair(name0, name1, separator="/"):

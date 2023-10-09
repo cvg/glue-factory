@@ -3,12 +3,13 @@ Base class for dataset.
 See mnist.py for an example of dataset.
 """
 
-from abc import ABCMeta, abstractmethod
 import collections
 import logging
-from omegaconf import OmegaConf
+from abc import ABCMeta, abstractmethod
+
 import omegaconf
 import torch
+from omegaconf import OmegaConf
 from torch.utils.data import DataLoader, Sampler, get_worker_info
 from torch.utils.data._utils.collate import (
     default_collate_err_msg_format,

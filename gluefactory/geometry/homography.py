@@ -1,9 +1,10 @@
-from typing import Tuple
 import math
+from typing import Tuple
+
 import numpy as np
 import torch
 
-from .utils import to_homogeneous, from_homogeneous
+from .utils import from_homogeneous, to_homogeneous
 
 
 def flat2mat(H):

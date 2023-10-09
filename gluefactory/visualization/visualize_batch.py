@@ -1,13 +1,7 @@
 import torch
 
 from ..utils.tensor import batch_to_device
-from .viz2d import (
-    plot_image_grid,
-    plot_keypoints,
-    plot_matches,
-    cm_RdGn,
-    plot_heatmaps,
-)
+from .viz2d import cm_RdGn, plot_heatmaps, plot_image_grid, plot_keypoints, plot_matches
 
 
 def make_match_figures(pred_, data_, n_pairs=2):

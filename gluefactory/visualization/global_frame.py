@@ -1,14 +1,16 @@
-import traceback
-import numpy as np
-import matplotlib.pyplot as plt
-from omegaconf import OmegaConf
-from matplotlib.widgets import Button
-from copy import deepcopy
 import functools
+import traceback
+from copy import deepcopy
+
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.widgets import Button
+from omegaconf import OmegaConf
+
+from ..datasets.base_dataset import collate
 
 # from ..eval.export_predictions import load_predictions
 from ..models.cache_loader import CacheLoader
-from ..datasets.base_dataset import collate
 from .tools import RadioHideTool
 
 

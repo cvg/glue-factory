@@ -1,11 +1,11 @@
 from typing import Union
 
 import albumentations as A
+import cv2
 import numpy as np
 import torch
 from albumentations.pytorch.transforms import ToTensorV2
 from omegaconf import OmegaConf
-import cv2
 
 
 class IdentityTransform(A.ImageOnlyTransform):

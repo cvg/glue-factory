@@ -1,13 +1,14 @@
-import pkg_resources
-from pathlib import Path
-from typing import Optional
-from omegaconf import OmegaConf
 import argparse
+from pathlib import Path
 from pprint import pprint
+from typing import Optional
+
+import pkg_resources
+from omegaconf import OmegaConf
 
 from ..models import get_model
-from ..utils.experiments import load_experiment
 from ..settings import TRAINING_PATH
+from ..utils.experiments import load_experiment
 
 
 def parse_config_path(name_or_path: Optional[str], defaults: str) -> Path:

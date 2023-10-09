@@ -5,37 +5,37 @@ Author: Paul-Edouard Sarlin (skydes)
 """
 
 import argparse
-from pathlib import Path
-import signal
-import re
 import copy
-from collections import defaultdict
+import re
 import shutil
-import numpy as np
-
-from omegaconf import OmegaConf
-from tqdm import tqdm
-import torch
-from torch.utils.tensorboard import SummaryWriter
-from torch.cuda.amp import GradScaler, autocast
+import signal
+from collections import defaultdict
+from pathlib import Path
 from pydoc import locate
 
-from .models import get_model
+import numpy as np
+import torch
+from omegaconf import OmegaConf
+from torch.cuda.amp import GradScaler, autocast
+from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
+
+from . import __module_name__, logger
 from .datasets import get_dataset
+from .eval import run_benchmark
+from .models import get_model
+from .settings import EVAL_PATH, TRAINING_PATH
+from .utils.experiments import get_best_checkpoint, get_last_checkpoint, save_experiment
 from .utils.stdout_capturing import capture_outputs
+from .utils.tensor import batch_to_device
 from .utils.tools import (
     AverageMetric,
     MedianMetric,
-    RecallMetric,
     PRMetric,
-    set_seed,
+    RecallMetric,
     fork_rng,
+    set_seed,
 )
-from .utils.tensor import batch_to_device
-from .utils.experiments import get_last_checkpoint, get_best_checkpoint, save_experiment
-from .eval import run_benchmark
-from .settings import TRAINING_PATH, EVAL_PATH
-from . import __module_name__, logger
 
 # @TODO: Fix pbar pollution in logs
 # @TODO: add plotting during evaluation

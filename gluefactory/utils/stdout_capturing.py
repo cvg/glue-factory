@@ -6,11 +6,12 @@ Author: Paul-Edouard Sarlin (skydes)
 """
 
 from __future__ import division, print_function, unicode_literals
+
 import os
-import sys
 import subprocess
-from threading import Timer
+import sys
 from contextlib import contextmanager
+from threading import Timer
 
 
 def apply_backspaces_and_linefeeds(text):

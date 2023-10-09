@@ -4,13 +4,14 @@ Various handy Python and PyTorch utils.
 Author: Paul-Edouard Sarlin (skydes)
 """
 
-import time
-import numpy as np
 import os
-import torch
 import random
-from contextlib import contextmanager
+import time
 from collections.abc import Iterable
+from contextlib import contextmanager
+
+import numpy as np
+import torch
 
 
 class AverageMetric:

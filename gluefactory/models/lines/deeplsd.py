@@ -1,9 +1,9 @@
+import deeplsd.models.deeplsd_inference as deeplsd_inference
 import numpy as np
 import torch
-import deeplsd.models.deeplsd_inference as deeplsd_inference
 
-from ..base_model import BaseModel
 from ...settings import DATA_PATH
+from ..base_model import BaseModel
 
 
 class DeepLSD(BaseModel):

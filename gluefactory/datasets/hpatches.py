@@ -4,16 +4,17 @@ Simply load images from a folder or nested folders (does not have any split).
 import argparse
 import logging
 import tarfile
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-from .base_dataset import BaseDataset
 from ..settings import DATA_PATH
-from ..utils.image import load_image, ImagePreprocessor
+from ..utils.image import ImagePreprocessor, load_image
 from ..utils.tools import fork_rng
 from ..visualization.viz2d import plot_image_grid
+from .base_dataset import BaseDataset
 
 logger = logging.getLogger(__name__)
 

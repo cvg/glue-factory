@@ -1,9 +1,10 @@
-from ..base_model import BaseModel
-from ...geometry.gt_generation import (
-    gt_matches_from_pose_depth,
-    gt_line_matches_from_pose_depth,
-)
 import torch
+
+from ...geometry.gt_generation import (
+    gt_line_matches_from_pose_depth,
+    gt_matches_from_pose_depth,
+)
+from ..base_model import BaseModel
 
 
 class DepthMatcher(BaseModel):

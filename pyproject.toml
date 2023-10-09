@@ -43,10 +43,14 @@ extra = [
     "deeplsd @ git+https://github.com/cvg/DeepLSD.git",
     "homography_est @ git+https://github.com/rpautrat/homography_est.git",
 ]
-dev = ["black", "flake8", "jupyter"]
+dev = ["black", "flake8", "isort"]
 
 [tool.setuptools.packages.find]
 include = ["gluefactory*"]
 
 [tool.setuptools.package-data]
 gluefactory = ["datasets/megadepth_scene_lists/*.txt", "configs/*.yaml"]
+
+[tool.isort]
+profile = "black"
+extend_skip = ["gluefactory_nonfree/"]

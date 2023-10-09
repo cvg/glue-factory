@@ -1,10 +1,11 @@
-from pathlib import Path
-import torch
-import kornia
-import cv2
-import numpy as np
-from typing import Tuple, Optional
 import collections.abc as collections
+from pathlib import Path
+from typing import Optional, Tuple
+
+import cv2
+import kornia
+import numpy as np
+import torch
 from omegaconf import OmegaConf
 
 

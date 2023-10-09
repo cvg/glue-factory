@@ -1,6 +1,7 @@
-from ..base_model import BaseModel
 from lightglue import LightGlue as LightGlue_
 from omegaconf import OmegaConf
+
+from ..base_model import BaseModel
 
 
 class LightGlue(BaseModel):
