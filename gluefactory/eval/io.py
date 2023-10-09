@@ -2,7 +2,6 @@ import argparse
 from pathlib import Path
 from pprint import pprint
 from typing import Optional
-import warnings
 
 import pkg_resources
 from omegaconf import OmegaConf
@@ -91,7 +90,10 @@ def load_model(model_conf, checkpoint):
     else:
         model = get_model("two_view_pipeline")(model_conf).eval()
     if not model.is_initialized():
-        warnings.warn("The provided input did not initialize all parameters. Aborting.")
+        assert model.is_initialized(), (
+            "The provided model has non-initialized parameters. "
+            + "Try to load a checkpoint instead."
+        )
     return model
 
 
