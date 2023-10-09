@@ -8,6 +8,7 @@ from copy import copy
 import omegaconf
 from omegaconf import OmegaConf
 from torch import nn
+from typing import Mapping, Any
 
 
 class MetaModel(ABCMeta):
@@ -59,6 +60,8 @@ class BaseModel(nn.Module, metaclass=MetaModel):
     }
     required_data_keys = []
     strict_conf = False
+
+    weights_initialized = False
 
     def __init__(self, conf):
         """Perform some logic and call the _init method of the child model."""
@@ -125,3 +128,31 @@ class BaseModel(nn.Module, metaclass=MetaModel):
     def loss(self, pred, data):
         """To be implemented by the child class."""
         raise NotImplementedError
+
+    def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
+        """Load the state dict of the model, and set the model to initialized."""
+        incompatible_keys = super().load_state_dict(state_dict, strict=strict)
+        self.set_initialized(True)
+        return incompatible_keys
+
+    def is_initialized(self):
+        """Recursively check if the model is initialized, i.e. weights are loaded"""
+        is_initialized = True  # initialize to true and perform recursive and
+        for _, w in self.named_children():
+            if isinstance(w, BaseModel):
+                # if children is BaseModel, we perform recursive check
+                is_initialized = is_initialized and w.is_initialized()
+            else:
+                # else, we check if self is initialized or the children has no params
+                n_params = len(list(w.parameters()))
+                is_initialized = is_initialized and (
+                    n_params == 0 or self.weights_initialized
+                )
+        return is_initialized
+
+    def set_initialized(self, to: bool = True):
+        """Recursively set the initialization state."""
+        self.weights_initialized = to
+        for _, w in self.named_parameters():
+            if isinstance(w, BaseModel):
+                w.set_initialized(to)

@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 from pprint import pprint
 from typing import Optional
+import warnings
 
 import pkg_resources
 from omegaconf import OmegaConf
@@ -89,6 +90,8 @@ def load_model(model_conf, checkpoint):
         model = load_experiment(checkpoint, conf=model_conf).eval()
     else:
         model = get_model("two_view_pipeline")(model_conf).eval()
+    if not model.is_initialized():
+        warnings.warn("The provided input did not initialize all parameters. Aborting.")
     return model
 
 
