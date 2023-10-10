@@ -21,6 +21,7 @@ class KeyNetAffNetHardNet(BaseModel):
             upright=conf.upright,
             scale_laf=conf.scale_laf,
         )
+        self.set_initialized()
 
     def _forward(self, data):
         image = data["image"]

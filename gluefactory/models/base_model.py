@@ -60,6 +60,8 @@ class BaseModel(nn.Module, metaclass=MetaModel):
     required_data_keys = []
     strict_conf = False
 
+    are_weights_initialized = False
+
     def __init__(self, conf):
         """Perform some logic and call the _init method of the child model."""
         super().__init__()
@@ -125,3 +127,31 @@ class BaseModel(nn.Module, metaclass=MetaModel):
     def loss(self, pred, data):
         """To be implemented by the child class."""
         raise NotImplementedError
+
+    def load_state_dict(self, *args, **kwargs):
+        """Load the state dict of the model, and set the model to initialized."""
+        ret = super().load_state_dict(*args, **kwargs)
+        self.set_initialized()
+        return ret
+
+    def is_initialized(self):
+        """Recursively check if the model is initialized, i.e. weights are loaded"""
+        is_initialized = True  # initialize to true and perform recursive and
+        for _, w in self.named_children():
+            if isinstance(w, BaseModel):
+                # if children is BaseModel, we perform recursive check
+                is_initialized = is_initialized and w.is_initialized()
+            else:
+                # else, we check if self is initialized or the children has no params
+                n_params = len(list(w.parameters()))
+                is_initialized = is_initialized and (
+                    n_params == 0 or self.are_weights_initialized
+                )
+        return is_initialized
+
+    def set_initialized(self, to: bool = True):
+        """Recursively set the initialization state."""
+        self.are_weights_initialized = to
+        for _, w in self.named_parameters():
+            if isinstance(w, BaseModel):
+                w.set_initialized(to)

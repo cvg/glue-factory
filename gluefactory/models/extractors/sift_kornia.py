@@ -19,6 +19,7 @@ class KorniaSIFT(BaseModel):
         self.sift = kornia.feature.SIFTFeature(
             num_features=self.conf.max_num_keypoints, rootsift=self.conf.rootsift
         )
+        self.set_initialized()
 
     def _forward(self, data):
         lafs, scores, descriptors = self.sift(data["image"])

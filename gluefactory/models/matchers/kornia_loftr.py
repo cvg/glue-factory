@@ -13,6 +13,7 @@ class LoFTRModule(BaseModel):
 
     def _init(self, conf):
         self.net = kornia.feature.LoFTR(pretrained="outdoor")
+        self.set_initialized()
 
     def _forward(self, data):
         image0 = data["view0"]["image"]

@@ -10,6 +10,7 @@ class DinoV2(BaseModel):
 
     def _init(self, conf):
         self.net = torch.hub.load("facebookresearch/dinov2", conf.weights)
+        self.set_initialized()
 
     def _forward(self, data):
         img = data["image"]
