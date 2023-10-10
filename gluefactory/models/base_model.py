@@ -4,7 +4,6 @@ Base class for trainable models.
 
 from abc import ABCMeta, abstractmethod
 from copy import copy
-from typing import Any, Mapping
 
 import omegaconf
 from omegaconf import OmegaConf
