@@ -4,11 +4,11 @@ Base class for trainable models.
 
 from abc import ABCMeta, abstractmethod
 from copy import copy
+from typing import Any, Mapping
 
 import omegaconf
 from omegaconf import OmegaConf
 from torch import nn
-from typing import Mapping, Any
 
 
 class MetaModel(ABCMeta):
@@ -61,7 +61,7 @@ class BaseModel(nn.Module, metaclass=MetaModel):
     required_data_keys = []
     strict_conf = False
 
-    weights_initialized = False
+    are_weights_initialized = False
 
     def __init__(self, conf):
         """Perform some logic and call the _init method of the child model."""
@@ -146,7 +146,7 @@ class BaseModel(nn.Module, metaclass=MetaModel):
                 # else, we check if self is initialized or the children has no params
                 n_params = len(list(w.parameters()))
                 is_initialized = is_initialized and (
-                    n_params == 0 or self.weights_initialized
+                    n_params == 0 or self.are_weights_initialized
                 )
         return is_initialized
 
