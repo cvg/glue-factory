@@ -133,7 +133,7 @@ def run_export(feature_file, scene, args):
 
     conf = OmegaConf.create(conf)
 
-    keys = configs[args.method]["keys"] + ["depth_keypoints", "valid_depth_keypoints"]
+    keys = configs[args.method]["keys"]
     dataset = get_dataset(conf.data.name)(conf.data)
     loader = dataset.get_data_loader(conf.split or "test")
 
@@ -142,6 +142,7 @@ def run_export(feature_file, scene, args):
 
     callback_fn = None
     # callback_fn=get_kp_depth  # use this to store the depth of each keypoint
+    # keys = keys + ["depth_keypoints", "valid_depth_keypoints"]
     export_predictions(
         loader, model, feature_file, as_half=True, keys=keys, callback_fn=callback_fn
     )
