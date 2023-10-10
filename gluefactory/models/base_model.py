@@ -129,11 +129,11 @@ class BaseModel(nn.Module, metaclass=MetaModel):
         """To be implemented by the child class."""
         raise NotImplementedError
 
-    def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
+    def load_state_dict(self, *args, **kwargs):
         """Load the state dict of the model, and set the model to initialized."""
-        incompatible_keys = super().load_state_dict(state_dict, strict=strict)
-        self.set_initialized(True)
-        return incompatible_keys
+        ret = super().load_state_dict(*args, **kwargs)
+        self.set_initialized()
+        return ret
 
     def is_initialized(self):
         """Recursively check if the model is initialized, i.e. weights are loaded"""
