@@ -48,7 +48,7 @@ default_train_conf = {
     "optimizer_options": {},  # optional arguments passed to the optimizer
     "lr": 0.001,  # learning rate
     "lr_schedule": {
-        "type": None,  # can be any of [factor, exp] or torch.optim.lr_scheduler
+        "type": None,  # string in {factor, exp, member of torch.optim.lr_scheduler}
         "start": 0,
         "exp_div_10": 0,
         "on_epoch": False,
