@@ -53,7 +53,7 @@ default_train_conf = {
         "exp_div_10": 0,
         "on_epoch": False,
         "factor": 1.0,
-        "options": None,  # add lr_scheduler arguments here
+        "options": {},  # add lr_scheduler arguments here
     },
     "lr_scaling": [(100, ["dampingnet.const"])],
     "eval_every_iter": 1000,  # interval for evaluation on the validation set
