@@ -7,6 +7,7 @@ from homography_est import (
     ransac_point_line_homography,
 )
 
+from ...utils.tensor import batch_to_numpy
 from ..base_estimator import BaseEstimator
 
 
@@ -50,19 +51,20 @@ class PointLineHomographyEstimator(BaseEstimator):
         pass
 
     def _forward(self, data):
-        m_features = {
-            "kpts0": data["m_kpts1"].numpy() if "m_kpts1" in data else None,
-            "kpts1": data["m_kpts0"].numpy() if "m_kpts0" in data else None,
-            "lines0": data["m_lines1"].numpy() if "m_lines1" in data else None,
-            "lines1": data["m_lines0"].numpy() if "m_lines0" in data else None,
-        }
         feat = data["m_kpts0"] if "m_kpts0" in data else data["m_lines0"]
+        data = batch_to_numpy(data)
+        m_features = {
+            "kpts0": data["m_kpts1"] if "m_kpts1" in data else None,
+            "kpts1": data["m_kpts0"] if "m_kpts0" in data else None,
+            "lines0": data["m_lines1"] if "m_lines1" in data else None,
+            "lines1": data["m_lines0"] if "m_lines0" in data else None,
+        }
         M = H_estimation_hybrid(**m_features, tol_px=self.conf.ransac_th)
         success = M is not None
         if not success:
             M = torch.eye(3, device=feat.device, dtype=feat.dtype)
         else:
-            M = torch.tensor(M).to(feat)
+            M = torch.from_numpy(M).to(feat)
 
         estimation = {
             "success": success,

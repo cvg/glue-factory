@@ -23,6 +23,7 @@ def from_homogeneous(points, eps=0.0):
     """Remove the homogeneous dimension of N-dimensional points.
     Args:
         points: torch.Tensor or numpy.ndarray with size (..., N+1).
+        eps: Epsilon value to prevent zero division.
     Returns:
         A torch.Tensor or numpy ndarray with size (..., N).
     """
