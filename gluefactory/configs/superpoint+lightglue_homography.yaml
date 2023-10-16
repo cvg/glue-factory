@@ -1,0 +1,47 @@
+data:
+    name: homographies
+    data_dir: revisitop1m
+    train_size: 150000
+    val_size: 2000
+    batch_size: 128
+    num_workers: 14
+    homography:
+        difficulty: 0.7
+        max_angle: 45
+    photometric:
+        name: lg
+model:
+    name: two_view_pipeline
+    extractor:
+        name: gluefactory_nonfree.superpoint
+        max_num_keypoints: 512
+        force_num_keypoints: True
+        detection_threshold: 0.0
+        nms_radius: 3
+        trainable: False
+    ground_truth:
+        name: matchers.homography_matcher
+        th_positive: 3
+        th_negative: 3
+    matcher:
+        name: matchers.lightglue
+        filter_threshold: 0.1
+        flash: false
+        checkpointed: true
+train:
+    seed: 0
+    epochs: 40
+    log_every_iter: 100
+    eval_every_iter: 500
+    lr: 1e-4
+    lr_schedule:
+        start: 20
+        type: exp
+        on_epoch: true
+        exp_div_10: 10
+    plot: [5, 'gluefactory.visualization.visualize_batch.make_match_figures']
+benchmarks:
+    hpatches:
+      eval:
+        estimator: opencv
+        ransac_th: 0.5
