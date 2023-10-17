@@ -1,4 +1,3 @@
-import logging
 import unittest
 from collections import namedtuple
 from os.path import splitext
@@ -11,6 +10,7 @@ from omegaconf import OmegaConf
 from parameterized import parameterized
 from torch import Tensor
 
+from gluefactory import logger
 from gluefactory.eval.utils import (
     eval_homography_dlt,
     eval_homography_robust,
@@ -61,7 +61,7 @@ class TestIntegration(unittest.TestCase):
         ),
     ]
 
-    IMSHOWS = False
+    visualize = False
 
     @parameterized.expand(methods_to_test)
     @torch.no_grad()
@@ -102,12 +102,12 @@ class TestIntegration(unittest.TestCase):
             ),
         }
 
-        logging.info(results)
+        logger.info(results)
         self.assertGreater(results["num_matches"], exp_results.num_matches)
         self.assertGreater(results["prec@3px"], exp_results.prec3px)
         self.assertLess(results["H_error_ransac"], exp_results.h_error)
 
-        if self.IMSHOWS:
+        if self.visualize:
             pred = map_tensor(
                 pred, lambda t: t.cpu().numpy() if isinstance(t, Tensor) else t
             )

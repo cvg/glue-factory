@@ -136,17 +136,11 @@ def angle_error_vec(v1, v2, eps=1e-10):
     return torch.rad2deg(torch.arccos(torch.clip(v1v2 / n, -1.0, 1.0)))
 
 
-def compute_pose_error(T_0to1, R, t):
-    R_gt = T_0to1[:3, :3]
-    t_gt = T_0to1[:3, 3]
-    error_t = angle_error_vec(t, t_gt)
-    error_t = torch.minimum(error_t, 180 - error_t)  # ambiguity of E estimation
-    error_R = angle_error_mat(R, R_gt)
-    return error_t, error_R
-
-
 def relative_pose_error(T_0to1, R, t, ignore_gt_t_thr=0.0, eps=1e-10):
-    R_gt, t_gt = T_0to1.R, T_0to1.t
+    if isinstance(T_0to1, torch.Tensor):
+        R_gt, t_gt = T_0to1[:3, :3], T_0to1[:3, 3]
+    else:
+        R_gt, t_gt = T_0to1.R, T_0to1.t
     R_gt, t_gt = torch.squeeze(R_gt), torch.squeeze(t_gt)
 
     # angle error between 2 vectors
