@@ -21,7 +21,7 @@ class PytheiaRelativePoseEstimator(BaseEstimator):
         self.params.max_iterations = 10000
         self.params.failure_probability = 1-0.99999
         self.params.min_iterations = 1000
-        self.params.lo_start_iterations = 1
+        self.params.lo_start_iterations = 100
 
     def _forward(self, data):
         kpts0, kpts1 = data["m_kpts0"], data["m_kpts1"]
