@@ -38,12 +38,12 @@ urls = {Repository = "https://github.com/cvg/glue-factory"}
 [project.optional-dependencies]
 extra = [
     "pycolmap",
-    "poselib @ git+https://github.com/PoseLib/PoseLib.git",
-    "pytlsd @ git+https://github.com/iago-suarez/pytlsd.git",
+    "poselib @ git+https://github.com/PoseLib/PoseLib.git@9c8f3ca1baba69e19726cc7caded574873ec1f9e",
+    "pytlsd @ git+https://github.com/iago-suarez/pytlsd.git@v0.0.5",
     "deeplsd @ git+https://github.com/cvg/DeepLSD.git",
-    "homography_est @ git+https://github.com/rpautrat/homography_est.git",
+    "homography_est @ git+https://github.com/rpautrat/homography_est.git@17b200d528e6aa8ac61a878a29265bf5f9d36c41",
 ]
-dev = ["black", "flake8", "isort"]
+dev = ["black", "flake8", "isort", "parameterized"]
 
 [tool.setuptools.packages.find]
 include = ["gluefactory*"]

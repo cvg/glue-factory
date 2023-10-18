@@ -1,11 +1,12 @@
-import kornia
 import numpy as np
 import torch
+from kornia.geometry.homography import find_homography_dlt
 
 from ..geometry.epipolar import generalized_epi_dist, relative_pose_error
 from ..geometry.gt_generation import IGNORE_FEATURE
 from ..geometry.homography import homography_corner_error, sym_homography_error
 from ..robust_estimators import load_estimator
+from ..utils.tensor import index_batch
 from ..utils.tools import AUCMetric
 
 
@@ -24,6 +25,16 @@ def get_matches_scores(kpts0, kpts1, matches0, mscores0):
     pts1 = kpts1[m1]
     scores = mscores0[m0]
     return pts0, pts1, scores
+
+
+def eval_per_batch_item(data: dict, pred: dict, eval_f, *args, **kwargs):
+    # Batched data
+    results = [
+        eval_f(data_i, pred_i, *args, **kwargs)
+        for data_i, pred_i in zip(index_batch(data), index_batch(pred))
+    ]
+    # Return a dictionary of lists with the evaluation of each item
+    return {k: [r[k] for r in results] for k in results[0].keys()}
 
 
 def eval_matches_epipolar(data: dict, pred: dict) -> dict:
@@ -58,23 +69,25 @@ def eval_matches_epipolar(data: dict, pred: dict) -> dict:
     return results
 
 
-def eval_matches_homography(data: dict, pred: dict, conf) -> dict:
+def eval_matches_homography(data: dict, pred: dict) -> dict:
     check_keys_recursive(data, ["H_0to1"])
     check_keys_recursive(
         pred, ["keypoints0", "keypoints1", "matches0", "matching_scores0"]
     )
 
     H_gt = data["H_0to1"]
+    if H_gt.ndim > 2:
+        return eval_per_batch_item(data, pred, eval_matches_homography)
+
     kp0, kp1 = pred["keypoints0"], pred["keypoints1"]
     m0, scores0 = pred["matches0"], pred["matching_scores0"]
     pts0, pts1, scores = get_matches_scores(kp0, kp1, m0, scores0)
-    err = sym_homography_error(pts0, pts1, H_gt[0])
+    err = sym_homography_error(pts0, pts1, H_gt)
     results = {}
     results["prec@1px"] = (err < 1).float().mean().nan_to_num().item()
     results["prec@3px"] = (err < 3).float().mean().nan_to_num().item()
     results["num_matches"] = pts0.shape[0]
     results["num_keypoints"] = (kp0.shape[0] + kp1.shape[0]) / 2.0
-
     return results
 
 
@@ -84,7 +97,7 @@ def eval_relative_pose_robust(data, pred, conf):
         pred, ["keypoints0", "keypoints1", "matches0", "matching_scores0"]
     )
 
-    T_gt = data["T_0to1"][0]
+    T_gt = data["T_0to1"]
     kp0, kp1 = pred["keypoints0"], pred["keypoints1"]
     m0, scores0 = pred["matches0"], pred["matching_scores0"]
     pts0, pts1, scores = get_matches_scores(kp0, kp1, m0, scores0)
@@ -107,9 +120,8 @@ def eval_relative_pose_robust(data, pred, conf):
     else:
         # R, t, inl = ret
         M = est["M_0to1"]
-        R, t = M.numpy()
         inl = est["inliers"].numpy()
-        r_error, t_error = relative_pose_error(T_gt, R, t)
+        t_error, r_error = relative_pose_error(T_gt, M.R, M.t)
         results["rel_pose_error"] = max(r_error, t_error)
         results["ransac_inl"] = np.sum(inl)
         results["ransac_inl%"] = np.mean(inl)
@@ -119,6 +131,9 @@ def eval_relative_pose_robust(data, pred, conf):
 
 def eval_homography_robust(data, pred, conf):
     H_gt = data["H_0to1"]
+    if H_gt.ndim > 2:
+        return eval_per_batch_item(data, pred, eval_relative_pose_robust, conf)
+
     estimator = load_estimator("homography", conf["estimator"])(conf)
 
     data_ = {}
@@ -158,24 +173,26 @@ def eval_homography_robust(data, pred, conf):
     return results
 
 
-def eval_homography_dlt(data, pred, *args):
+def eval_homography_dlt(data, pred):
     H_gt = data["H_0to1"]
     H_inf = torch.ones_like(H_gt) * float("inf")
 
     kp0, kp1 = pred["keypoints0"], pred["keypoints1"]
     m0, scores0 = pred["matches0"], pred["matching_scores0"]
     pts0, pts1, scores = get_matches_scores(kp0, kp1, m0, scores0)
+    scores = scores.to(pts0)
     results = {}
     try:
-        Hdlt = kornia.geometry.homography.find_homography_dlt(
-            pts0[None], pts1[None], scores[None].to(pts0)
-        )[0]
+        if H_gt.ndim == 2:
+            pts0, pts1, scores = pts0[None], pts1[None], scores[None]
+        h_dlt = find_homography_dlt(pts0, pts1, scores)
+        if H_gt.ndim == 2:
+            h_dlt = h_dlt[0]
     except AssertionError:
-        Hdlt = H_inf
+        h_dlt = H_inf
 
-    error_dlt = homography_corner_error(Hdlt, H_gt, data["view0"]["image_size"])
+    error_dlt = homography_corner_error(h_dlt, H_gt, data["view0"]["image_size"])
     results["H_error_dlt"] = error_dlt.item()
-
     return results
 
 

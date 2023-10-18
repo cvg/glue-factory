@@ -17,7 +17,7 @@ class LightGlue(BaseModel):
 
     def _init(self, conf):
         dconf = OmegaConf.to_container(conf)
-        self.net = LightGlue_(dconf.pop("features"), **dconf).cuda()
+        self.net = LightGlue_(dconf.pop("features"), **dconf)
         self.set_initialized()
 
     def _forward(self, data):
