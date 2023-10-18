@@ -64,7 +64,7 @@ python -m gluefactory.eval.hpatches --conf superpoint+lightglue-official --overw
 Setting `eval.ransac_th=-1` auto-tunes the RANSAC inlier threshold by running the evaluation with a range of thresholds and reports results for the optimal value.
 Here are the results as Area Under the Curve (AUC) of the homography error at  1/3/5 pixels:
 
-| Methods                                                      | DLT         | [OpenCV](../gluefactory/robust_estimators/homography/opencv.py)       | [PoseLib](../gluefactory/robust_estimators/homography/poselib.py)      | [pyTheia](../gluefactory/robust_estimators/homography/poselib.py)      |
+| Methods                                                      | DLT         | [OpenCV](../gluefactory/robust_estimators/homography/opencv.py)       | [PoseLib](../gluefactory/robust_estimators/homography/poselib.py)      | [pyTheia](../gluefactory/robust_estimators/homography/pytheia.py)      |
 | ------------------------------------------------------------ | ------------------ | ------------------ | ------------------ | ------------------ |
 | [SuperPoint + SuperGlue](../gluefactory/configs/superpoint+superglue.yaml) | 32.1 / 65.0 / 75.7 | 32.9 / 55.7 / 68.0 | 37.0 / 68.2 / 78.7 | 37.1 / 66.2 / 77.9 |
 | [SuperPoint + LightGlue](../gluefactory/configs/superpoint+lightglue.yaml) | 35.1 / 67.2 / 77.6 | 34.2 / 57.9 / 69.9 | 37.1 / 67.4 / 77.8 | 36.9 / 65.2 / 76.1 |
@@ -157,7 +157,7 @@ python -m gluefactory.eval.megadepth1500 --conf gluefactory/configs/superpoint+l
 
 Here are the results as Area Under the Curve (AUC) of the pose error at  5/10/20 degrees:
 
-| Methods                                                      | [pycolmap](../gluefactory/robust_estimators/relative_pose/pycolmap.py)         | [OpenCV](../gluefactory/robust_estimators/relative_pose/opencv.py)       | [PoseLib](../gluefactory/robust_estimators/relative_pose/poselib.py)      | [pyTheia](../gluefactory/robust_estimators/relative_pose/poselib.py)  |
+| Methods                                                      | [pycolmap](../gluefactory/robust_estimators/relative_pose/pycolmap.py)         | [OpenCV](../gluefactory/robust_estimators/relative_pose/opencv.py)       | [PoseLib](../gluefactory/robust_estimators/relative_pose/poselib.py)      | [pyTheia](../gluefactory/robust_estimators/relative_pose/pytheia.py)  |
 | ------------------------------------------------------------ | ------------------ | ------------------ | ------------------ | ------------------ |
 | [SuperPoint + SuperGlue](../gluefactory/configs/superpoint+superglue.yaml) | 54.4 / 70.4 / 82.4 | 48.7 / 65.6 / 79.0 | 64.8 / 77.9 / 87.0 | 53.5 / 69.6 / 82.0 |
 | [SuperPoint + LightGlue](../gluefactory/configs/superpoint+lightglue.yaml) | 56.7 / 72.4 / 83.7 | 51.0 / 68.1 / 80.7 | 66.8 / 79.3 / 87.9 | 57.8 / 72.3 / 83.5 |
