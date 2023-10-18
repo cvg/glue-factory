@@ -1,0 +1,30 @@
+name: Python Tests
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [ assigned, opened, synchronize, reopened ]
+jobs:
+  build:
+    name: Run Python Tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    - name: Install dependencies
+      run: |
+        sudo apt-get remove libunwind-14-dev || true
+        sudo apt-get install -y libceres-dev libeigen3-dev
+        python -m pip install --upgrade pip
+        python -m pip install pytest pytest-cov
+        python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+        python -m pip install -e .[dev]
+        python -m pip install -e .[extra]
+    - name: Test with pytest
+      run: |
+         set -o pipefail
+         pytest --junitxml=pytest.xml --cov=gluefactory tests/
