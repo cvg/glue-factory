@@ -42,6 +42,7 @@ extra = [
     "pytlsd @ git+https://github.com/iago-suarez/pytlsd.git@v0.0.5",
     "deeplsd @ git+https://github.com/cvg/DeepLSD.git",
     "homography_est @ git+https://github.com/rpautrat/homography_est.git@17b200d528e6aa8ac61a878a29265bf5f9d36c41",
+    "pytheia"
 ]
 dev = ["black", "flake8", "isort", "parameterized"]
 
