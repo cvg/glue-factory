@@ -25,8 +25,7 @@ class PytheiaRelativePoseEstimator(BaseEstimator):
 
     def _forward(self, data):
         kpts0, kpts1 = data["m_kpts0"], data["m_kpts1"]
-        camera0 = data["camera0"]
-        camera1 = data["camera1"]
+        camera0, camera1 = data["camera0"], data["camera1"]
 
         M = None
 
@@ -44,7 +43,7 @@ class PytheiaRelativePoseEstimator(BaseEstimator):
                     pt.sfm.Feature(p0), pt.sfm.Feature(p1)))
 
         self.params.error_thresh = norm_thresh
-
+        
         success, rel_ori, summary = pt.sfm.EstimateRelativePose(
             self.params, pt.sfm.RansacType(2), normalized_correspondences)
 
