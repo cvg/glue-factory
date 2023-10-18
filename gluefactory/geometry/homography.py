@@ -164,7 +164,8 @@ def warp_points_torch(points, H, inverse=True):
     The inverse is used to be coherent with tf.contrib.image.transform
     Arguments:
         points: batched list of N points, shape (B, N, 2).
-        homography: batched or not (shapes (B, 3, 3) and (3, 3) respectively).
+        H: batched or not (shapes (B, 3, 3) and (3, 3) respectively).
+        inverse: Whether to multiply the points by H or the inverse of H
     Returns: a Tensor of shape (B, N, 2) containing the new coordinates of the warps.
     """
 
@@ -333,7 +334,7 @@ def sym_homography_error_all(kpts0, kpts1, H):
 
 
 def homography_corner_error(T, T_gt, image_size):
-    W, H = image_size[:, 0], image_size[:, 1]
+    W, H = image_size[..., 0], image_size[..., 1]
     corners0 = torch.Tensor([[0, 0], [W, 0], [W, H], [0, H]]).float().to(T)
     corners1_gt = from_homogeneous(to_homogeneous(corners0) @ T_gt.transpose(-1, -2))
     corners1 = from_homogeneous(to_homogeneous(corners0) @ T.transpose(-1, -2))

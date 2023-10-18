@@ -119,7 +119,7 @@ class GlueStick(BaseModel):
                     "Loading GlueStick model from " f'"{self.url.format(conf.version)}"'
                 )
                 state_dict = torch.hub.load_state_dict_from_url(
-                    self.url.format(conf.version), file_name=fname
+                    self.url.format(conf.version), file_name=fname, map_location="cpu"
                 )
 
             if "model" in state_dict:

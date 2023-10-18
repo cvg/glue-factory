@@ -40,3 +40,9 @@ def rbd(data: dict) -> dict:
         k: v[0] if isinstance(v, (torch.Tensor, np.ndarray, list)) else v
         for k, v in data.items()
     }
+
+
+def index_batch(tensor_dict):
+    batch_size = len(next(iter(tensor_dict.values())))
+    for i in range(batch_size):
+        yield map_tensor(tensor_dict, lambda t: t[i])

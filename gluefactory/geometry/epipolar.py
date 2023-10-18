@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 
 from .utils import skew_symmetric, to_homogeneous
@@ -124,39 +123,33 @@ def decompose_essential_matrix(E):
 
 
 # pose errors
-# TODO: port to torch and batch
+# TODO: test for batched data
 def angle_error_mat(R1, R2):
-    cos = (np.trace(np.dot(R1.T, R2)) - 1) / 2
-    cos = np.clip(cos, -1.0, 1.0)  # numercial errors can make it out of bounds
-    return np.rad2deg(np.abs(np.arccos(cos)))
+    cos = (torch.trace(torch.einsum("...ij, ...jk -> ...ik", R1.T, R2)) - 1) / 2
+    cos = torch.clip(cos, -1.0, 1.0)  # numerical errors can make it out of bounds
+    return torch.rad2deg(torch.abs(torch.arccos(cos)))
 
 
-def angle_error_vec(v1, v2):
-    n = np.linalg.norm(v1) * np.linalg.norm(v2)
-    return np.rad2deg(np.arccos(np.clip(np.dot(v1, v2) / n, -1.0, 1.0)))
+def angle_error_vec(v1, v2, eps=1e-10):
+    n = torch.clip(v1.norm(dim=-1) * v2.norm(dim=-1), min=eps)
+    v1v2 = (v1 * v2).sum(dim=-1)  # dot product in the last dimension
+    return torch.rad2deg(torch.arccos(torch.clip(v1v2 / n, -1.0, 1.0)))
 
 
-def compute_pose_error(T_0to1, R, t):
-    R_gt = T_0to1[:3, :3]
-    t_gt = T_0to1[:3, 3]
-    error_t = angle_error_vec(t, t_gt)
-    error_t = np.minimum(error_t, 180 - error_t)  # ambiguity of E estimation
-    error_R = angle_error_mat(R, R_gt)
-    return error_t, error_R
+def relative_pose_error(T_0to1, R, t, ignore_gt_t_thr=0.0, eps=1e-10):
+    if isinstance(T_0to1, torch.Tensor):
+        R_gt, t_gt = T_0to1[:3, :3], T_0to1[:3, 3]
+    else:
+        R_gt, t_gt = T_0to1.R, T_0to1.t
+    R_gt, t_gt = torch.squeeze(R_gt), torch.squeeze(t_gt)
 
-
-def relative_pose_error(T_0to1, R, t, ignore_gt_t_thr=0.0):
     # angle error between 2 vectors
-    R_gt, t_gt = T_0to1.numpy()
-    n = np.linalg.norm(t) * np.linalg.norm(t_gt)
-    t_err = np.rad2deg(np.arccos(np.clip(np.dot(t, t_gt) / n, -1.0, 1.0)))
-    t_err = np.minimum(t_err, 180 - t_err)  # handle E ambiguity
-    if np.linalg.norm(t_gt) < ignore_gt_t_thr:  # pure rotation is challenging
+    t_err = angle_error_vec(t, t_gt, eps)
+    t_err = torch.minimum(t_err, 180 - t_err)  # handle E ambiguity
+    if t_gt.norm() < ignore_gt_t_thr:  # pure rotation is challenging
         t_err = 0
 
     # angle error between 2 rotation matrices
-    cos = (np.trace(np.dot(R.T, R_gt)) - 1) / 2
-    cos = np.clip(cos, -1.0, 1.0)  # handle numercial errors
-    R_err = np.rad2deg(np.abs(np.arccos(cos)))
+    r_err = angle_error_mat(R, R_gt)
 
-    return t_err, R_err
+    return t_err, r_err

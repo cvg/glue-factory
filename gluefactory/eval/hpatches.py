@@ -5,6 +5,7 @@ from pprint import pprint
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
@@ -12,6 +13,7 @@ from ..datasets import get_dataset
 from ..models.cache_loader import CacheLoader
 from ..settings import EVAL_PATH
 from ..utils.export_predictions import export_predictions
+from ..utils.tensor import map_tensor
 from ..utils.tools import AUCMetric
 from ..visualization.viz2d import plot_cumulative
 from .eval_pipeline import EvalPipeline
@@ -105,9 +107,11 @@ class HPatchesPipeline(EvalPipeline):
         cache_loader = CacheLoader({"path": str(pred_file), "collate": None}).eval()
         for i, data in enumerate(tqdm(loader)):
             pred = cache_loader(data)
+            # Remove batch dimension
+            data = map_tensor(data, lambda t: torch.squeeze(t, dim=0))
             # add custom evaluations here
             if "keypoints0" in pred:
-                results_i = eval_matches_homography(data, pred, {})
+                results_i = eval_matches_homography(data, pred)
                 results_i = {**results_i, **eval_homography_dlt(data, pred)}
             else:
                 results_i = {}
