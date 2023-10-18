@@ -166,6 +166,33 @@ Here are the results as Area Under the Curve (AUC) of the pose error at  5/10/20
 </details>
 
 
+#### Scannet-1500
+
+Running the evaluation commands automatically downloads the dataset, which takes about 1.1 GB of disk space.
+
+<details>
+<summary>[Evaluating LightGlue]</summary>
+
+To evaluate the pre-trained SuperPoint+LightGlue model on Scannet-1500, run:
+```bash
+python -m gluefactory.eval.scannet1500 --conf superpoint+lightglue-official
+# or the adaptive variant
+python -m gluefactory.eval.scannet1500 --conf superpoint+lightglue-official \
+    model.matcher.{depth_confidence=0.95,width_confidence=0.95}
+```
+</details>
+
+<details>
+Here are the results as Area Under the Curve (AUC) of the pose error at  5/10/20 degrees:
+
+| Methods                                                      | [OpenCV](../gluefactory/robust_estimators/relative_pose/opencv.py) |
+| ------------------------------------------------------------ | ------------------ |
+| [SuperPoint + SuperGlue](../gluefactory/configs/superpoint+superglue-official.yaml) | 17.4 / 33.9 / 49.5 |
+| [SuperPoint + LightGlue](../gluefactory/configs/superpoint+lightglue-official.yaml) | 17.7 / 34.6 / 51.2 |
+| [ALIKED + LightGlue](../gluefactory/configs/aliked+lightglue-official.yaml) | 18.4 / 33.9 / 49.7 |
+
+</details>
+
 #### ETH3D
 
 The dataset will be auto-downloaded if it is not found on disk, and will need about 6 GB of free disk space.
