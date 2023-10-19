@@ -2,11 +2,8 @@ model:
     name: two_view_pipeline
     extractor:
       name: extractors.sift
-      detector: pycolmap_cuda
-      max_num_keypoints: 2048
-      detection_threshold: 0.00667
-      pycolmap_options:
-          first_octave: -1
+      backend: pycolmap_cuda
+      max_num_keypoints: 4096
     matcher:
       name: matchers.lightglue_pretrained
       features: sift
