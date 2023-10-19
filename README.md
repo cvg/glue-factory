@@ -180,9 +180,7 @@ python -m gluefactory.eval.scannet1500 --conf superpoint+lightglue-official
 python -m gluefactory.eval.scannet1500 --conf superpoint+lightglue-official \
     model.matcher.{depth_confidence=0.95,width_confidence=0.95}
 ```
-</details>
 
-<details>
 Here are the results as Area Under the Curve (AUC) of the pose error at  5/10/20 degrees:
 
 | Methods                                                      | [OpenCV](../gluefactory/robust_estimators/relative_pose/opencv.py) |
