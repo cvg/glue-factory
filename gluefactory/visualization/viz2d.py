@@ -208,14 +208,14 @@ def plot_matches(kpts0, kpts1, color=None, lw=1.5, ps=4, a=1.0, labels=None, axe
             kpts0[:, 1],
             c=color,
             s=ps,
-            label=None if labels is None else labels[0],
+            label=None if labels is None or len(labels) == 0 else labels[0],
         )
         ax1.scatter(
             kpts1[:, 0],
             kpts1[:, 1],
             c=color,
             s=ps,
-            label=None if labels is None else labels[1],
+            label=None if labels is None or len(labels) == 0 else labels[1],
         )
 
 
