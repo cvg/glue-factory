@@ -25,7 +25,7 @@ python3 -m pip install -e .[extra]
 All models and datasets in gluefactory have auto-downloaders, so you can get started right away!
 
 ## License
-The code and trained models in Glue Factory are released with an Apache-2.0 license. This includes LightGlue trained with an [open version of SuperPoint](https://github.com/rpautrat/SuperPoint). Third-party models that are not compatible with this license, such as SuperPoint (original) and SuperGlue, are provided in `gluefactory_nonfree`, where each model might follow its own, restrictive license.
+The code and trained models in Glue Factory are released with an Apache-2.0 license. This includes LightGlue and an [open version of SuperPoint](https://github.com/rpautrat/SuperPoint). Third-party models that are not compatible with this license, such as SuperPoint (original) and SuperGlue, are provided in `gluefactory_nonfree`, where each model might follow its own, restrictive license.
 
 ## Evaluation
 
@@ -66,8 +66,8 @@ Here are the results as Area Under the Curve (AUC) of the homography error at  1
 
 | Methods                                                      | DLT         | [OpenCV](../gluefactory/robust_estimators/homography/opencv.py)       | [PoseLib](../gluefactory/robust_estimators/homography/poselib.py)      |
 | ------------------------------------------------------------ | ------------------ | ------------------ | ------------------ |
-| [SuperPoint + SuperGlue](../gluefactory/configs/superpoint+superglue.yaml) | 32.1 / 65.0 / 75.7 | 32.9 / 55.7 / 68.0 | 37.0 / 68.2 / 78.7 |
-| [SuperPoint + LightGlue](../gluefactory/configs/superpoint+lightglue.yaml) | 35.1 / 67.2 / 77.6 | 34.2 / 57.9 / 69.9 | 37.1 / 67.4 / 77.8 |
+| [SuperPoint + SuperGlue](gluefactory/configs/superpoint+superglue-official.yaml) | 32.1 / 65.0 / 75.7 | 32.9 / 55.7 / 68.0 | 37.0 / 68.2 / 78.7 |
+| [SuperPoint + LightGlue](gluefactory/configs/superpoint+lightglue-official.yaml) | 35.1 / 67.2 / 77.6 | 34.2 / 57.9 / 69.9 | 37.1 / 67.4 / 77.8 |
 
 
 </details>
@@ -159,9 +159,12 @@ Here are the results as Area Under the Curve (AUC) of the pose error at  5/10/20
 
 | Methods                                                      | [pycolmap](../gluefactory/robust_estimators/relative_pose/pycolmap.py)         | [OpenCV](../gluefactory/robust_estimators/relative_pose/opencv.py)       | [PoseLib](../gluefactory/robust_estimators/relative_pose/poselib.py)      |
 | ------------------------------------------------------------ | ------------------ | ------------------ | ------------------ |
-| [SuperPoint + SuperGlue](../gluefactory/configs/superpoint+superglue.yaml) | 54.4 / 70.4 / 82.4 | 48.7 / 65.6 / 79.0 | 64.8 / 77.9 / 87.0 |
-| [SuperPoint + LightGlue](../gluefactory/configs/superpoint+lightglue.yaml) | 56.7 / 72.4 / 83.7 | 51.0 / 68.1 / 80.7 | 66.8 / 79.3 / 87.9 |
-| [SuperPoint + GlueStick](../gluefactory/configs/superpoint+lsd+gluestick.yaml) | 53.2 / 69.8 / 81.9 | 46.3 / 64.2 / 78.1 | 64.4 / 77.5 / 86.5 |
+| [SuperPoint + SuperGlue](gluefactory/configs/superpoint+superglue-official.yaml) | 54.4 / 70.4 / 82.4 | 48.7 / 65.6 / 79.0 | 64.8 / 77.9 / 87.0 |
+| [SuperPoint + LightGlue](gluefactory/configs/superpoint+lightglue-official.yaml) | 56.7 / 72.4 / 83.7 | 51.0 / 68.1 / 80.7 | 66.8 / 79.3 / 87.9 |
+| [SIFT (2K) + LightGlue](gluefactory/configs/sift+lightglue-official.yaml) | ? / ? / ? | 43.5 / 61.5 / 75.9 | 60.4 / 74.3 / 84.5 |
+| [SIFT (4K) + LightGlue](gluefactory/configs/sift+lightglue-official.yaml) | ? / ? / ? | 49.9 / 67.3 / 80.3 | 65.9 / 78.6 / 87.4 |
+| [ALIKED + LightGlue](gluefactory/configs/aliked+lightglue-official.yaml) | ? / ? / ? | 51.5 / 68.1 / 80.4 | 66.3 / 78.7 / 87.5 |
+| [SuperPoint + GlueStick](gluefactory/configs/superpoint+lsd+gluestick.yaml) | 53.2 / 69.8 / 81.9 | 46.3 / 64.2 / 78.1 | 64.4 / 77.5 / 86.5 |
 
 </details>
 
@@ -223,18 +226,18 @@ All training commands automatically download the datasets.
 <details>
 <summary>[Training LightGlue]</summary>
 
-We show how to train LightGlue with [SuperPoint open](https://github.com/rpautrat/SuperPoint).
+We show how to train LightGlue with [SuperPoint](https://github.com/magicleap/SuperPointPretrainedNetwork).
 We first pre-train LightGlue on the homography dataset:
 ```bash
 python -m gluefactory.train sp+lg_homography \  # experiment name
-    --conf gluefactory/configs/superpoint-open+lightglue_homography.yaml
+    --conf gluefactory/configs/superpoint+lightglue_homography.yaml
 ```
 Feel free to use any other experiment name. By default the checkpoints are written to `outputs/training/`. The default batch size of 128 corresponds to the results reported in the paper and requires 2x 3090 GPUs with 24GB of VRAM each as well as PyTorch >= 2.0 (FlashAttention).
 Configurations are managed by [OmegaConf](https://omegaconf.readthedocs.io/) so any entry can be overridden from the command line.
 If you have PyTorch < 2.0 or weaker GPUs, you may thus need to reduce the batch size via:
 ```bash
 python -m gluefactory.train sp+lg_homography \
-    --conf gluefactory/configs/superpoint-open+lightglue_homography.yaml  \
+    --conf gluefactory/configs/superpoint+lightglue_homography.yaml  \
     data.batch_size=32  # for 1x 1080 GPU
 ```
 Be aware that this can impact the overall performance. You might need to adjust the learning rate accordingly.
@@ -242,17 +245,17 @@ Be aware that this can impact the overall performance. You might need to adjust 
 We then fine-tune the model on the MegaDepth dataset:
 ```bash
 python -m gluefactory.train sp+lg_megadepth \
-    --conf gluefactory/configs/superpoint-open+lightglue_megadepth.yaml \
+    --conf gluefactory/configs/superpoint+lightglue_megadepth.yaml \
     train.load_experiment=sp+lg_homography
 ```
 
 Here the default batch size is 32. To speed up training on MegaDepth, we suggest to cache the local features before training (requires around 150 GB of disk space):
 ```bash
 # extract features
-python -m gluefactory.scripts.export_megadepth --method sp_open --num_workers 8
+python -m gluefactory.scripts.export_megadepth --method sp --num_workers 8
 # run training with cached features
 python -m gluefactory.train sp+lg_megadepth \
-    --conf gluefactory/configs/superpoint-open+lightglue_megadepth.yaml \
+    --conf gluefactory/configs/superpoint+lightglue_megadepth.yaml \
     train.load_experiment=sp+lg_homography \
     data.load_features.do=True
 ```
@@ -297,10 +300,10 @@ Using the following local feature extractors:
 | Model     | LightGlue config |
 | --------- | --------- |
 | [SuperPoint (open)](https://github.com/rpautrat/SuperPoint) | `superpoint-open+lightglue_{homography,megadepth}.yaml` |
-| [SuperPoint (official)](https://github.com/magicleap/SuperPointPretrainedNetwork) | ❌ TODO |
+| [SuperPoint (official)](https://github.com/magicleap/SuperPointPretrainedNetwork) | `superpoint+lightglue_{homography,megadepth}.yaml` |
 | SIFT (via [pycolmap](https://github.com/colmap/pycolmap)) | `sift+lightglue_{homography,megadepth}.yaml` |
 | [ALIKED](https://github.com/Shiaoming/ALIKED) | `aliked+lightglue_{homography,megadepth}.yaml` |
-| [DISK](https://github.com/cvlab-epfl/disk) | ❌ TODO |
+| [DISK](https://github.com/cvlab-epfl/disk) | `disk+lightglue_{homography,megadepth}.yaml` |
 | Key.Net + HardNet | ❌ TODO |
 
 ## Coming soon

@@ -17,17 +17,16 @@ data:
     num_workers: 14
     load_features:
         do: false  # enable this if you have cached predictions
-        path: exports/megadepth-undist-depth-r1024_pycolmap_SIFTGPU-nms3-fixed-k2048/{scene}.h5
+        path: exports/megadepth-undist-depth-r1024_SP-k2048-nms3/{scene}.h5
         padding_length: 2048
         padding_fn: pad_local_features
-        data_keys: ["keypoints", "keypoint_scores", "descriptors", "oris", "scales"]
 model:
     name: two_view_pipeline
     extractor:
-        name: extractors.sift
-        backend: pycolmap_cuda
+        name: gluefactory_nonfree.superpoint
         max_num_keypoints: 2048
         force_num_keypoints: True
+        detection_threshold: 0.0
         nms_radius: 3
         trainable: False
     matcher:
@@ -35,8 +34,6 @@ model:
         filter_threshold: 0.1
         flash: false
         checkpointed: true
-        add_scale_ori: true
-        input_dim: 128
     ground_truth:
         name: matchers.depth_matcher
         th_positive: 3
@@ -62,9 +59,6 @@ benchmarks:
             preprocessing:
                 side: long
                 resize: 1600
-        model:
-            extractor:
-                nms_radius: 0
         eval:
             estimator: opencv
             ransac_th: 0.5
@@ -75,4 +69,3 @@ benchmarks:
         model:
             extractor:
                 max_num_keypoints: 1024
-                nms_radius: 0

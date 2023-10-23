@@ -19,12 +19,13 @@ class KorniaSIFT(BaseModel):
         self.sift = kornia.feature.SIFTFeature(
             num_features=self.conf.max_num_keypoints, rootsift=self.conf.rootsift
         )
+        self.set_initialized()
 
     def _forward(self, data):
         lafs, scores, descriptors = self.sift(data["image"])
         keypoints = kornia.feature.get_laf_center(lafs)
-        scales = kornia.feature.get_laf_scale(lafs)
-        oris = kornia.feature.get_laf_orientation(lafs)
+        scales = kornia.feature.get_laf_scale(lafs).squeeze(-1).squeeze(-1)
+        oris = kornia.feature.get_laf_orientation(lafs).squeeze(-1)
         pred = {
             "keypoints": keypoints,  # @TODO: confirm keypoints are in corner convention
             "scales": scales,

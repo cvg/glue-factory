@@ -3,7 +3,7 @@ data:
     data_dir: revisitop1m
     train_size: 150000
     val_size: 2000
-    batch_size: 64
+    batch_size: 128
     num_workers: 14
     homography:
         difficulty: 0.7
@@ -13,10 +13,10 @@ data:
 model:
     name: two_view_pipeline
     extractor:
-        name: extractors.sift
-        backend: pycolmap_cuda
-        max_num_keypoints: 1024
+        name: gluefactory_nonfree.superpoint
+        max_num_keypoints: 512
         force_num_keypoints: True
+        detection_threshold: 0.0
         nms_radius: 3
         trainable: False
     ground_truth:
@@ -28,7 +28,6 @@ model:
         filter_threshold: 0.1
         flash: false
         checkpointed: true
-        input_dim: 128
 train:
     seed: 0
     epochs: 40
@@ -46,6 +45,3 @@ benchmarks:
       eval:
         estimator: opencv
         ransac_th: 0.5
-      model:
-        extractor:
-          nms_radius: 0

@@ -17,31 +17,27 @@ data:
     num_workers: 14
     load_features:
         do: false  # enable this if you have cached predictions
-        path: exports/megadepth-undist-depth-r1024_pycolmap_SIFTGPU-nms3-fixed-k2048/{scene}.h5
+        path: exports/megadepth-undist-depth-r1024_DISK-k2048-nms5/{scene}.h5
         padding_length: 2048
         padding_fn: pad_local_features
-        data_keys: ["keypoints", "keypoint_scores", "descriptors", "oris", "scales"]
 model:
     name: two_view_pipeline
     extractor:
-        name: extractors.sift
-        backend: pycolmap_cuda
-        max_num_keypoints: 2048
+        name: extractors.disk_kornia
+        max_num_keypoints: 512
         force_num_keypoints: True
-        nms_radius: 3
+        detection_threshold: 0.0
         trainable: False
+    ground_truth:
+        name: matchers.homography_matcher
+        th_positive: 3
+        th_negative: 3
     matcher:
         name: matchers.lightglue
         filter_threshold: 0.1
+        input_dim: 128
         flash: false
         checkpointed: true
-        add_scale_ori: true
-        input_dim: 128
-    ground_truth:
-        name: matchers.depth_matcher
-        th_positive: 3
-        th_negative: 5
-        th_epi: 5
     allow_no_extract: True
 train:
     seed: 0
@@ -61,10 +57,7 @@ benchmarks:
         data:
             preprocessing:
                 side: long
-                resize: 1600
-        model:
-            extractor:
-                nms_radius: 0
+                resize: 1024
         eval:
             estimator: opencv
             ransac_th: 0.5
@@ -75,4 +68,3 @@ benchmarks:
         model:
             extractor:
                 max_num_keypoints: 1024
-                nms_radius: 0

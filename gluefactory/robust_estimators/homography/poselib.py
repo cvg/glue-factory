@@ -16,8 +16,8 @@ class PoseLibHomographyEstimator(BaseEstimator):
     def _forward(self, data):
         pts0, pts1 = data["m_kpts0"], data["m_kpts1"]
         M, info = poselib.estimate_homography(
-            pts0.numpy(),
-            pts1.numpy(),
+            pts0.detach().cpu().numpy(),
+            pts1.detach().cpu().numpy(),
             {
                 "max_reproj_error": self.conf.ransac_th,
                 **OmegaConf.to_container(self.conf.options),
