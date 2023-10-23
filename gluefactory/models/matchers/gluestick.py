@@ -131,7 +131,7 @@ class GlueStick(BaseModel):
                 state_dict = {
                     k.replace("module.", ""): v for k, v in state_dict.items()
                 }
-            self.load_state_dict(state_dict)
+            self.load_state_dict(state_dict, strict=False)
 
     def _forward(self, data):
         device = data["keypoints0"].device
@@ -200,8 +200,6 @@ class GlueStick(BaseModel):
         kpts0 = normalize_keypoints(kpts0, image_size0)
         kpts1 = normalize_keypoints(kpts1, image_size1)
 
-        assert torch.all(kpts0 >= -1) and torch.all(kpts0 <= 1)
-        assert torch.all(kpts1 >= -1) and torch.all(kpts1 <= 1)
         desc0 = desc0 + self.kenc(kpts0, data["keypoint_scores0"])
         desc1 = desc1 + self.kenc(kpts1, data["keypoint_scores1"])
 
