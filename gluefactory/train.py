@@ -341,7 +341,6 @@ def training(rank, conf, output_dir, args):
         logger.info(
             "Starting training with configuration:\n%s", OmegaConf.to_yaml(conf)
         )
-    losses_ = None
 
     def trace_handler(p):
         # torch.profiler.tensorboard_trace_handler(str(output_dir))
@@ -551,7 +550,6 @@ def training(rank, conf, output_dir, args):
                             optimizer,
                             lr_scheduler,
                             conf,
-                            losses_,
                             results,
                             best_eval,
                             epoch,
@@ -586,7 +584,6 @@ def training(rank, conf, output_dir, args):
                     optimizer,
                     lr_scheduler,
                     conf,
-                    losses_,
                     results,
                     best_eval,
                     epoch,
@@ -605,7 +602,6 @@ def training(rank, conf, output_dir, args):
                 optimizer,
                 lr_scheduler,
                 conf,
-                losses_,
                 results,
                 best_eval,
                 epoch,
