@@ -1,10 +1,15 @@
 data:
     name: gluefactory.datasets.megadepth
+    train_num_per_scene: 300
+    val_pairs: valid_pairs.txt
     views: 2
+    min_overlap: 0.1
+    max_overlap: 0.7
+    num_overlap_bins: 3
     preprocessing:
         resize: 640
         square_pad: True
-    batch_size: 60
+    batch_size: 160
     num_workers: 15
 model:
     name: gluefactory.models.two_view_pipeline
@@ -53,9 +58,9 @@ model:
 train:
     seed: 0
     epochs: 200
-    log_every_iter: 10
-    eval_every_iter: 100
-    save_every_iter: 500
+    log_every_iter: 400
+    eval_every_iter: 700
+    save_every_iter: 1400
     lr: 1e-4
     lr_schedule:
         type: exp  # exp or multi_step
