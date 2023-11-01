@@ -191,7 +191,13 @@ class DarkAugmentation(BaseAugmentation):
                 [
                     A.Blur(**kwi(blur, p=0.1, blur_limit=(3, 9), n="blur")),
                     A.MotionBlur(
-                        **kwi(blur, p=0.2, blur_limit=(3, 25), n="motion_blur")
+                        **kwi(
+                            blur,
+                            p=0.2,
+                            blur_limit=(3, 25),
+                            allow_shifted=False,
+                            n="motion_blur",
+                        )
                     ),
                     A.ISONoise(),
                     A.ImageCompression(),
@@ -222,14 +228,14 @@ class LGAugmentation(BaseAugmentation):
             A.OneOf(
                 [
                     A.Blur(blur_limit=(3, 9)),
-                    A.MotionBlur(blur_limit=(3, 25)),
+                    A.MotionBlur(blur_limit=(3, 25), allow_shifted=False),
                     A.ISONoise(),
                     A.ImageCompression(),
                 ],
                 p=0.1,
             ),
             A.Blur(p=0.1, blur_limit=(3, 9)),
-            A.MotionBlur(p=0.1, blur_limit=(3, 25)),
+            A.MotionBlur(p=0.1, blur_limit=(3, 25), allow_shifted=False),
             A.RandomBrightnessContrast(
                 p=0.5, brightness_limit=(-0.4, 0.0), contrast_limit=(-0.3, 0.0)
             ),
