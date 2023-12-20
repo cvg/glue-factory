@@ -191,7 +191,7 @@ class SIFT(BaseModel):
                 pred = {k: v[indices] for k, v in pred.items()}
 
         if self.conf.force_num_keypoints:
-            num_points = min(self.conf.max_num_keypoints, len(pred["keypoints"]))
+            num_points = max(self.conf.max_num_keypoints, len(pred["keypoints"]))
             pred["keypoints"] = pad_to_length(
                 pred["keypoints"],
                 num_points,
@@ -205,7 +205,7 @@ class SIFT(BaseModel):
                 pred["descriptors"], num_points, -2, mode="zeros"
             )
             if pred["keypoint_scores"] is not None:
-                scores = pad_to_length(
+                pred["keypoint_scores"] = pad_to_length(
                     pred["keypoint_scores"], num_points, -1, mode="zeros"
                 )
         return pred
@@ -222,7 +222,7 @@ class SIFT(BaseModel):
             if "image_size" in data.keys():
                 # avoid extracting points in padded areas
                 w, h = data["image_size"][k]
-                img = img[:, :h, :w]
+                img = img[:, :h.to(torch.int32), :w.to(torch.int32)]
             p = self.extract_single_image(img)
             pred.append(p)
         pred = {k: torch.stack([p[k] for p in pred], 0).to(device) for k in pred[0]}
