@@ -5,6 +5,7 @@ from typing import Callable, List, Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
+import kornia.feature as KF
 from omegaconf import OmegaConf
 from torch import nn
 from torch.utils.checkpoint import checkpoint
@@ -308,6 +309,7 @@ class LightGlue(nn.Module):
         "name": "lightglue",  # just for interfacing
         "input_dim": 256,  # input descriptor dimension (autoselected from weights)
         "add_scale_ori": False,
+        "add_laf": False, # for KeyNetAffNetHardNet
         "descriptor_dim": 256,
         "n_layers": 9,
         "num_heads": 4,
@@ -340,7 +342,7 @@ class LightGlue(nn.Module):
 
         head_dim = conf.descriptor_dim // conf.num_heads
         self.posenc = LearnableFourierPositionalEncoding(
-            2 + 2 * conf.add_scale_ori, head_dim, head_dim
+            2 + 2 * conf.add_scale_ori + 4 * conf.add_laf, head_dim, head_dim
         )
 
         h, n, d = conf.num_heads, conf.n_layers, conf.descriptor_dim
@@ -409,7 +411,7 @@ class LightGlue(nn.Module):
             size1 = data["view1"].get("image_size")
         kpts0 = normalize_keypoints(kpts0, size0).clone()
         kpts1 = normalize_keypoints(kpts1, size1).clone()
-
+        assert not (self.conf.add_scale_ori and self.conf.add_laf) # we use either scale ori, or LAF
         if self.conf.add_scale_ori:
             sc0, o0 = data["scales0"], data["oris0"]
             sc1, o1 = data["scales1"], data["oris1"]
@@ -429,6 +431,27 @@ class LightGlue(nn.Module):
                 ],
                 -1,
             )
+        if self.conf.add_laf:
+            laf0 = data['lafs0']
+            laf1 = data['lafs1']
+            laf0 = KF.laf_to_three_points(laf0)
+            laf1 = KF.laf_to_three_points(laf1)
+            kpts0 = torch.cat(
+                [
+                    kpts0,
+                    normalize_keypoints(laf0[...,0], size0).clone().to(kpts0.dtype),
+                    normalize_keypoints(laf0[...,1], size0).clone().to(kpts0.dtype)
+                ],
+                -1,
+            ).float()
+            kpts1 = torch.cat(
+                [
+                    kpts1,
+                    normalize_keypoints(laf1[...,0], size1).clone().to(kpts1.dtype),
+                    normalize_keypoints(laf1[...,1], size1).clone().to(kpts1.dtype)
+                ],
+                -1,
+            ).float()
 
         desc0 = data["descriptors0"].contiguous()
         desc1 = data["descriptors1"].contiguous()

@@ -68,12 +68,12 @@ configs = {
         },
     },
     "keynet-affnet-hardnet": {
-        "name": f"r{resize}_KeyNetAffNetHardNet-k{n_kpts}",
-        "keys": ["keypoints", "descriptors", "keypoint_scores", "oris", "scales"],
+        "name": f"r{resize}_KeyNetAffNetHardNet-k4096",
+        "keys": ["keypoints", "descriptors", "keypoint_scores", "oris", "scales", "lafs"],
         "gray": True,
         "conf": {
             "name": "extractors.keynet_affnet_hardnet",
-            "max_num_keypoints": n_kpts,
+            "max_num_keypoints": 4096,
         },
     },
     "disk": {

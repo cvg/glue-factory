@@ -16,7 +16,7 @@ class KeyNetAffNetHardNet(BaseModel):
     required_data_keys = ["image"]
 
     def _init(self, conf):
-        self.model = kornia.feature.KeyNetHardNet(
+        self.model = kornia.feature.KeyNetAffNetHardNet(
             num_features=conf.max_num_keypoints,
             upright=conf.upright,
             scale_laf=conf.scale_laf,
@@ -24,6 +24,9 @@ class KeyNetAffNetHardNet(BaseModel):
         self.set_initialized()
 
     def _forward(self, data):
+        self.model.detector = self.model.detector.eval()
+        self.model.descriptor.descriptor = self.model.descriptor.descriptor.eval()
+        self.model = self.model.eval()
         image = data["image"]
         if image.shape[1] == 3:  # RGB
             scale = image.new_tensor([0.299, 0.587, 0.114]).view(1, 3, 1, 1)
@@ -58,7 +61,7 @@ class KeyNetAffNetHardNet(BaseModel):
         descs = torch.cat(descs, 0)
         keypoints = kornia.feature.get_laf_center(lafs)
         scales = kornia.feature.get_laf_scale(lafs)[..., 0]
-        oris = kornia.feature.get_laf_orientation(lafs)
+        oris = torch.deg2rad(kornia.feature.get_laf_orientation(lafs))
         pred = {
             "keypoints": keypoints,
             "scales": scales.squeeze(-1),

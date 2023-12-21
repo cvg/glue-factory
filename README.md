@@ -164,6 +164,8 @@ Here are the results as Area Under the Curve (AUC) of the pose error at  5/10/20
 | [SIFT (2K) + LightGlue](gluefactory/configs/sift+lightglue-official.yaml) | ? / ? / ? | 43.5 / 61.5 / 75.9 | 60.4 / 74.3 / 84.5 |
 | [SIFT (4K) + LightGlue](gluefactory/configs/sift+lightglue-official.yaml) | ? / ? / ? | 49.9 / 67.3 / 80.3 | 65.9 / 78.6 / 87.4 |
 | [ALIKED + LightGlue](gluefactory/configs/aliked+lightglue-official.yaml) | ? / ? / ? | 51.5 / 68.1 / 80.4 | 66.3 / 78.7 / 87.5 |
+| [KeyAffHardNet (2K) + LightGlue](gluefactory/configs/keyaffhardnet+lightglue-official.yaml) | ? / ? / ? | 43.7 / 61.0 / 75.0 |  ? / ? / ? |
+| [KeyAffHardNet (4K) + LightGlue](gluefactory/configs/keyaffhardnet+lightglue-official.yaml) | ? / ? / ? | 49.7 / 67.0 / 80.2 |  ? / ? / ? |
 | [SuperPoint + GlueStick](gluefactory/configs/superpoint+lsd+gluestick.yaml) | 53.2 / 69.8 / 81.9 | 46.3 / 64.2 / 78.1 | 64.4 / 77.5 / 86.5 |
 
 </details>
