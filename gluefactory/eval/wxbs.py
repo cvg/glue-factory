@@ -19,21 +19,18 @@ from ..visualization.viz2d import plot_cumulative
 from .eval_pipeline import EvalPipeline
 from .io import get_eval_parser, load_model, parse_eval_args
 from .utils import (
-    eval_homography_dlt,
-    eval_homography_robust,
-    eval_matches_homography,
-    eval_poses,
+    eval_matches_epipolar_via_gt_points,
+    eval_fundamental_matrices
 )
 
-
-class EVDPipeline(EvalPipeline):
+class WxBSPipeline(EvalPipeline):
     default_conf = {
         "data": {
             "batch_size": 1,
-            "name": "evd",
+            "name": "wxbs",
             "num_workers": 1,
             "preprocessing": {
-                "resize": 768,  # we also resize during eval to have comparable metrics
+                "resize": None,  # we also resize during eval to have comparable metrics
                 "side": "short",
             },
         },
@@ -58,16 +55,7 @@ class EVDPipeline(EvalPipeline):
         "matching_scores1",
     ]
 
-    optional_export_keys = [
-        "lines0",
-        "lines1",
-        "orig_lines0",
-        "orig_lines1",
-        "line_matches0",
-        "line_matches1",
-        "line_matching_scores0",
-        "line_matching_scores1",
-    ]
+    optional_export_keys = []
 
     def _init(self, conf):
         pass
@@ -75,7 +63,7 @@ class EVDPipeline(EvalPipeline):
     @classmethod
     def get_dataloader(self, data_conf=None):
         data_conf = data_conf if data_conf else self.default_conf["data"]
-        dataset = get_dataset("evd")(data_conf)
+        dataset = get_dataset("wxbs")(data_conf)
         return dataset.get_data_loader("test")
 
     def get_predictions(self, experiment_dir, model=None, overwrite=False):
@@ -110,13 +98,9 @@ class EVDPipeline(EvalPipeline):
             # Remove batch dimension
             data = map_tensor(data, lambda t: torch.squeeze(t, dim=0))
             # add custom evaluations here
-            if "keypoints0" in pred:
-                results_i = eval_matches_homography(data, pred)
-                results_i = {**results_i, **eval_homography_dlt(data, pred)}
-            else:
-                results_i = {}
+            results_i = {}
             for th in test_thresholds:
-                pose_results_i = eval_homography_robust(
+                pose_results_i = eval_matches_epipolar_via_gt_points(
                     data,
                     pred,
                     {"estimator": conf.estimator, "ransac_th": th},
@@ -124,9 +108,9 @@ class EVDPipeline(EvalPipeline):
                 [pose_results[th][k].append(v) for k, v in pose_results_i.items()]
 
             # we also store the names for later reference
+            results_i["names"] = data["name"][0]
             results_i["scenes"] = data["scene"][0]
-            results_i["name"] = data["scene"][0]
-            
+
             for k, v in results_i.items():
                 results[k].append(v)
 
@@ -140,13 +124,9 @@ class EVDPipeline(EvalPipeline):
             summaries[f"m{k}"] = round(np.median(arr), 3)
 
         auc_ths = [1, 5, 10, 20]
-        best_pose_results, best_th = eval_poses(
-            pose_results, auc_ths=auc_ths, key="H_error_ransac", unit="px"
+        best_pose_results, best_th = eval_fundamental_matrices(
+            pose_results, auc_ths=auc_ths, key="epi_error", unit="px"
         )
-        if "H_error_dlt" in results.keys():
-            dlt_aucs = AUCMetric(auc_ths, results["H_error_dlt"]).compute()
-            for i, ath in enumerate(auc_ths):
-                summaries[f"H_error_dlt@{ath}px"] = dlt_aucs[i]
 
         results = {**results, **pose_results[best_th]}
         summaries = {
@@ -154,17 +134,7 @@ class EVDPipeline(EvalPipeline):
             **best_pose_results,
         }
 
-        figures = {
-            "homography_recall": plot_cumulative(
-                {
-                    "DLT": results["H_error_dlt"],
-                    self.conf.eval.estimator: results["H_error_ransac"],
-                },
-                [0, 20],
-                unit="px",
-                title="Homography ",
-            )
-        }
+        figures = {}
 
         return summaries, figures, results
 
@@ -174,7 +144,7 @@ if __name__ == "__main__":
     parser = get_eval_parser()
     args = parser.parse_intermixed_args()
 
-    default_conf = OmegaConf.create(EVDPipeline.default_conf)
+    default_conf = OmegaConf.create(WxBSPipeline.default_conf)
 
     # mingle paths
     output_dir = Path(EVAL_PATH, dataset_name)
@@ -190,7 +160,7 @@ if __name__ == "__main__":
     experiment_dir = output_dir / name
     experiment_dir.mkdir(exist_ok=True)
 
-    pipeline = EVDPipeline(conf)
+    pipeline = WxBSPipeline(conf)
     s, f, r = pipeline.run(
         experiment_dir, overwrite=args.overwrite, overwrite_eval=args.overwrite_eval
     )

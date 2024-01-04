@@ -1,57 +1,54 @@
 """
 Simply load images from a folder or nested folders (does not have any split).
 """
+
+from pathlib import Path
 import argparse
-import logging
-import zipfile
+
+import numpy as np
+import torch
+import torchvision
 import os
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from omegaconf import OmegaConf
+import zipfile
 
 from ..settings import DATA_PATH
 from ..utils.image import ImagePreprocessor, load_image
+from .base_dataset import BaseDataset
 from ..utils.tools import fork_rng
 from ..visualization.viz2d import plot_image_grid
-from .base_dataset import BaseDataset
-
-logger = logging.getLogger(__name__)
 
 
-def read_homography(path):
-    with open(path, 'r') as hf:
-        lines = hf.readlines()
-        H = []
-        for l in lines:
-            H.append([float(x) for x in l.replace('\t',' ').strip().split(' ') if len(x) > 0])
-        H = np.array(H)
-        H = H / H[2, 2]
-    return H
-
-class EVD(BaseDataset, torch.utils.data.Dataset):
+class WxBSDataset(BaseDataset, torch.utils.data.Dataset):
+    """Wide multiple baselines stereo dataset."""
+    url = 'http://cmp.felk.cvut.cz/wbs/datasets/WxBS_v1.1.zip'
+    zip_fname = 'WxBS_v1.1.zip'
+    validation_pairs = ['kyiv_dolltheater2', 'petrzin']
     default_conf = {
         "preprocessing": ImagePreprocessor.default_conf,
-        "data_dir": "EVD",
+        "data_dir": "WxBS",
         "subset": None,
         "grayscale": False,
     }
-    url = "http://cmp.felk.cvut.cz/wbs/datasets/EVD.zip"
-
     def _init(self, conf):
-        assert conf.batch_size == 1
         self.preprocessor = ImagePreprocessor(conf.preprocessing)
         self.root = DATA_PATH / conf.data_dir
         if not self.root.exists():
-            logger.info("Downloading the EVD dataset.")
+            logger.info("Downloading the WxBS dataset.")
             self.download()
         self.pairs = self.index_dataset()
         if not self.pairs:
             raise ValueError("No image found!")
+        
+    def __len__(self):
+        return len(self.pairs)
 
     def download(self):
-        data_dir = self.root.parent
+        data_dir = self.root
         data_dir.mkdir(exist_ok=True, parents=True)
         zip_path = data_dir / self.url.rsplit("/", 1)[-1]
         torch.hub.download_url_to_file(self.url, zip_path)
@@ -59,39 +56,55 @@ class EVD(BaseDataset, torch.utils.data.Dataset):
             z.extractall(data_dir)
         os.unlink(zip_path)
 
-
     def index_dataset(self):
-        sets = sorted([x for x in os.listdir(os.path.join(self.root, '1'))])
+        sets = sorted([x for x in os.listdir(self.root) if os.path.isdir(os.path.join(self.root, x))])
+
         img_pairs_list = []
-        for s in sets:
+        for s in sets[::-1]:
             if s == '.DS_Store':
                 continue
-            img_pairs_list.append(((os.path.join(self.root, '1', s)),
-                                  (os.path.join(self.root, '2', s)),
-                                  (os.path.join(self.root, 'h', s.replace('png', 'txt')))))
+            ss = os.path.join(self.root, s)
+            pairs = os.listdir(ss)
+            for p in sorted(pairs):
+                if p == '.DS_Store':
+                    continue
+                cur_dir = os.path.join(ss, p)
+                if os.path.isfile(os.path.join(cur_dir, '01.png')):
+                    img_pairs_list.append((os.path.join(cur_dir, '01.png'),
+                                           os.path.join(cur_dir, '02.png'),
+                                           os.path.join(cur_dir, 'corrs.txt'),
+                                           os.path.join(cur_dir, 'crossval_errors.txt')))
+                elif os.path.isfile(os.path.join(cur_dir, '01.jpg')):
+                    img_pairs_list.append((os.path.join(cur_dir, '01.jpg'),
+                                           os.path.join(cur_dir, '02.jpg'),
+                                           os.path.join(cur_dir, 'corrs.txt'),
+                                           os.path.join(cur_dir, 'crossval_errors.txt')))
+                else:
+                    continue
         return img_pairs_list
 
     def __getitem__(self, idx):
-        imgfname1, imgfname2, h_fname = self.pairs[idx]
-        H = read_homography(h_fname)
+        imgfname1, imgfname2, pts_fname, err_fname = self.pairs[idx]
         data0 = self.preprocessor(load_image(imgfname1))
         data1 = self.preprocessor(load_image(imgfname2))
-        H = data1["transform"] @ H @ np.linalg.inv(data0["transform"])
-        pair_name = imgfname1.split('/')[-1].split('.')[0]
-        return {
-            "H_0to1": H.astype(np.float32),
-            "scene": pair_name,
+        pts = np.loadtxt(pts_fname)
+        crossval_errors = np.loadtxt(err_fname)
+        pair_name = '/'.join(pts_fname.split('/')[-3:-1]).replace('/', '_')
+        scene_name = '/'.join(pts_fname.split('/')[-3:-2])
+        out = {
+            "pts_0to1": pts,
+            "scene": scene_name,
             "view0": data0,
             "view1": data1,
             "idx": idx,
             "name": pair_name,
-        }
-
-    def __len__(self):
-        return len(self.pairs)
+            "crossval_errors": crossval_errors}
+        return out
 
     def get_dataset(self, split):
+        assert split in ['val', 'test']
         return self
+
 
 def visualize(args):
     conf = {
@@ -100,7 +113,7 @@ def visualize(args):
         "prefetch_factor": 1,
     }
     conf = OmegaConf.merge(conf, OmegaConf.from_cli(args.dotlist))
-    dataset = EVD(conf)
+    dataset = WxBSDataset(conf)
     loader = dataset.get_data_loader("test")
     logger.info("The dataset has %d elements.", len(loader))
 
