@@ -233,7 +233,7 @@ Here are the results as Area Under the Curve (AUC) of the homography error at 1/
 | [DISK + LightGlue](gluefactory/configs/disk+lightglue-official.yaml) | 0.0 / 0.0 / 6.9 / 10.1 |
 
 </details>
-
+</details>
 
 #### WxBS
 
@@ -271,6 +271,7 @@ Here are the results as Area Under the Curve (AUC) of the epipolar error at 1/5/
 | [ALIKED + LightGlue](gluefactory/configs/aliked+lightglue-official.yaml) | 30.6 /  57.0 / 67.5 / 75.4 |
 | [DISK + LightGlue](gluefactory/configs/disk+lightglue-official.yaml) |  25.2 /  43.3 / 50.4 / 55.99 |
 
+</details>
 </details>
 
 #### Image Matching Challenge 2021
