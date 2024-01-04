@@ -21,6 +21,7 @@ from ..utils.image import ImagePreprocessor, load_image
 from .base_dataset import BaseDataset
 from ..utils.tools import fork_rng
 from ..visualization.viz2d import plot_image_grid
+from ..geometry.homography import warp_points
 
 
 class WxBSDataset(BaseDataset, torch.utils.data.Dataset):
@@ -87,7 +88,11 @@ class WxBSDataset(BaseDataset, torch.utils.data.Dataset):
         imgfname1, imgfname2, pts_fname, err_fname = self.pairs[idx]
         data0 = self.preprocessor(load_image(imgfname1))
         data1 = self.preprocessor(load_image(imgfname2))
+        a = load_image(imgfname1)
         pts = np.loadtxt(pts_fname)
+        pts[:, :2] = warp_points(pts[:, :2], data0["transform"], False)
+        pts[:, 2:] = warp_points(pts[:, 2:], data1["transform"], False)
+        
         crossval_errors = np.loadtxt(err_fname)
         pair_name = '/'.join(pts_fname.split('/')[-3:-1]).replace('/', '_')
         scene_name = '/'.join(pts_fname.split('/')[-3:-2])

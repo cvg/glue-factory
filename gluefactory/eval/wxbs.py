@@ -30,7 +30,7 @@ class WxBSPipeline(EvalPipeline):
             "name": "wxbs",
             "num_workers": 1,
             "preprocessing": {
-                "resize": None,  # we also resize during eval to have comparable metrics
+                "resize": 600,  # we also resize during eval to have comparable metrics
                 "side": "short",
             },
         },
@@ -71,13 +71,14 @@ class WxBSPipeline(EvalPipeline):
         if not pred_file.exists() or overwrite:
             if model is None:
                 model = load_model(self.conf.model, self.conf.checkpoint)
-            export_predictions(
-                self.get_dataloader(self.conf.data),
-                model,
-                pred_file,
-                keys=self.export_keys,
-                optional_keys=self.optional_export_keys,
-            )
+                with torch.inference_mode():
+                    export_predictions(
+                    self.get_dataloader(self.conf.data),
+                    model,
+                    pred_file,
+                    keys=self.export_keys,
+                    optional_keys=self.optional_export_keys,
+                )
         return pred_file
 
     def run_eval(self, loader, pred_file):

@@ -188,6 +188,91 @@ AP_lines: 69.22
 
 </details>
 
+#### EVD
+
+The dataset will be auto-downloaded if it is not found on disk, and will need about 27 Mb of free disk space.
+
+<details>
+<summary>[Evaluating LightGlue]</summary>
+
+To evaluate LightGlue on EVD, run:
+```bash
+python -m gluefactory.eval.evd --conf gluefactory/configs/superpoint+lightglue-official.yaml
+```
+You should expect the following results
+```
+{'H_error_dlt@10px': 0.0808,
+ 'H_error_dlt@1px': 0.0,
+ 'H_error_dlt@20px': 0.1443,
+ 'H_error_dlt@5px': 0.0,
+ 'H_error_ransac@10px': 0.1045,
+ 'H_error_ransac@1px': 0.0,
+ 'H_error_ransac@20px': 0.1189,
+ 'H_error_ransac@5px': 0.0553,
+ 'H_error_ransac_mAA': 0.069675,
+ 'mH_error_dlt': nan,
+ 'mH_error_ransac': nan,
+ 'mnum_keypoints': 2048.0,
+ 'mnum_matches': 11.0,
+ 'mprec@1px': 0.0,
+ 'mprec@3px': 0.0,
+ 'mransac_inl': 5.0,
+ 'mransac_inl%': 0.089}
+```
+
+Here are the results as Area Under the Curve (AUC) of the homography error at 1/5/10/20 pixels:
+<details>
+<summary>[LightGlue on EVD]</summary>
+
+| Methods                                                     | [PoseLib](../gluefactory/robust_estimators/homography/poselib.py)      |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [SuperPoint + SuperGlue](gluefactory/configs/superpoint+superglue-official.yaml) |  0.0 / 5.4 / 10.1 / 11.7  |
+| [SuperPoint + LightGlue](gluefactory/configs/superpoint+lightglue-official.yaml) |  0.0 / 5.5 / 10.4 / 11.8  |
+| [SIFT (4K) + LightGlue](gluefactory/configs/sift+lightglue-official.yaml) | 0.0 / 3.8 / 5.2 / 10.0  |
+| [ALIKED + LightGlue](gluefactory/configs/aliked+lightglue-official.yaml) | 0.0 / 5.4 / 12.4 / 16.2|
+| [DISK + LightGlue](gluefactory/configs/disk+lightglue-official.yaml) | 0.0 / 0.0 / 6.9 / 10.1 |
+
+</details>
+
+
+#### WxBS
+
+The dataset will be auto-downloaded if it is not found on disk, and will need about 40 Mb of free disk space.
+
+<details>
+<summary>[Evaluating LightGlue]</summary>
+
+To evaluate LightGlue on WxBS, run:
+```bash
+python -m gluefactory.eval.WxBS --conf gluefactory/configs/superpoint+lightglue-official.yaml
+```
+You should expect the following results
+```
+{'epi_error@10px': 0.6141352941176471,
+ 'epi_error@1px': 0.2968,
+ 'epi_error@20px': 0.6937882352941176,
+ 'epi_error@5px': 0.5143617647058826,
+ 'epi_error_mAA': 0.5297713235294118,
+ 'mnum_keypoints': 2048.0,
+ 'mnum_matches': 99.5,
+ 'mransac_inl': 65.0,
+ 'mransac_inl%': nan}
+```
+
+Here are the results as Area Under the Curve (AUC) of the epipolar error at 1/5/10/20 pixels:
+<details>
+<summary>[LightGlue on WxBS]</summary>
+
+| Methods                                                     | [PoseLib](../gluefactory/robust_estimators/fundamental_matrix/poselib.py)      |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [SuperPoint + SuperGlue](gluefactory/configs/superpoint+superglue-official.yaml) | 16.5 /  42.1 / 52.1 / 59.4 |
+| [SuperPoint + LightGlue](gluefactory/configs/superpoint+lightglue-official.yaml) |  29.6 /  51.4 / 61.4 / 69.3 |
+| [SIFT (4K) + LightGlue](gluefactory/configs/sift+lightglue-official.yaml) | 59.4 /  73.3 /  79.5 / 85.0  |
+| [ALIKED + LightGlue](gluefactory/configs/aliked+lightglue-official.yaml) | 30.6 /  57.0 / 67.5 / 75.4 |
+| [DISK + LightGlue](gluefactory/configs/disk+lightglue-official.yaml) |  25.2 /  43.3 / 50.4 / 55.99 |
+
+</details>
+
 #### Image Matching Challenge 2021
 Coming soon!
 

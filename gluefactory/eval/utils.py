@@ -22,7 +22,7 @@ def get_matches_scores(kpts0, kpts1, matches0, mscores0):
     m0 = matches0 > -1
     m1 = matches0[m0]
     pts0 = kpts0[m0]
-    pts1 = kpts1[m1]
+    pts1 = kpts1[m1.long()]
     scores = mscores0[m0]
     return pts0, pts1, scores
 
@@ -279,9 +279,7 @@ def eval_fundamental_matrices(fm_results, auc_ths, key, unit="°"):
         print("best threshold =", best_th)
 
     summaries = {}
-    print (f"Pose AUCs = {pose_aucs}")
     for i, ath in enumerate(auc_ths):
-        print (f"{key}@{ath}{unit} {best_th} {i}")
         summaries[f"{key}@{ath}{unit}"] = pose_aucs[best_th][i]
     summaries[f"{key}_mAA"] = mAAs[best_th]
 
