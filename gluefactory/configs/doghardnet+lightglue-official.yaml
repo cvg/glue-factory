@@ -1,7 +1,7 @@
 model:
     name: two_view_pipeline
     extractor:
-      name: extractors.sift
+      name: extractors.doghardnet
       backend: opencv
       max_num_keypoints: 2048
     matcher:

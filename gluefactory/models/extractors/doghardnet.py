@@ -81,7 +81,7 @@ def run_opencv_sift(features: cv2.Feature2D, image: np.ndarray) -> np.ndarray:
     scores = np.array([k.response for k in detections], dtype=np.float32)
     scales = np.array([k.size for k in detections], dtype=np.float32)
     angles = np.deg2rad(np.array([k.angle for k in detections], dtype=np.float32))
-    return detections, points, scores, scales, angles, descriptors
+    return detections, points, scores, scales, angles
 
 
 class DoGHardNet(BaseModel):
@@ -141,6 +141,8 @@ class DoGHardNet(BaseModel):
                 f"Unknown backend: {backend} not in " f"{{{','.join(backends)}}}."
             )
         self.laf_desc = KF.LAFDescriptor().eval()
+        self.set_initialized()
+
     def extract_single_image(self, image: torch.Tensor):
         image_np = image.cpu().numpy().squeeze(0)
 
