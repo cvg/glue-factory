@@ -67,6 +67,8 @@ def run_opencv_sift(features: cv2.Feature2D, image: np.ndarray) -> np.ndarray:
     Returns:
         keypoints: 1D array of detected cv2.KeyPoint
         scores: 1D array of responses
+        scales: 1D array of keypoint sizes
+        angles: 1D array of keypoint orientations in radians
         descriptors: 1D array of descriptors
     """
     detections, descriptors = features.detectAndCompute(image, None)
