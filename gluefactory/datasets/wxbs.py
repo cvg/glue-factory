@@ -2,8 +2,8 @@
 Simply load images from a folder or nested folders (does not have any split).
 """
 
-from pathlib import Path
 import argparse
+import logging
 
 import numpy as np
 import torch
@@ -13,8 +13,10 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from omegaconf import OmegaConf
 import zipfile
+from omegaconf import OmegaConf
+from pathlib import Path
+
 
 from ..settings import DATA_PATH
 from ..utils.image import ImagePreprocessor, load_image
@@ -22,6 +24,8 @@ from .base_dataset import BaseDataset
 from ..utils.tools import fork_rng
 from ..visualization.viz2d import plot_image_grid
 from ..geometry.homography import warp_points
+
+logger = logging.getLogger(__name__)
 
 
 class WxBSDataset(BaseDataset, torch.utils.data.Dataset):
