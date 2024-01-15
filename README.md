@@ -224,13 +224,15 @@ Here are the results as Area Under the Curve (AUC) of the homography error at 1/
 <details>
 <summary>[LightGlue on EVD]</summary>
 
-| Methods                                                     | [PoseLib](../gluefactory/robust_estimators/homography/poselib.py)      |
+| Methods    (2K features if not specified)                   | [PoseLib](../gluefactory/robust_estimators/homography/poselib.py)      |
 | ----------------------------------------------------------- | ---------------------------------------------------------------------- |
 | [SuperPoint + SuperGlue](gluefactory/configs/superpoint+superglue-official.yaml) |  0.0 / 5.4 / 10.1 / 11.7  |
 | [SuperPoint + LightGlue](gluefactory/configs/superpoint+lightglue-official.yaml) |  0.0 / 5.5 / 10.4 / 11.8  |
 | [SIFT (4K) + LightGlue](gluefactory/configs/sift+lightglue-official.yaml) | 0.0 / 3.8 / 5.2 / 10.0  |
+| [DoGHardNet + LightGlue](gluefactory/configs/doghardnet+lightglue-official.yaml) |  0.0 / 5.5 / 10.5 / 11.9 |
 | [ALIKED + LightGlue](gluefactory/configs/aliked+lightglue-official.yaml) | 0.0 / 5.4 / 12.4 / 16.2|
 | [DISK + LightGlue](gluefactory/configs/disk+lightglue-official.yaml) | 0.0 / 0.0 / 6.9 / 10.1 |
+
 
 </details>
 </details>
@@ -263,13 +265,14 @@ Here are the results as Area Under the Curve (AUC) of the epipolar error at 1/5/
 <details>
 <summary>[LightGlue on WxBS]</summary>
 
-| Methods                                                     | [PoseLib](../gluefactory/robust_estimators/fundamental_matrix/poselib.py)      |
+| Methods (2K features if not specified)                      | [PoseLib](../gluefactory/robust_estimators/fundamental_matrix/poselib.py)      |
 | ----------------------------------------------------------- | ---------------------------------------------------------------------- |
-| [SuperPoint + SuperGlue](gluefactory/configs/superpoint+superglue-official.yaml) | 16.5 /  42.1 / 52.1 / 59.4 |
-| [SuperPoint + LightGlue](gluefactory/configs/superpoint+lightglue-official.yaml) |  29.6 /  51.4 / 61.4 / 69.3 |
-| [SIFT (4K) + LightGlue](gluefactory/configs/sift+lightglue-official.yaml) | 59.4 /  73.3 /  79.5 / 85.0  |
-| [ALIKED + LightGlue](gluefactory/configs/aliked+lightglue-official.yaml) | 30.6 /  57.0 / 67.5 / 75.4 |
-| [DISK + LightGlue](gluefactory/configs/disk+lightglue-official.yaml) |  25.2 /  43.3 / 50.4 / 55.99 |
+| [SuperPoint + SuperGlue](gluefactory/configs/superpoint+superglue-official.yaml) | 13.2 /  39.9 / 49.7 / 56.7 |
+| [SuperPoint + LightGlue](gluefactory/configs/superpoint+lightglue-official.yaml) |  12.6 /  34.5 / 44.0 / 52.2 |
+| [SIFT (4K) + LightGlue](gluefactory/configs/sift+lightglue-official.yaml) |  9.5 / 22.7 / 29.0 / 34.2 |
+| [DoGHardNet + LightGlue](gluefactory/configs/doghardnet+lightglue-official.yaml) |  10.0 / 29.6 / 39.0 / 49.2 |
+| [ALIKED + LightGlue](gluefactory/configs/aliked+lightglue-official.yaml) | 18.7 / 46.2 / 56.0 / 63.5 |
+| [DISK + LightGlue](gluefactory/configs/disk+lightglue-official.yaml) |  15.1 /  39.3 / 48.2 / 55.2 |
 
 </details>
 </details>
