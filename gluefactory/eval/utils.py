@@ -87,7 +87,8 @@ def eval_matches_epipolar_via_gt_points(data: dict, pred: dict, conf) -> dict:
         "m_kpts1": pts1,
     }
     est = estimator(data_)
-    if not est["success"]:
+    success = est["success"] and (len(est["inliers"]) > 0)
+    if not success:
         results["epi_error"] = [1e6 for i in range(len(data['pts_0to1']))]
         results["ransac_inl"] = 0
         results["ransac_inl%"] = 0
