@@ -143,7 +143,7 @@ def filter_parameters(params, regexp):
 
 
 def get_lr_scheduler(optimizer, conf):
-    """Get lr scheduler specified by conf."""
+    """Get lr scheduler specified by conf.train.lr_schedule."""
     if conf.type not in ["factor", "exp", None]:
         if hasattr(conf.options, "schedulers"):
             # Add option to chain multiple schedulers together
