@@ -37,14 +37,13 @@ configs = {
         },
     },
     "cv2-sift": {
-        "name": f"r{resize}_cv2-SIFT-k{n_kpts}",
+        "name": f"r{resize}_opencv-SIFT-k{n_kpts}",
         "keys": ["keypoints", "descriptors", "keypoint_scores", "oris", "scales"],
         "gray": True,
         "conf": {
             "name": "extractors.sift",
             "max_num_keypoints": 4096,
-            "detection_threshold": 0.001,
-            "detector": "cv2",
+            "backend": "opencv",
         },
     },
     "pycolmap-sift": {
@@ -54,11 +53,7 @@ configs = {
         "conf": {
             "name": "extractors.sift",
             "max_num_keypoints": n_kpts,
-            "detection_threshold": 0.0001,
-            "detector": "pycolmap",
-            "pycolmap_options": {
-                "first_octave": -1,
-            },
+            "backend": "pycolmap",
         },
     },
     "pycolmap-sift-gpu": {
@@ -68,11 +63,7 @@ configs = {
         "conf": {
             "name": "extractors.sift",
             "max_num_keypoints": n_kpts,
-            "detection_threshold": 0.0066666,
-            "detector": "pycolmap_cuda",
-            "pycolmap_options": {
-                "first_octave": -1,
-            },
+            "backend": "pycolmap_cuda",
             "nms_radius": 3,
         },
     },

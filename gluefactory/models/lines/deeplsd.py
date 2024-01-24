@@ -41,7 +41,7 @@ class DeepLSD(BaseModel):
 
         if not path.parent.is_dir():
             path.parent.mkdir(parents=True, exist_ok=True)
-        link = "https://www.polybox.ethz.ch/index.php/s/XVb30sUyuJttFys/download"
+        link = "https://cvg-data.inf.ethz.ch/DeepLSD/deeplsd_md.tar"
         cmd = ["wget", link, "-O", path]
         print("Downloading DeepLSD model...")
         subprocess.run(cmd, check=True)

@@ -1,14 +1,14 @@
 data:
     name: homographies
     homography:
-        difficulty: 0.5
-        max_angle: 30
+        difficulty: 0.7
+        max_angle: 45
         patch_shape: [640, 480]
     photometric:
         p: 0.75
     train_size: 900000
     val_size: 1000
-    batch_size: 80  # 20 per 10GB of GPU mem (12 for triplet)
+    batch_size: 160  # 20 per 10GB of GPU mem (12 for triplet)
     num_workers: 15
 model:
     name: gluefactory.models.two_view_pipeline
@@ -70,4 +70,4 @@ train:
         n_steps: 4
     submodules: []
     # clip_grad: 10  # Use only with mixed precision
-    # load_experiment: 
+    # load_experiment:

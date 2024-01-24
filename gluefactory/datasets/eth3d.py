@@ -194,7 +194,7 @@ class ETH3DDataset(BaseDataset):
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir)
         tmp_dir.mkdir(exist_ok=True, parents=True)
-        url_base = "https://cvg-data.inf.ethz.ch/ETH3D_undistorted/"
+        url_base = "https://cvg-data.inf.ethz.ch/SOLD2/SOLD2_ETH3D_undistorted/"
         zip_name = "ETH3D_undistorted.zip"
         zip_path = tmp_dir / zip_name
         torch.hub.download_url_to_file(url_base + zip_name, zip_path)
