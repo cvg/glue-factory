@@ -60,7 +60,7 @@ class ScanNet1500Pipeline(EvalPipeline):
 
     def _init(self, conf):
         if not (DATA_PATH / "scannet1500").exists():
-            logger.info("Downloading the MegaDepth-1500 dataset.")
+            logger.info("Downloading the ScanNet-1500 dataset.")
             url = "https://cvg-data.inf.ethz.ch/scannet/scannet1500.zip"
             zip_path = DATA_PATH / url.rsplit("/", 1)[-1]
             zip_path.parent.mkdir(exist_ok=True, parents=True)
