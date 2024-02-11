@@ -5,6 +5,7 @@
    The implementation of this model and its trained weights are made
    available under the MIT license.
 """
+
 from collections import OrderedDict
 from types import SimpleNamespace
 

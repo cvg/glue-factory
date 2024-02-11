@@ -1,6 +1,7 @@
 """
 Simply load images from a folder or nested folders (does not have any split).
 """
+
 import argparse
 import logging
 import tarfile
