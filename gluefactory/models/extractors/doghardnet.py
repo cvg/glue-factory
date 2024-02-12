@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from kornia.color import rgb_to_grayscale
 from packaging import version
+import kornia.feature as KF
 
 try:
     import pycolmap
@@ -16,6 +17,9 @@ from ..utils.misc import pad_to_length
 
 
 def filter_dog_point(points, scales, angles, image_shape, nms_radius, scores=None):
+    if len(scales) == 0:
+        keep =  [True for x in range(len(scales))]
+        return np.array(keep).astype(bool)
     h, w = image_shape
     ij = np.round(points - 0.5).astype(int).T[::-1]
 
@@ -65,31 +69,32 @@ def run_opencv_sift(features: cv2.Feature2D, image: np.ndarray) -> np.ndarray:
         features: OpenCV based keypoints detector and descriptor
         image: Grayscale image of uint8 data type
     Returns:
-        keypoints: 1D array of detected cv2.KeyPoint
+        detections: 1D array of detected cv2.KeyPoint
+        keypoints: 2D array of keypoints
         scores: 1D array of responses
-        scales: 1D array of keypoint sizes
-        angles: 1D array of keypoint orientations in radians
-        descriptors: 1D array of descriptors
+        scales: 1D array of scales
+        angles: 1D array of angles in radians
     """
-    detections, descriptors = features.detectAndCompute(image, None)
+    detections = features.detect(image, None)
+
     points = np.array([k.pt for k in detections], dtype=np.float32)
     scores = np.array([k.response for k in detections], dtype=np.float32)
     scales = np.array([k.size for k in detections], dtype=np.float32)
     angles = np.deg2rad(np.array([k.angle for k in detections], dtype=np.float32))
-    return points, scores, scales, angles, descriptors
+    return detections, points, scores, scales, angles
 
 
-class SIFT(BaseModel):
+class DoGHardNet(BaseModel):
     default_conf = {
         "rootsift": True,
         "nms_radius": 0,  # None to disable filtering entirely.
         "max_num_keypoints": 4096,
         "backend": "opencv",  # in {opencv, pycolmap, pycolmap_cpu, pycolmap_cuda}
-        "detection_threshold": 0.0066667,  # from COLMAP
-        "edge_threshold": 10,
+        "detection_threshold": -1,  # from COLMAP
+        "edge_threshold": -1,
         "first_octave": -1,  # only used by pycolmap, the default of COLMAP
         "num_octaves": 4,
-        "force_num_keypoints": False,
+        "force_num_keypoints": True,
     }
 
     required_data_keys = ["image"]
@@ -126,7 +131,7 @@ class SIFT(BaseModel):
         elif backend == "opencv":
             self.sift = cv2.SIFT_create(
                 contrastThreshold=self.conf.detection_threshold,
-                nfeatures=self.conf.max_num_keypoints,
+                nfeatures=int(1.3*(self.conf.max_num_keypoints)),  # to account for the NMS
                 edgeThreshold=self.conf.edge_threshold,
                 nOctaveLayers=self.conf.num_octaves,
             )
@@ -135,6 +140,8 @@ class SIFT(BaseModel):
             raise ValueError(
                 f"Unknown backend: {backend} not in " f"{{{','.join(backends)}}}."
             )
+        self.laf_desc = KF.LAFDescriptor().eval()
+        self.set_initialized()
 
     def extract_single_image(self, image: torch.Tensor):
         image_np = image.cpu().numpy().squeeze(0)
@@ -154,9 +161,18 @@ class SIFT(BaseModel):
                 scores = np.abs(scores) * scales
         elif self.conf.backend == "opencv":
             # TODO: Check if opencv keypoints are already in corner convention
-            keypoints, scores, scales, angles, descriptors = run_opencv_sift(
+            kpts, keypoints, scores, scales, angles = run_opencv_sift(
                 self.sift, (image_np * 255.0).astype(np.uint8)
             )
+            descriptors = np.zeros((len(keypoints), 128)).astype(np.float32)
+
+        if len(keypoints) < 2:
+            keypoints = np.zeros((1,2)).astype(np.float32)
+            scales = np.ones((1)).astype(np.float32)
+            angles = np.zeros((1)).astype(np.float32)
+            descriptors = np.zeros((1, 128)).astype(np.float32)
+            scores = np.zeros((1)).astype(np.float32)
+
         pred = {
             "keypoints": keypoints,
             "scales": scales,
@@ -172,8 +188,10 @@ class SIFT(BaseModel):
                 pred["keypoints"] + 0.5 < np.array([image_np.shape[-2:][::-1]])
             ).all(-1)
             pred = {k: v[is_inside] for k, v in pred.items()}
+        pred2 = pred
 
-        if self.conf.nms_radius is not None:
+        if (self.conf.nms_radius is not None) and len(pred["scales"] > 0):
+            #print (pred["keypoints"])
             keep = filter_dog_point(
                 pred["keypoints"],
                 pred["scales"],
@@ -182,18 +200,31 @@ class SIFT(BaseModel):
                 self.conf.nms_radius,
                 pred["keypoint_scores"],
             )
-            pred = {k: v[keep] for k, v in pred.items()}
-
-        pred = {k: torch.from_numpy(v) for k, v in pred.items()}
+            pred2 = {k: v[keep] for k, v in pred.items()}
+            #print (pred2["keypoints"])
+        if pred2['keypoints'] is not None:
+            pred = pred2
+        #for k,v in pred.items():
+        #    print(k, v)
+        pred = {k: torch.from_numpy(v).float() for k, v in pred.items()}
         if scores is not None:
             # Keep the k keypoints with highest score
             num_points = self.conf.max_num_keypoints
             if num_points is not None and len(pred["keypoints"]) > num_points:
                 indices = torch.topk(pred["keypoint_scores"], num_points).indices
                 pred = {k: v[indices] for k, v in pred.items()}
+        lafs = KF.laf_from_center_scale_ori(pred["keypoints"].reshape(1,-1,2),
+                      6.0 * pred["scales"].reshape(1,-1,1, 1),
+                      torch.rad2deg(pred["oris"]).reshape(1,-1,1))
+        self.laf_desc = self.laf_desc.to(image.device)
+        self.laf_desc.descriptor = self.laf_desc.descriptor.eval()
+        device = image.device
+        with torch.inference_mode():
+            pred["descriptors"] = self.laf_desc(image[None], lafs.to(device)).reshape(-1, 128).detach()
 
         if self.conf.force_num_keypoints:
-            num_points = min(self.conf.max_num_keypoints, len(pred["keypoints"]))
+            num_points = max(self.conf.max_num_keypoints, len(pred["keypoints"]))
+            num_points = self.conf.max_num_keypoints
             pred["keypoints"] = pad_to_length(
                 pred["keypoints"],
                 num_points,
@@ -207,7 +238,7 @@ class SIFT(BaseModel):
                 pred["descriptors"], num_points, -2, mode="zeros"
             )
             if pred["keypoint_scores"] is not None:
-                scores = pad_to_length(
+                pred["keypoint_scores"] = pad_to_length(
                     pred["keypoint_scores"], num_points, -1, mode="zeros"
                 )
         return pred
@@ -217,19 +248,16 @@ class SIFT(BaseModel):
         if image.shape[1] == 3:
             image = rgb_to_grayscale(image)
         device = image.device
-        image = image.cpu()
         pred = []
+        im_size = data.get("image_size").long()
         for k in range(len(image)):
             img = image[k]
-            if "image_size" in data.keys():
-                # avoid extracting points in padded areas
+            if im_size is not None:
                 w, h = data["image_size"][k]
-                img = img[:, :h, :w]
+                img = img[:, :h.to(torch.int32), :w.to(torch.int32)]
             p = self.extract_single_image(img)
             pred.append(p)
         pred = {k: torch.stack([p[k] for p in pred], 0).to(device) for k in pred[0]}
-        if self.conf.rootsift:
-            pred["descriptors"] = sift_to_rootsift(pred["descriptors"])
         return pred
 
     def loss(self, pred, data):

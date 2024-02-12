@@ -76,6 +76,16 @@ configs = {
             "max_num_keypoints": n_kpts,
         },
     },
+    "doghardnet": {
+        "name": f"r{resize}_doghardnet-k4096",
+        "keys": ["keypoints", "descriptors", "keypoint_scores", "oris", "scales"],
+        "gray": True,
+        "conf": {
+            "name": "extractors.doghardnet",
+            "max_num_keypoints": 4096,
+            "backend": "opencv",
+        },
+    },
     "disk": {
         "name": f"r{resize}_DISK-k{n_kpts}-nms5",
         "keys": ["keypoints", "descriptors", "keypoint_scores"],
