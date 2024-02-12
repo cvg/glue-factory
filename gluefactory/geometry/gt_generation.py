@@ -375,9 +375,9 @@ def gt_line_matches_from_pose_depth(
     all_in_batch = (
         torch.arange(b_size)[:, None].repeat(1, assignation.shape[-1]).flatten()
     )
-    positive[
-        all_in_batch, assignation[:, 0].flatten(), assignation[:, 1].flatten()
-    ] = True
+    positive[all_in_batch, assignation[:, 0].flatten(), assignation[:, 1].flatten()] = (
+        True
+    )
 
     m0 = assignation.new_full((b_size, n_lines0), unmatched, dtype=torch.long)
     m0.scatter_(-1, assignation[:, 0], assignation[:, 1])

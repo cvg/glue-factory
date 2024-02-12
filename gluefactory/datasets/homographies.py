@@ -293,7 +293,7 @@ def visualize(args):
         images = []
         for _, data in zip(range(args.num_items), loader):
             images.append(
-                (data[f"view{i}"]["image"][0].permute(1, 2, 0) for i in range(2))
+                [data[f"view{i}"]["image"][0].permute(1, 2, 0) for i in range(2)]
             )
     plot_image_grid(images, dpi=args.dpi)
     plt.tight_layout()
