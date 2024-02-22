@@ -20,6 +20,14 @@ benchmarks:
       eval:
         estimator: opencv
         ransac_th: 0.5
+    megadepth1500_aligned:
+      data:
+        preprocessing:
+          side: long
+          resize: 1600
+      eval:
+        estimator: opencv
+        ransac_th: 0.5
     hpatches:
       eval:
         estimator: opencv

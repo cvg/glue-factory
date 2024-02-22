@@ -91,6 +91,12 @@ def eval_matches_homography(data: dict, pred: dict) -> dict:
     return results
 
 
+def rp_to_gravity(roll: torch.Tensor, pitch: torch.Tensor) -> torch.Tensor:
+    sr, cr = torch.sin(roll), torch.cos(roll)
+    sp, cp = torch.sin(pitch), torch.cos(pitch)
+    return torch.stack([-sr * cp, -cr * cp, sp], dim=-1)
+
+
 def eval_relative_pose_robust(data, pred, conf):
     check_keys_recursive(data, ["view0", "view1", "T_0to1"])
     check_keys_recursive(
@@ -108,13 +114,19 @@ def eval_relative_pose_robust(data, pred, conf):
     data_ = {
         "m_kpts0": pts0,
         "m_kpts1": pts1,
-        "camera0": data["view0"]["camera"][0],
-        "camera1": data["view1"]["camera"][0],
+        "camera0": (
+            data["view0"]["camera"][0] if "camera0" not in pred else pred["camera0"][0]
+        ),
+        "camera1": (
+            data["view1"]["camera"][0] if "camera1" not in pred else pred["camera1"][0]
+        ),
     }
     est = estimator(data_)
 
     if not est["success"]:
         results["rel_pose_error"] = float("inf")
+        results["translation_error"] = float("inf")
+        results["rotation_error"] = float("inf")
         results["ransac_inl"] = 0
         results["ransac_inl%"] = 0
     else:
@@ -123,6 +135,8 @@ def eval_relative_pose_robust(data, pred, conf):
         inl = est["inliers"].numpy()
         t_error, r_error = relative_pose_error(T_gt, M.R, M.t)
         results["rel_pose_error"] = max(r_error, t_error)
+        results["translation_error"] = t_error
+        results["rotation_error"] = r_error
         results["ransac_inl"] = np.sum(inl)
         results["ransac_inl%"] = np.mean(inl)
 
