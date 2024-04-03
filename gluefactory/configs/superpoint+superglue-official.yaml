@@ -23,4 +23,8 @@ benchmarks:
         model:
             extractor:
                 max_num_keypoints: 1024  # overwrite config above
+    scannet1500:
+        eval:
+            estimator: opencv
+            ransac_th: 1.0
 
