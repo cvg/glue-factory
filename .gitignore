@@ -7,3 +7,6 @@
 /data/
 /outputs/
 __pycache__
+# Ignore image files
+*.jpg
+*.png
