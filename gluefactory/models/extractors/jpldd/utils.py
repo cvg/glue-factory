@@ -9,6 +9,10 @@ import torch.nn.functional as F
 from torch.nn.functional import softmax, pixel_shuffle
 
 
+def change_dict_key(d, old_key, new_key, default_value=None):
+    d[new_key] = d.pop(old_key, default_value)
+
+
 def simple_nms(scores: torch.Tensor, nms_radius: int):
     """Fast Non-maximum suppression to remove nearby points"""
 

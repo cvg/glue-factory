@@ -11,6 +11,7 @@ from torchvision.models import resnet
 class SMH(nn.Module):
     def __init__(self, input_dim):
         super(SMH, self).__init__()
+        self.gate = nn.SELU(inplace=True)
         self.score_head = nn.Sequential(
             resnet.conv1x1(input_dim, 8),
             self.gate,
