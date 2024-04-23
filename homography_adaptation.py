@@ -32,11 +32,11 @@ erosion_kernel = torch.tensor(
 
 
 def torch_homography_adaptation(img, net: DeepLSD, num_H=10, H_params=default_H_params,
-                                aggregation='median'):
+                                aggregation='median', bs=10):
     """ Perform homography adaptation at test time using Pytorch.
         Only works with a batch size of 1. """
     assert len(img) == 1, "torch_homography_adaptation only with a batch size of 1."
-    bs = 10
+    # bs = 10
     device = img.device
     h, w = img.shape[2:4]
     
@@ -71,7 +71,6 @@ def torch_homography_adaptation(img, net: DeepLSD, num_H=10, H_params=default_H_
             outs['offset'] = torch.stack((outs['df']*torch.sin(outs['line_level'] + torch.pi / 2),
                                           outs['df']*torch.cos(outs['line_level'] + torch.pi / 2)),
                                           dim=3)
-            print(outs['offset'].shape)
             # Warp back the results
             df, angle, offset, count = warp_afm(
                 outs['df'], outs['line_level'],
