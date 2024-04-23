@@ -36,7 +36,7 @@ class ImageFolder(BaseDataset, torch.utils.data.Dataset):
                     raise ValueError(
                         f"Could not find any image in folder: {conf.images}."
                     )
-                self.images = [i.relative_to(conf.images) for i in self.images]
+                self.images = [i.relative_to(conf.images) for i in self.images]  #Todo: relative paths lead to FileNotFoundError
                 self.root = conf.images
                 logging.info(f"Found {len(self.images)} images in folder.")
         elif isinstance(conf.images, omegaconf.listconfig.ListConfig):
@@ -51,7 +51,7 @@ class ImageFolder(BaseDataset, torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         path = self.images[idx]
-        img = load_image(path)
+        img = load_image(self.root / path) # Todo: is this correction generally needed?
         data = {"name": str(path), **self.preprocessor(img)}
         return data
 

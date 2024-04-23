@@ -50,7 +50,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         K = aliked_model_cfg["K"]
         M = aliked_model_cfg["M"]
         # Load Network Components
-        print(f"aliked cfg(type={type(aliked_model_cfg)}): {aliked_model_cfg}")
+        # print(f"aliked cfg(type={type(aliked_model_cfg)}): {aliked_model_cfg}")
         self.encoder_backbone = AlikedEncoder(aliked_model_cfg)
         self.keypoint_and_junction_branch = SMH(dim)  # using SMH from ALIKE here
         self.dkd = DKD(radius=conf.nms_radius,
@@ -94,9 +94,9 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
         # load pretrained_elements if wanted (for now that only the ALIKED parts of the network)
         if conf.pretrained:
-            old_test_val = self.encoder_backbone.conv1.weight.data.clone()
+            old_test_val1 = self.encoder_backbone.conv1.weight.data.clone()
             self.load_pretrained_elements()
-            assert not torch.all(torch.eq(self.encoder_backbone.conv1.weight.data.clone(), old_test_val)).item() # test if weights really loaded!
+            assert not torch.all(torch.eq(self.encoder_backbone.conv1.weight.data.clone(), old_test_val1)).item() # test if weights really loaded!
 
     # Utility methods for line df and af with deepLSD
     def normalize_df(self, df):
@@ -155,8 +155,8 @@ class JointPointLineDetectorDescriptor(BaseModel):
             "keypoint_and_junction_score_map": keypoint_and_junction_score_map,  # B x 1 x H x W
             "line_anglefield": line_angle_field,
             "line_distancefield": line_distance_field,
-            "line_endpoints": line_segments,  # as tuples
-            "line_descriptors": line_descriptors,  # as vectors
+            #"line_endpoints": line_segments,  # as tuples
+            #"line_descriptors": line_descriptors,  # as vectors
         }
 
     def loss(self, pred, data):
@@ -171,7 +171,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             if k.startswith("block") or k.startswith("conv"):
                 change_dict_key(aliked_state_dict, k, f"encoder_backbone.{k}")
             elif k.startswith("score_head"):
-                change_dict_key(aliked_state_dict, k, f"keypoint_and_junction_branch.{k[11:]}")
+                change_dict_key(aliked_state_dict, k, f"keypoint_and_junction_branch.{k}")
             elif k.startswith("desc_head"):
                 change_dict_key(aliked_state_dict, k, f"descriptor_branch.{k[10:]}")
             else:

@@ -29,7 +29,10 @@ def batch_to_numpy(batch):
 
 def batch_to_device(batch, device, non_blocking=True):
     def _func(tensor):
-        return tensor.to(device=device, non_blocking=non_blocking)
+        if isinstance(tensor, torch.Tensor):  # ToDo: fix for image_size in loaded dict with dataloader is np array
+            return tensor.to(device=device, non_blocking=non_blocking)
+        else:
+            return tensor
 
     return map_tensor(batch, _func)
 
