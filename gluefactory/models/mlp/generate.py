@@ -2,33 +2,32 @@ import glob
 import random
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from PIL import Image
-import random
+
 from gluefactory.models.deeplsd_inference import DeepLSD
 
-import matplotlib.pyplot as plt
-
 # Deep LSD Config
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 conf = {
-    'detect_lines': True,  # Whether to detect lines or only DF/AF
-    'line_detection_params': {
-        'merge': False,  # Whether to merge close-by lines
-        'filtering': True,
+    "detect_lines": True,  # Whether to detect lines or only DF/AF
+    "line_detection_params": {
+        "merge": False,  # Whether to merge close-by lines
+        "filtering": True,
         # Whether to filter out lines based on the DF/AF. Use 'strict' to get an even stricter filtering
-        'grad_thresh': 3,
-        'grad_nfa': True,
+        "grad_thresh": 3,
+        "grad_nfa": True,
         # If True, use the image gradient and the NFA score of LSD to further threshold lines. We recommand using it for easy images, but to turn it off for challenging images (e.g. night, foggy, blurry images)
-    }
+    },
 }
 
 # Load the model
-ckpt = 'DeepLSD/weights/deeplsd_md.tar'
+ckpt = "DeepLSD/weights/deeplsd_md.tar"
 ckpt = torch.load(str(ckpt), map_location=device)
 net = DeepLSD(conf)
-net.load_state_dict(ckpt['model'])
+net.load_state_dict(ckpt["model"])
 net = net.to(device).eval()
 
 
@@ -36,16 +35,19 @@ def get_line_from_image(path):
     img = cv2.imread(path)[:, :, ::-1]
     gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
-    inputs = {'image': torch.tensor(gray_img, dtype=torch.float, device=device)[None, None] / 255.}
+    inputs = {
+        "image": torch.tensor(gray_img, dtype=torch.float, device=device)[None, None]
+        / 255.0
+    }
 
     with torch.no_grad():
         out = net(inputs)
 
-    distances = out['df'][0]
-    distances /= out['df'].max()
+    distances = out["df"][0]
+    distances /= out["df"].max()
     distances = distances.cpu().numpy()
 
-    lines = np.array(out['lines'][0])
+    lines = np.array(out["lines"][0])
 
     return distances, lines
 
@@ -72,12 +74,12 @@ positives_test = []
 negatives_test = []
 cnt = 0
 
-for file_path in glob.glob('dataset/revisitop1m/jpg/**/base_image.jpg', recursive=True):
+for file_path in glob.glob("dataset/revisitop1m/jpg/**/base_image.jpg", recursive=True):
     print(f"{cnt} == {file_path}")
 
     # Get path values
-    folder_id = file_path.split('/')[-2]
-    name = file_path.split('/')[-1]
+    folder_id = file_path.split("/")[-2]
+    name = file_path.split("/")[-1]
 
     # Load base image
     image = np.array(Image.open(file_path))
@@ -97,8 +99,12 @@ for file_path in glob.glob('dataset/revisitop1m/jpg/**/base_image.jpg', recursiv
 
         for i in range(15):
             # Now we can random sample the image
-            p1 = np.array([random.randint(0, image.shape[1]), random.randint(0, image.shape[0])])
-            p2 = np.array([random.randint(0, image.shape[1]), random.randint(0, image.shape[0])])
+            p1 = np.array(
+                [random.randint(0, image.shape[1]), random.randint(0, image.shape[0])]
+            )
+            p2 = np.array(
+                [random.randint(0, image.shape[1]), random.randint(0, image.shape[0])]
+            )
 
             # Add negative lines
             if cnt < 150:
@@ -111,10 +117,8 @@ for file_path in glob.glob('dataset/revisitop1m/jpg/**/base_image.jpg', recursiv
     if cnt == 175:
         break
 
-np.save('mlp_data/positives.npy', positives)
-np.save('mlp_data/negatives.npy', negatives)
+np.save("mlp_data/positives.npy", positives)
+np.save("mlp_data/negatives.npy", negatives)
 
-np.save('mlp_data/positives_test.npy', positives_test)
-np.save('mlp_data/negatives_test.npy', negatives_test)
-
-
+np.save("mlp_data/positives_test.npy", positives_test)
+np.save("mlp_data/negatives_test.npy", negatives_test)

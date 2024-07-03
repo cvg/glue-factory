@@ -1,5 +1,6 @@
-import numpy as np
 import cv2
+import numpy as np
+
 
 def nn_interpolate_numpy(img, x, y):
     xi = np.clip(np.round(x).astype(int), 0, img.shape[1] - 1)
@@ -39,36 +40,40 @@ def compute_image_grad(img, ksize=7):
     dx[1:, 1:] = dx[:-1, 1:] + dx[1:, 1:]
     dy[1:] = (blur_img[1:] - blur_img[:-1]) / 2
     dy[1:, 1:] = dy[1:, :-1] + dy[1:, 1:]
-    gradnorm = np.sqrt(dx ** 2 + dy ** 2)
+    gradnorm = np.sqrt(dx**2 + dy**2)
     gradangle = np.arctan2(dy, dx)
     return dx, dy, gradnorm, gradangle
 
 
 def align_with_grad_angle(angle, img):
-    """ Starting from an angle in [0, pi], find the sign of the angle based on
-        the image gradient of the corresponding pixel. """
+    """Starting from an angle in [0, pi], find the sign of the angle based on
+    the image gradient of the corresponding pixel."""
     # Image gradient
     img_grad_angle = compute_image_grad(img)[3]
-    
+
     # Compute the distance of the image gradient to the angle
     # and angle - pi
     pred_grad = np.mod(angle, np.pi)  # in [0, pi]
-    pos_dist = np.minimum(np.abs(img_grad_angle - pred_grad),
-                          2 * np.pi - np.abs(img_grad_angle - pred_grad))
+    pos_dist = np.minimum(
+        np.abs(img_grad_angle - pred_grad),
+        2 * np.pi - np.abs(img_grad_angle - pred_grad),
+    )
     neg_dist = np.minimum(
         np.abs(img_grad_angle - pred_grad + np.pi),
-        2 * np.pi - np.abs(img_grad_angle - pred_grad + np.pi))
-    
+        2 * np.pi - np.abs(img_grad_angle - pred_grad + np.pi),
+    )
+
     # Assign the new grad angle to the closest of the two
-    is_pos_closest = np.argmin(np.stack([neg_dist, pos_dist],
-                                        axis=-1), axis=-1).astype(bool)
+    is_pos_closest = np.argmin(np.stack([neg_dist, pos_dist], axis=-1), axis=-1).astype(
+        bool
+    )
     new_grad_angle = np.where(is_pos_closest, pred_grad, pred_grad - np.pi)
     return new_grad_angle, img_grad_angle
 
 
 def preprocess_angle(angle, img, mask=False):
-    """ Convert a grad angle field into a line level angle, using
-        the image gradient to get the right orientation. """
+    """Convert a grad angle field into a line level angle, using
+    the image gradient to get the right orientation."""
     oriented_grad_angle, img_grad_angle = align_with_grad_angle(angle, img)
     oriented_grad_angle = np.mod(oriented_grad_angle - np.pi / 2, 2 * np.pi)
     if mask:

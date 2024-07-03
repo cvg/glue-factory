@@ -1,27 +1,36 @@
 import os
-import numpy as np
-
-import torch
-from torch.utils.data import *
-from torch.optim import *
-from torch import nn
 
 import matplotlib.pyplot as plt
+import numpy as np
+import torch
 from sklearn import metrics
+from torch import nn
+from torch.optim import *
+from torch.utils.data import *
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 class MLPDataset(Dataset):
     def __init__(self, isTrain=True):
         if isTrain:
-            self.positives = torch.from_numpy(np.load('mlp_data/positives.npy')).float()
-            self.negatives = torch.from_numpy(np.load('mlp_data/negatives.npy')).float()
+            self.positives = torch.from_numpy(np.load("mlp_data/positives.npy")).float()
+            self.negatives = torch.from_numpy(np.load("mlp_data/negatives.npy")).float()
         else:
-            self.positives = torch.from_numpy(np.load('mlp_data/positives_test.npy')).float()
-            self.negatives = torch.from_numpy(np.load('mlp_data/negatives_test.npy')).float()
+            self.positives = torch.from_numpy(
+                np.load("mlp_data/positives_test.npy")
+            ).float()
+            self.negatives = torch.from_numpy(
+                np.load("mlp_data/negatives_test.npy")
+            ).float()
 
-        self.entries = torch.concatenate((self.positives, self.negatives), axis=0).to(device)
-        self.labels = torch.concatenate((torch.ones(self.positives.shape[0]), torch.zeros(self.negatives.shape[0])), axis=0).to(device)
+        self.entries = torch.concatenate((self.positives, self.negatives), axis=0).to(
+            device
+        )
+        self.labels = torch.concatenate(
+            (torch.ones(self.positives.shape[0]), torch.zeros(self.negatives.shape[0])),
+            axis=0,
+        ).to(device)
 
     def __getitem__(self, idx):
         return self.entries[idx], self.labels[idx]
@@ -50,6 +59,7 @@ class MLPModel(nn.Module):
         x = torch.nn.ReLU()(x)
         x = self.layer5(x)
         return torch.sigmoid(x)
+
 
 def train(model, train_data, val_data):
     optimizer = Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
@@ -104,19 +114,26 @@ def train(model, train_data, val_data):
                 # Add to loss
                 validation_loss += loss.item()
 
-        print(f"Train : {train_loss:.4f} Validation : {validation_loss / len(val_data):.4f}")
+        print(
+            f"Train : {train_loss:.4f} Validation : {validation_loss / len(val_data):.4f}"
+        )
 
     # Save the final model for inference
     torch.save(model.state_dict(), f"mlp_data/mlp.pth")
 
     return model
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     train_dataset = MLPDataset(isTrain=True)
     test_dataset = MLPDataset(isTrain=False)
 
-    train_dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True, drop_last=True)
-    validation_dataloder = DataLoader(test_dataset, batch_size=64, shuffle=True, drop_last=True)
+    train_dataloader = DataLoader(
+        train_dataset, batch_size=64, shuffle=True, drop_last=True
+    )
+    validation_dataloder = DataLoader(
+        test_dataset, batch_size=64, shuffle=True, drop_last=True
+    )
 
     model = MLPModel().to(device)
 
@@ -145,7 +162,9 @@ if __name__ == '__main__':
 
     confusion_matrix = metrics.confusion_matrix(actual, predicted)
 
-    cm_display = metrics.ConfusionMatrixDisplay(confusion_matrix = confusion_matrix, display_labels = [0, 1])
+    cm_display = metrics.ConfusionMatrixDisplay(
+        confusion_matrix=confusion_matrix, display_labels=[0, 1]
+    )
 
     cm_display.plot()
     plt.show()

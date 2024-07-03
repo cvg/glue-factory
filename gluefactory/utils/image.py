@@ -128,3 +128,16 @@ def numpy_image_to_torch(image: np.ndarray) -> torch.Tensor:
 def load_image(path: Path, grayscale=False) -> torch.Tensor:
     image = read_image(path, grayscale=grayscale)
     return numpy_image_to_torch(image)
+
+
+def compute_image_grad(img, ksize=7):
+    blur_img = cv2.GaussianBlur(img, (ksize, ksize), 1).astype(np.float32)
+    dx = np.zeros_like(blur_img)
+    dy = np.zeros_like(blur_img)
+    dx[:, 1:] = (blur_img[:, 1:] - blur_img[:, :-1]) / 2
+    dx[1:, 1:] = dx[:-1, 1:] + dx[1:, 1:]
+    dy[1:] = (blur_img[1:] - blur_img[:-1]) / 2
+    dy[1:, 1:] = dy[1:, :-1] + dy[1:, 1:]
+    gradnorm = np.sqrt(dx**2 + dy**2)
+    gradangle = np.arctan2(dy, dx)
+    return dx, dy, gradnorm, gradangle

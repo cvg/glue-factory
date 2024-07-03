@@ -11,7 +11,7 @@ class VGGUNet(torch.nn.Module):
             sizes = [32, 64, 128, 256]
         else:
             sizes = [64, 128, 256, 512]
-        
+
         # Encoder blocks
         self.block1 = nn.Sequential(
             nn.Conv2d(1, sizes[0], kernel_size=3, stride=1, padding=1),
@@ -86,13 +86,15 @@ class VGGUNet(torch.nn.Module):
         for block in [self.block2, self.block3, self.block4]:
             features.append(block(self.pool(features[-1])))
 
-        
         # Decoding
         out = self.deblock4(features[-1])
         for deblock, feat in zip(
-            [self.deblock3, self.deblock2, self.deblock1], features[:-1][::-1]):
-            out = deblock(torch.cat([
-                F.interpolate(out, feat.shape[2:4], mode='bilinear'),
-                feat], dim=1))
+            [self.deblock3, self.deblock2, self.deblock1], features[:-1][::-1]
+        ):
+            out = deblock(
+                torch.cat(
+                    [F.interpolate(out, feat.shape[2:4], mode="bilinear"), feat], dim=1
+                )
+            )
 
         return out  # dim = 32 if tiny else 64
