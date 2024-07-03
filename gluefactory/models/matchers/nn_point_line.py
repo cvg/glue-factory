@@ -16,6 +16,7 @@ from ..utils.metrics import matcher_metrics
 MATCH_THRESHOLD =  0.01
 SINKHORN_ITERATIONS = 30
 DESC_SIZE = 128
+DEBUG = False
 
 
 @torch.no_grad()
@@ -231,10 +232,11 @@ class NearestNeighborPointLineMatcher(BaseModel):
                               data["descriptors1"][batch_idx][data["lines1"][batch_idx][:, 1]]]
                               , 1)
             
-            print(f"lines0 : {data['lines0'][batch_idx].shape}")
-            print(f"lines1 : {data['lines1'][batch_idx].shape}")
-            print(f"desc1 : {desc1.shape}")
-            print(f"desc2 : {desc2.shape}")
+            if DEBUG:
+                print(f"lines0 : {data['lines0'][batch_idx].shape}")
+                print(f"lines1 : {data['lines1'][batch_idx].shape}")
+                print(f"desc1 : {desc1.shape}")
+                print(f"desc2 : {desc2.shape}")
 
             if desc1.shape[0]*desc2.shape[0] > 0:
                 # matches, scores = line_match(desc1, desc2)
@@ -242,11 +244,13 @@ class NearestNeighborPointLineMatcher(BaseModel):
                 matches_1, scores1 = match_segs_with_descinfo_topk(desc1, desc2)
                 matches_2, scores2 = match_segs_with_descinfo_topk(desc2, desc1)
 
-                print(f"Matches 1 : {matches_1.shape}")
-                print(f"Matches 2 : {matches_2.shape}")
+                if DEBUG:
+                    print(f"Matches 1 : {matches_1.shape}")
+                    print(f"Matches 2 : {matches_2.shape}")
 
                 matches = np.array([x for x in set(tuple(x) for x in matches_1) & set(tuple(x) for x in matches_2[:, [1,0]])])
-                print(f"Matches : {matches.shape}")
+                if DEBUG:
+                    print(f"Matches : {matches.shape}")
                 # match_idx = (matches_1[:, None] == matches_2[:, [1,0]]).all(-1).argmax(0)
                 # matches, scores = mutual_match(matches_1, matches_2, line_matching_scores0)
 

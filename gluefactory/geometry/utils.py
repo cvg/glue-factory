@@ -165,3 +165,19 @@ def get_image_coords(img):
             dim=0,
         ).permute(1, 2, 0)
     )[None] + 0.5
+
+def keypoints_to_grid(keypoints, img_size):
+    """ Convert the cartesian coordinates of 2D keypoints into a grid in
+        [-1, 1]² that can be used in torch.nn.functional.interpolate.
+    Args:
+        keypoints: a (..., N, 2) tensor of N keypoints.
+        img_size: image size.
+    Returns:
+        A (B, N, 1, 2) tensor of normalized coordinates.
+    """
+    n_points = keypoints.size()[-2]
+    device = keypoints.device
+    grid_points = (keypoints.float() + 0.5) * 2. / torch.tensor(
+        img_size, dtype=torch.float, device=device) - 1.
+    grid_points = grid_points[..., [1, 0]].view(-1, n_points, 1, 2)
+    return grid_points
