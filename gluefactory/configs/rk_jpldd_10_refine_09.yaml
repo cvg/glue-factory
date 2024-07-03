@@ -1,0 +1,65 @@
+data:
+    name: gluefactory.datasets.minidepth
+    data_dir: "minidepth/images"  # as subdirectory of DATA_PATH(defined in settings.py)
+    grayscale: False
+    num_workers: 6  # defines processes used in Dataloader
+    train_batch_size: 8  # 3 per GPU
+    val_batch_size: 8
+    device: null
+    prefetch_factor: 12
+    preprocessing:
+        resize: [ 800, 800 ]
+    load_features:
+        do: True
+        check_exists: True
+        check_nan: False
+        device: null  # choose device to move ground_truthdata to if None is given, just read, skip move to device
+        point_gt:
+            path: "outputs/results/superpoint_gt"   # as subdirectory of DATA_PATH(defined in settings.py)
+            data_keys: [ "superpoint_heatmap" ]
+        line_gt:
+            path: "outputs/results/deeplsd_gt"   # as subdirectory of DATA_PATH(defined in settings.py)
+            data_keys: [ "deeplsd_distance_field", "deeplsd_angle_field" ]
+model:
+    name: jpldd.joint_point_line_extractor
+    model_name: "aliked-n16"
+    line_neighborhood: 5
+    max_num_keypoints: 1000  # setting for training, for eval: -1
+    training:
+        do: True
+        aliked_pretrained: True
+        pretrain_kp_decoder: True
+        train_descriptors:
+            do: True # if train is True, initialize ALIKED Light model form OTF Descriptor GT
+            gt_aliked_model: "aliked-n32"
+        lambda_weighted_bce: 200
+        loss_weights:
+            line_af_weight: 1
+            line_df_weight: 1
+            keypoint_weight: 1
+            descriptor_loss: 1
+    line_detection:
+      do: False
+    checkpoint: null  # if given load model weights from this checkpoint
+    timeit: True  # override timeit: False from BaseModel
+train:
+    load_experiment: "rk_jpldd_09_pretrained_faster"  # initialize the model from a previous experiment (take weights)
+    seed: 0
+    epochs: 50
+    log_every_iter: 4
+    eval_every_iter: 30000 # automatically creates new checkpoint if new best eval metric is reached -> set > batch size to not eval except at the end of each epoch
+    save_every_iter: 30000
+    test_every_epoch: -1 # check if test deactivated
+    optimizer: "adam"
+    best_key: "loss/total" # key used to determine best checkpoint and evaluation progress
+    lr: 0.0001
+    #lr_schedule:
+    #    type: exp  # exp or multi_step
+    #    start: 200e3
+    #    exp_div_10: 200e3
+    #    gamma: 0.5
+    #    step: 50e3
+    #    n_steps: 4
+    submodules: []
+    timeit: True    # print jpldd model mean timings every epoch
+

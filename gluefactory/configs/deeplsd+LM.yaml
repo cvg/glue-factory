@@ -1,0 +1,28 @@
+model:
+    name: two_view_pipeline
+    extractor:
+        name: lines.deeplsd
+        model_conf:
+            detect_lines: True
+
+    matcher:
+        name: matchers.line_matcher
+        line_dist: struct
+benchmarks:
+    megadepth1500:
+        data:
+            preprocessing:
+            side: long
+            resize: 1600
+        eval:
+            estimator: opencv
+            ransac_th: 0.5
+    hpatches:
+        eval:
+            estimator: opencv
+            ransac_th: 0.5
+        model:
+            extractor:
+                max_num_keypoints: 512  # overwrite config above
+        use_points: False
+        use_lines: True

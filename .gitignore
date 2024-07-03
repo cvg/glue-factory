@@ -7,3 +7,7 @@
 /data/
 /outputs/
 __pycache__
+# Ignore image files
+*.png
+*.hdf5
+image_list100.txt
