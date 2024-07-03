@@ -5,7 +5,7 @@
 import numpy as np
 import torch
 
-from gluefactory.utils.deeplsd_utils import align_with_grad_angle
+from gluefactory.utils.image import compute_image_grad
 
 UPM_EPS = 1e-8
 
@@ -38,6 +38,34 @@ def bilinear_interpolate_numpy(im, x, y):
     wd = (x - x0) * (y - y0)
 
     return (Ia.T * wa).T + (Ib.T * wb).T + (Ic.T * wc).T + (Id.T * wd).T
+
+
+def orientation(p, q, r):
+    """ Compute the orientation of a list of triplets of points. """
+    return np.sign((q[:, 1] - p[:, 1]) * (r[:, 0] - q[:, 0])
+                   - (q[:, 0] - p[:, 0]) * (r[:, 1] - q[:, 1]))
+
+
+def is_on_segment(line_seg, p):
+    """ Check whether a point p is on a line segment, assuming the point
+        to be colinear with the two endpoints. """
+    return ((p[:, 0] >= np.min(line_seg[:, :, 0], axis=1))
+            & (p[:, 0] <= np.max(line_seg[:, :, 0], axis=1))
+            & (p[:, 1] >= np.min(line_seg[:, :, 1], axis=1))
+            & (p[:, 1] <= np.max(line_seg[:, :, 1], axis=1)))
+
+def intersect(line_seg1, line_seg2):
+    """ Check whether two sets of lines segments
+        intersects with each other. """
+    ori1 = orientation(line_seg1[:, 0], line_seg1[:, 1], line_seg2[:, 0])
+    ori2 = orientation(line_seg1[:, 0], line_seg1[:, 1], line_seg2[:, 1])
+    ori3 = orientation(line_seg2[:, 0], line_seg2[:, 1], line_seg1[:, 0])
+    ori4 = orientation(line_seg2[:, 0], line_seg2[:, 1], line_seg1[:, 1])
+    return (((ori1 != ori2) & (ori3 != ori4))
+            | ((ori1 == 0) & is_on_segment(line_seg1, line_seg2[:, 0]))
+            | ((ori2 == 0) & is_on_segment(line_seg1, line_seg2[:, 1]))
+            | ((ori3 == 0) & is_on_segment(line_seg2, line_seg1[:, 0]))
+            | ((ori4 == 0) & is_on_segment(line_seg2, line_seg1[:, 1])))
 
 
 def project_point_to_line(line_segs, points):
@@ -209,3 +237,24 @@ def nn_interpolate_numpy(img, x, y):
     xi = np.clip(np.round(x).astype(int), 0, img.shape[1] - 1)
     yi = np.clip(np.round(y).astype(int), 0, img.shape[0] - 1)
     return img[yi, xi]
+
+def align_with_grad_angle(angle, img):
+    """ Starting from an angle in [0, pi], find the sign of the angle based on
+        the image gradient of the corresponding pixel. """
+    # Image gradient
+    img_grad_angle = compute_image_grad(img)[3]
+    
+    # Compute the distance of the image gradient to the angle
+    # and angle - pi
+    pred_grad = np.mod(angle, np.pi)  # in [0, pi]
+    pos_dist = np.minimum(np.abs(img_grad_angle - pred_grad),
+                          2 * np.pi - np.abs(img_grad_angle - pred_grad))
+    neg_dist = np.minimum(
+        np.abs(img_grad_angle - pred_grad + np.pi),
+        2 * np.pi - np.abs(img_grad_angle - pred_grad + np.pi))
+    
+    # Assign the new grad angle to the closest of the two
+    is_pos_closest = np.argmin(np.stack([neg_dist, pos_dist],
+                                        axis=-1), axis=-1).astype(bool)
+    new_grad_angle = np.where(is_pos_closest, pred_grad, pred_grad - np.pi)
+    return new_grad_angle, img_grad_angle
