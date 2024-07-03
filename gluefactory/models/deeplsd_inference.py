@@ -11,7 +11,7 @@ from torch import nn
 from gluefactory.models.backbones.vgg_unet import VGGUNet
 from gluefactory.models.base_model import BaseModel
 from gluefactory.models.lines.line_refinement import filter_outlier_lines, merge_lines
-from gluefactory.utils.deeplsd_utils import preprocess_angle
+from gluefactory.models.lines.line_utils import preprocess_angle
 
 
 class DeepLSD(BaseModel):
