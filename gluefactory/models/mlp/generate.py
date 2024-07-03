@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from PIL import Image
-
+from gluefactory.settings import DATA_PATH
 from gluefactory.models.deeplsd_inference import DeepLSD
 
 # Deep LSD Config
@@ -24,7 +24,7 @@ conf = {
 }
 
 # Load the model
-ckpt = "DeepLSD/weights/deeplsd_md.tar"
+ckpt = DATA_PATH / "DeepLSD/weights/deeplsd_md.tar"
 ckpt = torch.load(str(ckpt), map_location=device)
 net = DeepLSD(conf)
 net.load_state_dict(ckpt["model"])
@@ -117,8 +117,8 @@ for file_path in glob.glob("dataset/revisitop1m/jpg/**/base_image.jpg", recursiv
     if cnt == 175:
         break
 
-np.save("mlp_data/positives.npy", positives)
-np.save("mlp_data/negatives.npy", negatives)
+np.save(DATA_PATH / "mlp_data/positives.npy", positives)
+np.save(DATA_PATH / "mlp_data/negatives.npy", negatives)
 
-np.save("mlp_data/positives_test.npy", positives_test)
-np.save("mlp_data/negatives_test.npy", negatives_test)
+np.save(DATA_PATH / "mlp_data/positives_test.npy", positives_test)
+np.save(DATA_PATH / "mlp_data/negatives_test.npy", negatives_test)
