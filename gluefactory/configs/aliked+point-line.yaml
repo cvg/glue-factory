@@ -1,0 +1,85 @@
+data:
+    name: homographies_point_line
+    data_dir: revisitop1m_POLD2
+    grayscale: False
+    triplet: False
+    homography:
+      difficulty: 0.5
+      max_angle: 30
+      patch_shape: [320, 240]
+    photometric:
+        p: 0.75
+    train_size: 11000
+    val_size: 1000
+    glob: ['*.jpg']
+    batch_size: 16  # 16 per 10Gb of GPU mem
+    num_workers: 1
+    load_features:
+        do: True
+        path: exports/revisitop1m_ha3/{scene}.h5
+        thresh: 0.005
+        max_num_keypoints: 1000
+        force_num_keypoints: True
+    seed: 0
+model:
+    name: two_view_pipeline
+    extractor:
+        name: gluefactory.models.extractors.joint_point_line
+        trainable: True
+        sparse_outputs: True
+        has_detector: True
+        has_8x8_detection: True
+        has_descriptor: True
+        has_line_detection: True
+        backbone:
+            model_name: 'aliked-n16'
+            max_num_keypoints: 500
+            detection_threshold: 0.0
+            force_num_keypoints: True
+            get_scores: False
+            has_detector: False
+            has_descriptor: False
+            pretrained: True
+            trainable: True
+        max_num_keypoints: 500
+        detection_threshold: 0.0
+        force_num_keypoints: True
+        refinement_radius: 3
+        descriptor_dim: 128
+        desc_loss: 'caps'  # 'triplet', 'nll', or 'caps'
+        is_eval: False
+        # dist_thresh: 16
+        temperature: 50.
+        loss_weights:
+            type: static
+            kp: 1.
+            loc: 1.
+            desc: 100.
+            df: 1.
+            angle: 1.
+    detector:
+        name: null
+    descriptor:
+        name: null
+    ground_truth:
+        name: null
+        # name: homography_matcher
+    matcher:
+        name: null
+        # name: nearest_neighbor_matcher
+        # loss: N_pair
+        # loss_weight: 'static'
+        # desc_weight: null  # null, 'var', or 'reliability'
+train:
+    epochs: 300
+    lr: 0.001
+    scheduler: 'ReduceLROnPlateau'
+    patience: 10
+    log_every_iter: 500
+    eval_every_iter: 1500
+    save_every_iter: 3000
+    keep_last_checkpoints: 3
+    seed: 0
+    submodules: []
+    plot: [4, 'gluefactory.datasets.homographies_point_line.plot_predictions']
+    # load_experiment: mp_new
