@@ -6,8 +6,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from PIL import Image
-from gluefactory.settings import DATA_PATH
+
 from gluefactory.models.deeplsd_inference import DeepLSD
+from gluefactory.settings import DATA_PATH
 
 # Deep LSD Config
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

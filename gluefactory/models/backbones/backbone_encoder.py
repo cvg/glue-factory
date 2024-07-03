@@ -3,13 +3,14 @@ This file contains backbone encoders that compute a hidden feature map
 
 - ALIKED (configurable)
 """
-import torch
-from torch import nn
-from torchvision.models import resnet
-import torchvision
-from torch.nn.modules.utils import _pair
-from typing import Optional, Callable
 
+from typing import Callable, Optional
+
+import torch
+import torchvision
+from torch import nn
+from torch.nn.modules.utils import _pair
+from torchvision.models import resnet
 
 aliked_cfgs = {
     "aliked-t16": {
@@ -55,7 +56,13 @@ class AlikedEncoder(nn.Module):
     def __init__(self, conf):
         super().__init__()
         # get configurations
-        c1, c2, c3, c4, dim = conf["c1"], conf["c2"], conf["c3"], conf["c4"], conf["dim"]
+        c1, c2, c3, c4, dim = (
+            conf["c1"],
+            conf["c2"],
+            conf["c3"],
+            conf["c4"],
+            conf["dim"],
+        )
         conv_types = ["conv", "conv", "dcn", "dcn"]
         mask = False
 
@@ -135,14 +142,14 @@ class AlikedEncoder(nn.Module):
 
 class DeformableConv2d(nn.Module):
     def __init__(
-            self,
-            in_channels,
-            out_channels,
-            kernel_size=3,
-            stride=1,
-            padding=1,
-            bias=False,
-            mask=False,
+        self,
+        in_channels,
+        out_channels,
+        kernel_size=3,
+        stride=1,
+        padding=1,
+        bias=False,
+        mask=False,
     ):
         super(DeformableConv2d, self).__init__()
 
@@ -195,14 +202,14 @@ class DeformableConv2d(nn.Module):
 
 
 def get_conv(
-        inplanes,
-        planes,
-        kernel_size=3,
-        stride=1,
-        padding=1,
-        bias=False,
-        conv_type="conv",
-        mask=False,
+    inplanes,
+    planes,
+    kernel_size=3,
+    stride=1,
+    padding=1,
+    bias=False,
+    conv_type="conv",
+    mask=False,
 ):
     if conv_type == "conv":
         conv = nn.Conv2d(
@@ -230,13 +237,13 @@ def get_conv(
 
 class ConvBlock(nn.Module):
     def __init__(
-            self,
-            in_channels,
-            out_channels,
-            gate: Optional[Callable[..., nn.Module]] = None,
-            norm_layer: Optional[Callable[..., nn.Module]] = None,
-            conv_type: str = "conv",
-            mask: bool = False,
+        self,
+        in_channels,
+        out_channels,
+        gate: Optional[Callable[..., nn.Module]] = None,
+        norm_layer: Optional[Callable[..., nn.Module]] = None,
+        conv_type: str = "conv",
+        mask: bool = False,
     ):
         super().__init__()
         if gate is None:
@@ -265,18 +272,18 @@ class ResBlock(nn.Module):
     expansion: int = 1
 
     def __init__(
-            self,
-            inplanes: int,
-            planes: int,
-            stride: int = 1,
-            downsample: Optional[nn.Module] = None,
-            groups: int = 1,
-            base_width: int = 64,
-            dilation: int = 1,
-            gate: Optional[Callable[..., nn.Module]] = None,
-            norm_layer: Optional[Callable[..., nn.Module]] = None,
-            conv_type: str = "conv",
-            mask: bool = False,
+        self,
+        inplanes: int,
+        planes: int,
+        stride: int = 1,
+        downsample: Optional[nn.Module] = None,
+        groups: int = 1,
+        base_width: int = 64,
+        dilation: int = 1,
+        gate: Optional[Callable[..., nn.Module]] = None,
+        norm_layer: Optional[Callable[..., nn.Module]] = None,
+        conv_type: str = "conv",
+        mask: bool = False,
     ) -> None:
         super(ResBlock, self).__init__()
         if gate is None:

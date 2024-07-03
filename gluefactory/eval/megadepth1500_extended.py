@@ -5,27 +5,28 @@ from collections.abc import Iterable
 from pathlib import Path
 from pprint import pprint
 
+import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from omegaconf import OmegaConf
 from tqdm import tqdm
-import h5py
 
 from ..datasets import get_dataset
 from ..models.cache_loader import CacheLoader
 from ..settings import DATA_PATH, EVAL_PATH
 from ..utils.export_predictions import export_predictions
+from ..utils.tensor import batch_to_device
 from ..visualization.viz2d import plot_cumulative
 from .eval_pipeline import EvalPipeline
 from .io import get_eval_parser, load_model, parse_eval_args
 from .utils import eval_matches_epipolar, eval_poses, eval_relative_pose_robust
-from ..utils.tensor import batch_to_device 
 
 logger = logging.getLogger(__name__)
 
 
 IMAGE_SHAPE = [640, 480]
+
 
 @torch.no_grad()
 def export_predictions(
@@ -70,7 +71,11 @@ def export_predictions(
                 if (len(pred[f"keypoints{idx}"][0].shape)) == 3:
                     pred[k] = pred[k] * scales[None]
                 else:
-                    pred[k] = (pred[f"keypoints{idx}"][0][pred[k]].reshape(1, -1, 2)).reshape(-1, 2, 2).unsqueeze(0)
+                    pred[k] = (
+                        (pred[f"keypoints{idx}"][0][pred[k]].reshape(1, -1, 2))
+                        .reshape(-1, 2, 2)
+                        .unsqueeze(0)
+                    )
             if k.startswith("orig_lines"):
                 idx = k.replace("orig_lines", "")
                 scales = 1.0 / (
@@ -106,7 +111,7 @@ class MegaDepth1500Pipeline(EvalPipeline):
             "root": "megadepth1500/images/",
             "extra_data": "relative_pose",
             "preprocessing": {
-                "resize":IMAGE_SHAPE #[320, 240],  # we also resize during eval to have comparable metrics
+                "resize": IMAGE_SHAPE  # [320, 240],  # we also resize during eval to have comparable metrics
                 # "side": "short",
             },
         },
@@ -114,9 +119,7 @@ class MegaDepth1500Pipeline(EvalPipeline):
             "ground_truth": {
                 "name": None,  # remove gt matches
             },
-            "matcher": {
-                "name": "nearest_neighbor_matcher"
-            }
+            "matcher": {"name": "nearest_neighbor_matcher"},
         },
         "eval": {
             "estimator": "poselib",

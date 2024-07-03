@@ -1,3 +1,4 @@
+import logging
 import shutil
 import zipfile
 from pathlib import Path
@@ -5,11 +6,10 @@ from pathlib import Path
 import h5py
 import numpy as np
 import torch
-import logging
 
 from gluefactory.datasets import BaseDataset
 from gluefactory.settings import DATA_PATH
-from gluefactory.utils.image import load_image, ImagePreprocessor
+from gluefactory.utils.image import ImagePreprocessor, load_image
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,7 @@ class MiniDepthDataset(BaseDataset):
 
     This class only used to load conf and autodownload. For usable Datasets, use get_dataset to get Dataset with split
     """
+
     default_conf = {
         "data_dir": "minidepth/images",  # as subdirectory of DATA_PATH(defined in settings.py)
         "grayscale": False,
@@ -32,11 +33,9 @@ class MiniDepthDataset(BaseDataset):
         "device": None,  # specify device to move image data to. if None is given, just read, skip move to device
         "split": "train",  # train, val, test
         "seed": 0,
-        "num_workers": 0, # number of workers used by the Dataloader
+        "num_workers": 0,  # number of workers used by the Dataloader
         "prefetch_factor": None,
-        "preprocessing": {
-            'resize': [800, 800]
-        },
+        "preprocessing": {"resize": [800, 800]},
         "load_features": {
             "do": False,
             "check_exists": True,
@@ -44,12 +43,12 @@ class MiniDepthDataset(BaseDataset):
             "device": None,  # choose device to move groundtruthdata to if None is given, just read, skip move to device
             "point_gt": {
                 "path": "outputs/results/superpoint_gt",
-                "data_keys": ["superpoint_heatmap"]
+                "data_keys": ["superpoint_heatmap"],
             },
             "line_gt": {
                 "path": "outputs/results/deeplsd_gt",
-                "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"]
-            }
+                "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
+            },
         },
     }
 
@@ -75,7 +74,7 @@ class MiniDepthDataset(BaseDataset):
         shutil.move(tmp_dir / zip_name.split(".")[0], data_dir)
 
     def get_dataset(self, split):
-        assert split in ['train', 'val', 'test', 'all']
+        assert split in ["train", "val", "test", "all"]
         return _Dataset(self.conf, split)
 
 
@@ -92,10 +91,10 @@ class _Dataset(torch.utils.data.Dataset):
         scene_file_path = self.img_dir.parent
         # Extract the scenes corresponding to the right split
         scenes_file = None
-        if split == 'train':
-            scenes_file = scene_file_path / 'minidepth_train_scenes.txt'
-        elif split == 'val':
-            scenes_file = scene_file_path / 'minidepth_val_scenes.txt'
+        if split == "train":
+            scenes_file = scene_file_path / "minidepth_train_scenes.txt"
+        elif split == "val":
+            scenes_file = scene_file_path / "minidepth_val_scenes.txt"
         else:
             # select all images if 'all' or 'test' given
             scenes_file = None
@@ -103,8 +102,8 @@ class _Dataset(torch.utils.data.Dataset):
         # Extract image paths
         self.image_paths = []
         if scenes_file is not None:
-            with open(scenes_file, 'r') as f:
-                self.scenes = [line.strip('\n') for line in f.readlines()]
+            with open(scenes_file, "r") as f:
+                self.scenes = [line.strip("\n") for line in f.readlines()]
             for s in self.scenes:
                 scene_folder = self.img_dir / s
                 self.image_paths += list(Path(scene_folder).glob("**/*.jpg"))
@@ -112,11 +111,11 @@ class _Dataset(torch.utils.data.Dataset):
             self.image_paths += list(Path(self.img_dir).glob("**/*.jpg"))
 
         # making them relative for system independent names in export files (path used as name in export)
-        self.image_paths = [i.relative_to(self.img_dir) for i in self.image_paths.copy()]
+        self.image_paths = [
+            i.relative_to(self.img_dir) for i in self.image_paths.copy()
+        ]
         if len(self.image_paths) == 0:
-            raise ValueError(
-                f"Could not find any image in folder: {self.img_dir}."
-            )
+            raise ValueError(f"Could not find any image in folder: {self.img_dir}.")
         logger.info(f"NUMBER OF IMAGES: {len(self.image_paths)}")
         # Load features
         if conf.load_features.do:
@@ -126,11 +125,18 @@ class _Dataset(torch.utils.data.Dataset):
             new_img_path_list = []
             for img_path in self.image_paths:
                 h5_file_name = img_path.with_suffix(".hdf5").name
-                point_gt_file_path = self.point_gt_location / img_path.parent / h5_file_name
-                line_gt_file_path = self.line_gt_location / img_path.parent / h5_file_name
+                point_gt_file_path = (
+                    self.point_gt_location / img_path.parent / h5_file_name
+                )
+                line_gt_file_path = (
+                    self.line_gt_location / img_path.parent / h5_file_name
+                )
                 # perform sanity checks if wanted
                 flag = True
-                if self.conf.load_features.check_exists or self.conf.load_features.check_nan:
+                if (
+                    self.conf.load_features.check_exists
+                    or self.conf.load_features.check_nan
+                ):
                     flag = False
                     if self.conf.load_features.check_exists:
                         if point_gt_file_path.exists() and line_gt_file_path.exists():
@@ -171,12 +177,20 @@ class _Dataset(torch.utils.data.Dataset):
         line_gt_file_path = self.line_gt_location / image_path.parent / h5_file_name
         # Read data for points
         with h5py.File(point_gt_file_path, "r") as point_file:
-            ground_truth = {**self.read_datasets_from_h5(self.conf.load_features.point_gt.data_keys, point_file),
-                            **ground_truth}
+            ground_truth = {
+                **self.read_datasets_from_h5(
+                    self.conf.load_features.point_gt.data_keys, point_file
+                ),
+                **ground_truth,
+            }
         # Read data for lines
         with h5py.File(line_gt_file_path, "r") as line_file:
-            ground_truth = {**self.read_datasets_from_h5(self.conf.load_features.line_gt.data_keys, line_file),
-                            **ground_truth}
+            ground_truth = {
+                **self.read_datasets_from_h5(
+                    self.conf.load_features.line_gt.data_keys, line_file
+                ),
+                **ground_truth,
+            }
         return ground_truth
 
     def __getitem__(self, idx):
@@ -185,7 +199,10 @@ class _Dataset(torch.utils.data.Dataset):
         """
         path = self.image_paths[idx]
         img = self._read_image(self.img_dir / path)
-        data = {"name": str(path), **self.preprocessor(img)}  # add metadata, like transform, image_size etc...
+        data = {
+            "name": str(path),
+            **self.preprocessor(img),
+        }  # add metadata, like transform, image_size etc...
         if self.conf.load_features.do:
             gt = self._read_groundtruth(path)
             data = {**data, **gt}
@@ -196,7 +213,8 @@ class _Dataset(torch.utils.data.Dataset):
         data = {}
         for key in keys:
             d = torch.from_numpy(
-                np.nan_to_num(file[key].__array__()))  # nan_to_num needed because of weird sp gt format
+                np.nan_to_num(file[key].__array__())
+            )  # nan_to_num needed because of weird sp gt format
             if self.conf.load_features.device is not None:
                 data[key] = d.to(self.conf.load_features.device)
             else:

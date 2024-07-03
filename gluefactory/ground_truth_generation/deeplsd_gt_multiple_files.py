@@ -4,6 +4,8 @@ Goal: create groundtruth with DeepLSD. Format: stores groundtruth for every imag
 """
 
 import argparse
+import multiprocessing
+import os
 from pathlib import Path
 
 import h5py
@@ -11,14 +13,13 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from omegaconf import OmegaConf
-import os
-import multiprocessing
 
-
-from gluefactory.settings import EVAL_PATH, DATA_PATH
 from gluefactory.datasets import get_dataset
+from gluefactory.ground_truth_generation.generate_gt_deeplsd import (
+    generate_ground_truth_with_homography_adaptation,
+)
 from gluefactory.models.lines.deeplsd import DeepLSD
-from gluefactory.ground_truth_generation.generate_gt_deeplsd import generate_ground_truth_with_homography_adaptation
+from gluefactory.settings import DATA_PATH, EVAL_PATH
 
 conf = {
     "patch_shape": [800, 800],
@@ -41,42 +42,48 @@ sp_conf = {
 }
 
 homography_params = {
-    'translation': True,
-    'rotation': True,
-    'scaling': True,
-    'perspective': True,
-    'scaling_amplitude': 0.2,
-    'perspective_amplitude_x': 0.2,
-    'perspective_amplitude_y': 0.2,
-    'patch_ratio': 0.85,
-    'max_angle': 1.57,
-    'allow_artifacts': True
+    "translation": True,
+    "rotation": True,
+    "scaling": True,
+    "perspective": True,
+    "scaling_amplitude": 0.2,
+    "perspective_amplitude_x": 0.2,
+    "perspective_amplitude_y": 0.2,
+    "patch_ratio": 0.85,
+    "max_angle": 1.57,
+    "allow_artifacts": True,
 }
 
 
-def get_dataset_and_loader(num_workers, distributed: bool = False):  # folder where dataset images are placed
+def get_dataset_and_loader(
+    num_workers, distributed: bool = False
+):  # folder where dataset images are placed
     config = {
-        'name': 'minidepth',  # name of dataset class in gluefactory > datasets
-        'grayscale': True,  # commented out things -> dataset must also have these keys but has not
-        'preprocessing': {
-            'resize': [800, 800]
-        },
-        'test_batch_size': 1,  # prefix must match split mode
-        'num_workers': num_workers,
-        'split': 'test',  # if implemented by dataset class gives different splits
+        "name": "minidepth",  # name of dataset class in gluefactory > datasets
+        "grayscale": True,  # commented out things -> dataset must also have these keys but has not
+        "preprocessing": {"resize": [800, 800]},
+        "test_batch_size": 1,  # prefix must match split mode
+        "num_workers": num_workers,
+        "split": "test",  # if implemented by dataset class gives different splits
         "prefetch_factor": None if num_workers == 0 else 2,
     }
     omega_conf = OmegaConf.create(config)
     dataset = get_dataset(omega_conf.name)(omega_conf)
-    loader = dataset.get_data_loader(omega_conf.get('split', 'test'), shuffle=False, distributed=distributed)
+    loader = dataset.get_data_loader(
+        omega_conf.get("split", "test"), shuffle=False, distributed=distributed
+    )
     return loader
 
 
 def process_image(img_data, net, num_H, output_folder_path, device):
     img = img_data["image"].to(device)  # B x C x H x W
     # Run homography adaptation
-    distance_field, angle_field, _ = generate_ground_truth_with_homography_adaptation(img, net, num_H=num_H, bs=6)
-    assert len(img_data["name"]) == 1, f"Image data name is {img_data['name']}"  # Currently expect batch size one!
+    distance_field, angle_field, _ = generate_ground_truth_with_homography_adaptation(
+        img, net, num_H=num_H, bs=6
+    )
+    assert (
+        len(img_data["name"]) == 1
+    ), f"Image data name is {img_data['name']}"  # Currently expect batch size one!
     # store gt in same structure as images of minidepth
     img_name = img_data["name"][0]
     complete_out_folder = (output_folder_path / img_name).parent
@@ -86,24 +93,36 @@ def process_image(img_data, net, num_H, output_folder_path, device):
     distance_field = distance_field.cpu()
     angle_field = angle_field.cpu()
     with h5py.File(output_file_path, "w") as f:
-       f.create_dataset("deeplsd_distance_field", data=distance_field)
-       f.create_dataset("deeplsd_angle_field", data=angle_field)
-    del distance_field,angle_field
+        f.create_dataset("deeplsd_distance_field", data=distance_field)
+        f.create_dataset("deeplsd_angle_field", data=angle_field)
+    del distance_field, angle_field
 
 
 def export_ha(output_folder_path, num_H, n_gpus, image_name_list):
     if n_gpus > 1:
         mpmanager = multiprocessing.Manager()
         lock = mpmanager.Lock()
-        mp.spawn(export_ha_parallel, args=(n_gpus, output_folder_path, num_H, image_name_list,lock,), nprocs=n_gpus,
-                 join=True)
+        mp.spawn(
+            export_ha_parallel,
+            args=(
+                n_gpus,
+                output_folder_path,
+                num_H,
+                image_name_list,
+                lock,
+            ),
+            nprocs=n_gpus,
+            join=True,
+        )
     else:
         data_loader = get_dataset_and_loader(args.n_jobs_dataloader, distributed=False)
-        device = 'cuda' if torch.cuda.is_available() and n_gpus > 0 else 'cpu'
+        device = "cuda" if torch.cuda.is_available() and n_gpus > 0 else "cpu"
         export_ha_seq(data_loader, output_folder_path, num_H, device, image_name_list)
 
 
-def export_ha_parallel(rank, world_size, output_folder_path, num_H, image_name_list, lock):
+def export_ha_parallel(
+    rank, world_size, output_folder_path, num_H, image_name_list, lock
+):
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
     print(f"Hello from rank {rank}")
     data_loader = get_dataset_and_loader(0, distributed=True)
@@ -115,15 +134,20 @@ def export_ha_parallel(rank, world_size, output_folder_path, num_H, image_name_l
     index = rank
     for img_data in data_loader:
         if img_data["name"][0] in image_list:
-          print(f"Rank {rank}: Skipping image {img_data['name'][0]} because it already has GT", flush=True)
-          continue
+            print(
+                f"Rank {rank}: Skipping image {img_data['name'][0]} because it already has GT",
+                flush=True,
+            )
+            continue
         process_image(img_data, net, num_H, output_folder_path, device)
         lock.acquire()
         with open(image_name_list, "a") as f:
-          f.write(img_data["name"][0] + "\n")
+            f.write(img_data["name"][0] + "\n")
         lock.release()
-        index+=world_size
-        print(f"Proc {rank} finished gt {index} for image {img_data['name']}", flush=True)
+        index += world_size
+        print(
+            f"Proc {rank} finished gt {index} for image {img_data['name']}", flush=True
+        )
 
 
 def export_ha_seq(data_loader, output_folder_path, num_H, device, image_name_list: str):
@@ -134,33 +158,50 @@ def export_ha_seq(data_loader, output_folder_path, num_H, device, image_name_lis
     index = 0
     for img_data in data_loader:
         if img_data["name"][0] in image_list:
-           print(f"Skipping image {img_data['name'][0]} because it already has GT",flush=True)
-           continue
+            print(
+                f"Skipping image {img_data['name'][0]} because it already has GT",
+                flush=True,
+            )
+            continue
         process_image(img_data, net, num_H, output_folder_path, device)
         with open(image_name_list, "a") as f:
-          f.write(img_data["name"][0] + "\n")
+            f.write(img_data["name"][0] + "\n")
         index += 1
-        print(f"Finished gt {index} for image {img_data['name']}",flush=True)
+        print(f"Finished gt {index} for image {img_data['name']}", flush=True)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--output_folder', type=str, help='Output folder.', default="deeplsd_gt")
-    parser.add_argument('--num_H', type=int, default=100, help='Number of homographies used during HA.')
-    parser.add_argument('--n_jobs_dataloader', type=int, default=1,
-                        help='Number of jobs the dataloader uses to load images')
-    parser.add_argument("--n_gpus", type=int, default=0, help="How many gpus we can use")
-    parser.add_argument("--image_name_list", type=str,
-                        help="File with list of names of images that have been generated, relative to our team folder")
+    parser.add_argument(
+        "--output_folder", type=str, help="Output folder.", default="deeplsd_gt"
+    )
+    parser.add_argument(
+        "--num_H", type=int, default=100, help="Number of homographies used during HA."
+    )
+    parser.add_argument(
+        "--n_jobs_dataloader",
+        type=int,
+        default=1,
+        help="Number of jobs the dataloader uses to load images",
+    )
+    parser.add_argument(
+        "--n_gpus", type=int, default=0, help="How many gpus we can use"
+    )
+    parser.add_argument(
+        "--image_name_list",
+        type=str,
+        help="File with list of names of images that have been generated, relative to our team folder",
+    )
     args = parser.parse_args()
     image_name_list = DATA_PATH / args.image_name_list
     if not os.path.exists(image_name_list):
-        with open(image_name_list, "w"): pass
+        with open(image_name_list, "w"):
+            pass
     out_folder_path = EVAL_PATH / args.output_folder
     out_folder_path.mkdir(exist_ok=True, parents=True)
 
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12355"
 
     print("OUTPUT PATH: ", out_folder_path)
     print("NUMBER OF HOMOGRAPHIES: ", args.num_H)

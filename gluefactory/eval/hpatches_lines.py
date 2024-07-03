@@ -9,6 +9,11 @@ import torch
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
+from gluefactory.models.utils.metrics_lines import (
+    compute_loc_error,
+    compute_repeatability,
+)
+
 from ..datasets import get_dataset
 from ..models.cache_loader import CacheLoader
 from ..settings import EVAL_PATH
@@ -17,7 +22,6 @@ from ..utils.tensor import map_tensor
 from ..utils.tools import AUCMetric
 from .eval_pipeline import EvalPipeline
 from .io import get_eval_parser, load_model, parse_eval_args
-from gluefactory.models.extractors.jpldd.metrics_lines import compute_loc_error,compute_repeatability
 
 
 class HPatchesPipeline(EvalPipeline):
@@ -42,8 +46,8 @@ class HPatchesPipeline(EvalPipeline):
         },
         "use_points": True,
         "use_lines": False,
-        "repeatability_th": [1,3,5],
-        "num_lines_th": [10,50,300]
+        "repeatability_th": [1, 3, 5],
+        "num_lines_th": [10, 50, 300],
     }
     export_keys = []
 
@@ -56,7 +60,7 @@ class HPatchesPipeline(EvalPipeline):
         "line_matches1",
         "line_matching_scores0",
         "line_matching_scores1",
-        "line_distances"
+        "line_distances",
     ]
 
     def _init(self, conf):
@@ -78,7 +82,7 @@ class HPatchesPipeline(EvalPipeline):
                 "line_matches0",
                 "line_matches1",
                 "line_matching_scores0",
-                "line_matching_scores1"
+                "line_matching_scores1",
             ]
 
     @classmethod
@@ -113,7 +117,6 @@ class HPatchesPipeline(EvalPipeline):
             data = map_tensor(data, lambda t: torch.squeeze(t, dim=0))
             # add custom evaluations here
 
-            
             results_i = {}
 
             # we also store the names for later reference
@@ -123,11 +126,19 @@ class HPatchesPipeline(EvalPipeline):
             if "lines0" in pred:
                 lines0 = pred["lines0"].cpu().numpy()
                 lines1 = pred["lines1"].cpu().numpy()
-                results_i["repeatability"] = compute_repeatability(lines0,lines1,  pred["line_matches0"].cpu().numpy(),
-                                                                pred["line_matches1"].cpu().numpy(),pred["line_matching_scores0"].cpu().numpy(),
-                                                                self.conf.repeatability_th, rep_type='num')
-                results_i["loc_error"] = compute_loc_error(pred["line_matching_scores0"].cpu().numpy(), self.conf.num_lines_th)
-                results_i["num_lines"] = (lines0.shape[0] + lines1.shape[0])/2
+                results_i["repeatability"] = compute_repeatability(
+                    lines0,
+                    lines1,
+                    pred["line_matches0"].cpu().numpy(),
+                    pred["line_matches1"].cpu().numpy(),
+                    pred["line_matching_scores0"].cpu().numpy(),
+                    self.conf.repeatability_th,
+                    rep_type="num",
+                )
+                results_i["loc_error"] = compute_loc_error(
+                    pred["line_matching_scores0"].cpu().numpy(), self.conf.num_lines_th
+                )
+                results_i["num_lines"] = (lines0.shape[0] + lines1.shape[0]) / 2
 
             for k, v in results_i.items():
                 results[k].append(v)
@@ -142,13 +153,13 @@ class HPatchesPipeline(EvalPipeline):
             summaries[f"m{k}"] = round(np.median(arr), 3)
 
         if "repeatability" in results.keys():
-            for i,th in enumerate(self.conf.repeatability_th):
-                cur_nums = list(map(lambda x:x[i],results["repeatability"]))
-                summaries[f"repeatability@{th}px"] = round(np.median(cur_nums),3)
+            for i, th in enumerate(self.conf.repeatability_th):
+                cur_nums = list(map(lambda x: x[i], results["repeatability"]))
+                summaries[f"repeatability@{th}px"] = round(np.median(cur_nums), 3)
         if "loc_error" in results.keys():
-            for i,th in enumerate(self.conf.num_lines_th):
-                cur_nums = list(map(lambda x:x[i],results["loc_error"]))
-                summaries[f"loc_error@{th}lines"] = round(np.median(cur_nums),3)
+            for i, th in enumerate(self.conf.num_lines_th):
+                cur_nums = list(map(lambda x: x[i], results["loc_error"]))
+                summaries[f"loc_error@{th}lines"] = round(np.median(cur_nums), 3)
 
         figures = {}
 

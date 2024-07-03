@@ -1,6 +1,7 @@
-import gluefactory.models.deeplsd_inference as deeplsd_inference
 import numpy as np
 import torch
+
+import gluefactory.models.deeplsd_inference as deeplsd_inference
 
 from ...settings import DATA_PATH
 from ..base_model import BaseModel

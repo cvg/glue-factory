@@ -7,7 +7,6 @@ ground-truth beforehand.
 Input=Img+Keypoint-locations
 Output=descriptors
 """
-from typing import Callable, Optional
 
 import torch
 import torch.nn.functional as F
@@ -15,6 +14,7 @@ import torchvision
 from torch import nn
 from torch.nn.modules.utils import _pair
 from torchvision.models import resnet
+from gluefactory.models.backbones.backbone_encoder import ResBlock,ConvBlock
 
 from gluefactory.models.base_model import BaseModel
 
@@ -77,7 +77,6 @@ def simple_nms(scores: torch.Tensor, nms_radius: int):
         )
         max_mask = max_mask | (new_max_mask & (~supp_mask))
     return torch.where(max_mask, scores, zeros)
-
 
 
 class InputPadder(object):
@@ -200,99 +199,6 @@ def get_conv(
     else:
         raise TypeError
     return conv
-
-
-class ConvBlock(nn.Module):
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        gate: Optional[Callable[..., nn.Module]] = None,
-        norm_layer: Optional[Callable[..., nn.Module]] = None,
-        conv_type: str = "conv",
-        mask: bool = False,
-    ):
-        super().__init__()
-        if gate is None:
-            self.gate = nn.ReLU(inplace=True)
-        else:
-            self.gate = gate
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        self.conv1 = get_conv(
-            in_channels, out_channels, kernel_size=3, conv_type=conv_type, mask=mask
-        )
-        self.bn1 = norm_layer(out_channels)
-        self.conv2 = get_conv(
-            out_channels, out_channels, kernel_size=3, conv_type=conv_type, mask=mask
-        )
-        self.bn2 = norm_layer(out_channels)
-
-    def forward(self, x):
-        x = self.gate(self.bn1(self.conv1(x)))  # B x in_channels x H x W
-        x = self.gate(self.bn2(self.conv2(x)))  # B x out_channels x H x W
-        return x
-
-
-# modified based on torchvision\models\resnet.py#27->BasicBlock
-class ResBlock(nn.Module):
-    expansion: int = 1
-
-    def __init__(
-        self,
-        inplanes: int,
-        planes: int,
-        stride: int = 1,
-        downsample: Optional[nn.Module] = None,
-        groups: int = 1,
-        base_width: int = 64,
-        dilation: int = 1,
-        gate: Optional[Callable[..., nn.Module]] = None,
-        norm_layer: Optional[Callable[..., nn.Module]] = None,
-        conv_type: str = "conv",
-        mask: bool = False,
-    ) -> None:
-        super(ResBlock, self).__init__()
-        if gate is None:
-            self.gate = nn.ReLU(inplace=True)
-        else:
-            self.gate = gate
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        if groups != 1 or base_width != 64:
-            raise ValueError("ResBlock only supports groups=1 and base_width=64")
-        if dilation > 1:
-            raise NotImplementedError("Dilation > 1 not supported in ResBlock")
-        # Both self.conv1 and self.downsample layers
-        # downsample the input when stride != 1
-        self.conv1 = get_conv(
-            inplanes, planes, kernel_size=3, conv_type=conv_type, mask=mask
-        )
-        self.bn1 = norm_layer(planes)
-        self.conv2 = get_conv(
-            planes, planes, kernel_size=3, conv_type=conv_type, mask=mask
-        )
-        self.bn2 = norm_layer(planes)
-        self.downsample = downsample
-        self.stride = stride
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        identity = x
-
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.gate(out)
-
-        out = self.conv2(out)
-        out = self.bn2(out)
-
-        if self.downsample is not None:
-            identity = self.downsample(x)
-
-        out += identity
-        out = self.gate(out)
-
-        return out
 
 
 class SDDH(nn.Module):

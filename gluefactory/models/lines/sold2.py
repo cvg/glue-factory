@@ -1,10 +1,11 @@
-import gluefactory.models.deeplsd_inference as deeplsd_inference
+import kornia.feature as KF
 import numpy as np
 import torch
 
+import gluefactory.models.deeplsd_inference as deeplsd_inference
+
 from ...settings import DATA_PATH
 from ..base_model import BaseModel
-import kornia.feature as KF
 
 
 class SOLD2(BaseModel):
@@ -28,8 +29,7 @@ class SOLD2(BaseModel):
         lines = []
         for i in range(len(segs)):
             cur = segs[i]
-            lines.append(cur[:,:,[1,0]])
-
+            lines.append(cur[:, :, [1, 0]])
 
         return {"lines": lines}
 

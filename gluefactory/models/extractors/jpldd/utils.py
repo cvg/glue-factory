@@ -3,11 +3,13 @@ Utility functions for JPLDD extractor
 - ALIKED supporting methods
 - Linesegments supporting methods
 """
+
 import time
+
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.nn.functional import softmax, pixel_shuffle
+from torch.nn.functional import pixel_shuffle, softmax
 
 
 def sync_and_time():
@@ -52,13 +54,13 @@ def simple_nms(scores: torch.Tensor, nms_radius: int):
 
     for _ in range(2):
         supp_mask = (
-                torch.nn.functional.max_pool2d(
-                    max_mask.float(),
-                    kernel_size=nms_radius * 2 + 1,
-                    stride=1,
-                    padding=nms_radius,
-                )
-                > 0
+            torch.nn.functional.max_pool2d(
+                max_mask.float(),
+                kernel_size=nms_radius * 2 + 1,
+                stride=1,
+                padding=nms_radius,
+            )
+            > 0
         )
         supp_scores = torch.where(supp_mask, zeros, scores)
         new_max_mask = supp_scores == torch.nn.functional.max_pool2d(
@@ -92,12 +94,12 @@ class InputPadder(object):
         ht = x.shape[-2]
         wd = x.shape[-1]
         c = [self._pad[2], ht - self._pad[3], self._pad[0], wd - self._pad[1]]
-        return x[..., c[0]: c[1], c[2]: c[3]]
+        return x[..., c[0] : c[1], c[2] : c[3]]
 
 
 # Taken from SOLD2
 def line_map_to_segments(junctions, line_map):
-    """ Convert a line map to a Nx2x2 list of segments. """
+    """Convert a line map to a Nx2x2 list of segments."""
     line_map_tmp = line_map.copy()
 
     output_segments = np.zeros([0, 2, 2])
@@ -110,10 +112,10 @@ def line_map_to_segments(junctions, line_map):
             for idx2 in np.where(line_map_tmp[idx, :] == 1)[0]:
                 p1 = junctions[idx, :]  # HW format
                 p2 = junctions[idx2, :]
-                single_seg = np.concatenate([p1[None, ...], p2[None, ...]],
-                                            axis=0)
+                single_seg = np.concatenate([p1[None, ...], p2[None, ...]], axis=0)
                 output_segments = np.concatenate(
-                    (output_segments, single_seg[None, ...]), axis=0)
+                    (output_segments, single_seg[None, ...]), axis=0
+                )
 
                 # Update line_map
                 line_map_tmp[idx, idx2] = 0
@@ -123,27 +125,30 @@ def line_map_to_segments(junctions, line_map):
 
 
 # Taken from SOLD2
-def convert_junc_predictions(predictions, grid_size,
-                             detect_thresh=1 / 65, topk=300):
-    """ Convert torch predictions to numpy arrays for evaluation. """
+def convert_junc_predictions(predictions, grid_size, detect_thresh=1 / 65, topk=300):
+    """Convert torch predictions to numpy arrays for evaluation."""
     # Convert to probability outputs first
     junc_prob = softmax(predictions.detach(), dim=1).cpu()
     junc_pred = junc_prob[:, :-1, :, :]
 
     junc_prob_np = junc_prob.numpy().transpose(0, 2, 3, 1)[:, :, :, :-1]
     junc_prob_np = np.sum(junc_prob_np, axis=-1)
-    junc_pred_np = pixel_shuffle(
-        junc_pred, grid_size).cpu().numpy().transpose(0, 2, 3, 1)
+    junc_pred_np = (
+        pixel_shuffle(junc_pred, grid_size).cpu().numpy().transpose(0, 2, 3, 1)
+    )
     junc_pred_np_nms = super_nms(junc_pred_np, grid_size, detect_thresh, topk)
     junc_pred_np = junc_pred_np.squeeze(-1)
 
-    return {"junc_pred": junc_pred_np, "junc_pred_nms": junc_pred_np_nms,
-            "junc_prob": junc_prob_np}
+    return {
+        "junc_pred": junc_pred_np,
+        "junc_pred_nms": junc_pred_np_nms,
+        "junc_prob": junc_prob_np,
+    }
 
 
 # Taken from SOLD2
 def super_nms(prob_predictions, dist_thresh, prob_thresh=0.01, top_k=0):
-    """ Non-maximum suppression adapted from SuperPoint. """
+    """Non-maximum suppression adapted from SuperPoint."""
     # Iterate through batch dimension
     im_h = prob_predictions.shape[1]
     im_w = prob_predictions.shape[2]
@@ -153,16 +158,18 @@ def super_nms(prob_predictions, dist_thresh, prob_thresh=0.01, top_k=0):
         prob_pred = prob_predictions[i, ...]
         # Filter the points using prob_thresh
         coord = np.where(prob_pred >= prob_thresh)  # HW format
-        points = np.concatenate((coord[0][..., None], coord[1][..., None]),
-                                axis=1)  # HW format
+        points = np.concatenate(
+            (coord[0][..., None], coord[1][..., None]), axis=1
+        )  # HW format
 
         # Get the probability score
         prob_score = prob_pred[points[:, 0], points[:, 1]]
 
         # Perform super nms
         # Modify the in_points to xy format (instead of HW format)
-        in_points = np.concatenate((coord[1][..., None], coord[0][..., None],
-                                    prob_score), axis=1).T
+        in_points = np.concatenate(
+            (coord[1][..., None], coord[0][..., None], prob_score), axis=1
+        ).T
         keep_points_, keep_inds = nms_fast(in_points, im_h, im_w, dist_thresh)
         # Remember to flip outputs back to HW format
         keep_points = np.round(np.flip(keep_points_[:2, :], axis=0).T)
@@ -176,8 +183,9 @@ def super_nms(prob_predictions, dist_thresh, prob_thresh=0.01, top_k=0):
 
         # Re-compose the probability map
         output_map = np.zeros([im_h, im_w])
-        output_map[keep_points[:, 0].astype(np.int),
-        keep_points[:, 1].astype(np.int)] = keep_score.squeeze()
+        output_map[
+            keep_points[:, 0].astype(np.int), keep_points[:, 1].astype(np.int)
+        ] = keep_score.squeeze()
 
         output_lst.append(output_map[None, ...])
 
@@ -229,14 +237,14 @@ def nms_fast(in_corners, H, W, dist_thresh):
         inds[rcorners[1, i], rcorners[0, i]] = i
     # Pad the border of the grid, so that we can NMS points near the border.
     pad = dist_thresh
-    grid = np.pad(grid, ((pad, pad), (pad, pad)), mode='constant')
+    grid = np.pad(grid, ((pad, pad), (pad, pad)), mode="constant")
     # Iterate through points, highest to lowest conf, suppress neighborhood.
     count = 0
     for i, rc in enumerate(rcorners.T):
         # Account for top and left padding.
         pt = (rc[0] + pad, rc[1] + pad)
         if grid[pt[1], pt[0]] == 1:  # If not yet suppressed.
-            grid[pt[1] - pad:pt[1] + pad + 1, pt[0] - pad:pt[0] + pad + 1] = 0
+            grid[pt[1] - pad : pt[1] + pad + 1, pt[0] - pad : pt[0] + pad + 1] = 0
             grid[pt[1], pt[0]] = -1
             count += 1
     # Get all surviving -1's and return sorted array of remaining corners.

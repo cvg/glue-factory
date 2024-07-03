@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
+
 from gluefactory.models.mlp.train import MLPModel
 
 

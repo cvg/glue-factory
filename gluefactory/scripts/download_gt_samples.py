@@ -1,11 +1,11 @@
-from stat import S_ISDIR
-
-import paramiko
 import argparse
 import os
 import random
-from tqdm import tqdm
 from pathlib import Path
+from stat import S_ISDIR
+
+import paramiko
+from tqdm import tqdm
 
 HOST = "student-cluster.inf.ethz.ch"
 HOST_OUTPUT_ROOT = "/cluster/courses/3dv/data/team-2"
@@ -22,7 +22,9 @@ def list_files(sftp, remote_dir, file_ending):
     return files
 
 
-def sample_and_download_files(ssh_client, remote_dir, local_dir, file_ending, num_samples):
+def sample_and_download_files(
+    ssh_client, remote_dir, local_dir, file_ending, num_samples
+):
     # Get a list of all image files in the remote directory and its subdirectories
     sftp = ssh_client.open_sftp()
     print("Searching for files in " + remote_dir)
@@ -36,7 +38,9 @@ def sample_and_download_files(ssh_client, remote_dir, local_dir, file_ending, nu
     # Download the selected files
     for file in tqdm(selected_files):
         remote_file_path = Path(file)
-        local_path = Path(local_dir) / remote_file_path.parent.name / remote_file_path.name
+        local_path = (
+            Path(local_dir) / remote_file_path.parent.name / remote_file_path.name
+        )
         if not local_path.parent.exists():
             local_path.parent.mkdir(parents=True, exist_ok=True)
         sftp.get(file, local_path)
@@ -47,14 +51,25 @@ def sample_and_download_files(ssh_client, remote_dir, local_dir, file_ending, nu
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--output_folder', type=str, help='Output folder to store sampled files in', required=True)
-    parser.add_argument('--remote_folder', type=str,
-                        help='remote folder to look for files to sample (as subfolder of /cluster/courses/3dv/data/team-2)',
-                        required=True)
-    parser.add_argument('--user', type=str, help='username on cluster', required=True)
-    parser.add_argument('--password', type=str, help='password for user on cluster',
-                        required=True)
-    parser.add_argument('--num_samples', type=int, default=10, help='number of samples to download')
+    parser.add_argument(
+        "--output_folder",
+        type=str,
+        help="Output folder to store sampled files in",
+        required=True,
+    )
+    parser.add_argument(
+        "--remote_folder",
+        type=str,
+        help="remote folder to look for files to sample (as subfolder of /cluster/courses/3dv/data/team-2)",
+        required=True,
+    )
+    parser.add_argument("--user", type=str, help="username on cluster", required=True)
+    parser.add_argument(
+        "--password", type=str, help="password for user on cluster", required=True
+    )
+    parser.add_argument(
+        "--num_samples", type=int, default=10, help="number of samples to download"
+    )
     args = parser.parse_args()
 
     # SSH connection details
@@ -75,5 +90,7 @@ if __name__ == "__main__":
     if not os.path.exists(local_dir):
         os.makedirs(local_dir)
 
-    sample_and_download_files(client, remote_dir, local_dir, file_ending=".hdf5", num_samples=args.num_samples)
+    sample_and_download_files(
+        client, remote_dir, local_dir, file_ending=".hdf5", num_samples=args.num_samples
+    )
     client.close()
