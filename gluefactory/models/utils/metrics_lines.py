@@ -10,20 +10,24 @@ from gluefactory.models.lines.line_distances import (
     get_structural_line_dist,
     overlap_distance_sym,
 )
+import torch
+
 from gluefactory.models.lines.line_utils import get_common_lines
 
-num_lines_thresholds = [10, 25, 50, 100, 300]
-thresholds = [1, 2, 3, 4, 5]
+NUM_LINES_THRESHOLDS = [10, 25, 50, 100, 300]
+PIXEL_THRESHOLDS = [1, 2, 3, 4, 5]
 
 ### Line matching
 
 
 def get_rep_and_loc_error(
-    lines: np.ndarray,
-    warped_lines: np.ndarray,
-    Hs: np.ndarray,
+    lines: torch.Tensor,
+    warped_lines: torch.Tensor,
+    Hs: torch.Tensor,
     img_size: tuple[float, float],
-) -> tuple[float, float]:
+    num_lines_thres: list[int] = NUM_LINES_THRESHOLDS,
+    pixel_thres: list[int] = PIXEL_THRESHOLDS
+) -> tuple[np.ndarray, np.ndarray]:
     (struct_rep, struct_loc_error, num_lines) = [], [], []
     for i in range(len(lines)):
         cur_lines = lines[i]
@@ -38,8 +42,8 @@ def get_rep_and_loc_error(
             dist_thresh=5,
         )
         if len(matched_idx1) == 0:
-            struct_rep.append([0] * len(thresholds))
-            struct_loc_error.append([0] * len(thresholds))
+            struct_rep.append([0] * len(pixel_thres))
+            struct_loc_error.append([0] * len(num_lines_thres))
         else:
             struct_rep.append(
                 compute_repeatability(
@@ -48,11 +52,11 @@ def get_rep_and_loc_error(
                     matched_idx1,
                     matched_idx2,
                     distances,
-                    thresholds,
+                    pixel_thres,
                     rep_type="num",
                 )
             )
-            struct_loc_error.append(compute_loc_error(distances, num_lines_thresholds))
+            struct_loc_error.append(compute_loc_error(distances, num_lines_thres))
     num_lines = np.mean(num_lines)
     repeatability = np.mean(np.stack(struct_rep, axis=0), axis=0)
     loc_error = np.mean(np.stack(struct_loc_error, axis=0), axis=0)
@@ -60,15 +64,15 @@ def get_rep_and_loc_error(
 
 
 def match_segments_1_to_1(
-    line_seg1,
-    line_seg2,
-    H,
+    line_seg1: torch.Tensor,
+    line_seg2: torch.Tensor,
+    H: torch.Tensor,
     img_size,
     line_dist="area",
     angular_th=(30 * np.pi / 180),
     overlap_th=0.5,
     dist_thresh=5,
-):
+) -> tuple[torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor]:
     """Match segs1 and segs2 1-to-1, minimizing the chosen line distance.
     Ensure a minimum overlap and maximum angle difference."""
     HIGH_VALUE = 100000
@@ -108,8 +112,8 @@ def match_segments_1_to_1(
     full_distance_matrix[overlap_dist <= overlap_th] = HIGH_VALUE
 
     # Enforce the 1-to-1 assignation
-    matched_idx1, matched_idx2 = linear_sum_assignment(full_distance_matrix)
-
+    matched_idx1, matched_idx2 = linear_sum_assignment(full_distance_matrix.cpu().numpy())
+    matched_idx1, matched_idx2 = torch.tensor(matched_idx1,device=full_distance_matrix.device), torch.tensor(matched_idx2,device=full_distance_matrix.device)
     # Remove invalid matches
     distances = full_distance_matrix[matched_idx1, matched_idx2]
     valid = distances < HIGH_VALUE
@@ -117,7 +121,7 @@ def match_segments_1_to_1(
     distances = distances[valid]
 
     # Sort by increasing distance
-    sort_indices = np.argsort(distances)
+    sort_indices = torch.argsort(distances)
     matched_idx1 = matched_idx1[sort_indices]
     matched_idx2 = matched_idx2[sort_indices]
     distances = distances[sort_indices]
@@ -129,8 +133,8 @@ def match_segments_1_to_1(
 
 
 def compute_repeatability(
-    segs1, segs2, matched_idx1, matched_idx2, distances, thresholds, rep_type="num"
-):
+    segs1: torch.Tensor, segs2: torch.Tensor, matched_idx1: torch.Tensor, matched_idx2: torch.Tensor, distances: torch.Tensor, thresholds: list[int], rep_type="num"
+) -> list[np.ndarray]:
     """Compute the repeatability between two sets of matched lines.
     Args:
         segs1, segs2: the original sets of lines.
@@ -153,20 +157,20 @@ def compute_repeatability(
     for t in thresholds:
         correct = distances <= t
         if rep_type == "num":
-            rep = np.sum(correct) / min(n1, n2)
+            rep = (torch.sum(correct) / min(n1, n2)).cpu().numpy()
         elif rep_type == "length":
-            len1 = np.linalg.norm(segs1[:, 0] - segs1[:, 1], axis=1)
-            len2 = np.linalg.norm(segs2[:, 0] - segs2[:, 1], axis=1)
+            len1 = torch.linalg.norm(segs1[:, 0] - segs1[:, 1], axis=1)
+            len2 = torch.linalg.norm(segs2[:, 0] - segs2[:, 1], axis=1)
             matched_len1 = len1[matched_idx1[correct]]
             matched_len2 = len2[matched_idx2[correct]]
-            rep = (matched_len1.sum() + matched_len2.sum()) / (len1.sum() + len2.sum())
+            rep = (matched_len1.sum() + matched_len2.sum()) / (len1.sum() + len2.sum()).cpu().numpy()
         else:
             raise ValueError("Unknown repeatability type: " + rep_type)
         reps.append(rep)
     return reps
 
 
-def compute_loc_error(distances, thresholds):
+def compute_loc_error(distances: torch.Tensor, thresholds: list[int]) -> list[np.ndarray]:
     """Compute the line localization error between two sets of lines.
     Args:
         distances: the line distance of the matches, in increasing order.
@@ -183,7 +187,7 @@ def compute_loc_error(distances, thresholds):
         if len(valid_distances) == 0:
             loc_errors.append(0)
         else:
-            loc_errors.append(np.mean(valid_distances))
+            loc_errors.append(torch.mean(valid_distances).cpu().numpy())
     return loc_errors
 
 

@@ -162,7 +162,7 @@ def sample_homography(
     return homo_mat
 
 
-def warp_points(points, H):
+def warp_points(points: np.ndarray, H: np.ndarray):
     """Warp 2D points by an homography H."""
     n_points = points.shape[0]
     reproj_points = points.copy()[:, [1, 0]]
@@ -173,6 +173,6 @@ def warp_points(points, H):
     return reproj_points
 
 
-def warp_lines(lines, H):
+def warp_lines(lines: np.ndarray, H: np.ndarray):
     """Warp lines of the shape [N, 2, 2] by an homography H."""
     return warp_points(lines.reshape(-1, 2), H).reshape(-1, 2, 2)

@@ -119,8 +119,8 @@ class _Dataset(torch.utils.data.Dataset):
         logger.info(f"NUMBER OF IMAGES: {len(self.image_paths)}")
         # Load features
         if conf.load_features.do:
-            self.point_gt_location = DATA_PATH / conf.load_features.point_gt.path
-            self.line_gt_location = DATA_PATH / conf.load_features.line_gt.path
+            self.point_gt_location = DATA_PATH.parent / conf.load_features.point_gt.path
+            self.line_gt_location = DATA_PATH.parent / conf.load_features.line_gt.path
             # filter out where missing groundtruth
             new_img_path_list = []
             for img_path in self.image_paths:

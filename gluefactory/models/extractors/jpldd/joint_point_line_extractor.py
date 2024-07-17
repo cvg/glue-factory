@@ -546,13 +546,13 @@ class JointPointLineDetectorDescriptor(BaseModel):
             lines = pred["lines"]
             warped_lines = warped_outputs["lines"]
             rep_lines, loc_error_lines = LineMetrics.get_rep_and_loc_error(
-                lines, warped_lines, Hs.cpu().numpy(), predictions[0].shape
+                lines, warped_lines, Hs, predictions[0].shape,[50],[3]
             )
             out["repeatability_lines"] = torch.tensor(
-                [rep_lines], dtype=torch.float, device=device
+                rep_lines, dtype=torch.float, device=device
             )
             out["loc_error_lines"] = torch.tensor(
-                [loc_error_lines], dtype=torch.float, device=device
+                loc_error_lines, dtype=torch.float, device=device
             )
 
         return out

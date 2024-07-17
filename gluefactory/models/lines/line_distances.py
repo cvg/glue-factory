@@ -122,7 +122,7 @@ def get_orth_line_dist_torch(
     return line_dists
 
 
-def get_structural_line_dist(warped_ref_line_seg, target_line_seg):
+def get_structural_line_dist(warped_ref_line_seg, target_line_seg) -> torch.Tensor:
     """Compute the distances between two sets of lines
     using the structural distance."""
     dist = (
@@ -131,7 +131,7 @@ def get_structural_line_dist(warped_ref_line_seg, target_line_seg):
         )
     ) ** 0.5
     dist = (
-        np.minimum(
+        torch.minimum(
             dist[:, :, 0, 0] + dist[:, :, 1, 1], dist[:, :, 0, 1] + dist[:, :, 1, 0]
         )
         / 2
@@ -247,12 +247,12 @@ def angular_distance(segs1, segs2):
     between two sets of line segments."""
     # Compute direction vector of segs1
     dirs1 = segs1[:, 1] - segs1[:, 0]
-    dirs1 /= np.linalg.norm(dirs1, axis=1, keepdims=True) + UPM_EPS
+    dirs1 /= torch.linalg.norm(dirs1, dim=1, keepdim=True) + UPM_EPS
     # Compute direction vector of segs2
     dirs2 = segs2[:, 1] - segs2[:, 0]
-    dirs2 /= np.linalg.norm(dirs2, axis=1, keepdims=True) + UPM_EPS
+    dirs2 /= torch.linalg.norm(dirs2, dim=1, keepdim=True) + UPM_EPS
     # https://en.wikipedia.org/wiki/Cosine_similarity
-    return np.arccos(np.minimum(1, np.abs(np.einsum("ij,kj->ik", dirs1, dirs2))))
+    return torch.arccos(torch.minimum(torch.tensor(1), torch.abs(torch.einsum("ij,kj->ik", dirs1, dirs2))))
 
 
 def overlap_distance_sym(line_seg1, line_seg2):

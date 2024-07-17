@@ -15,10 +15,10 @@ module add cuda/12.1 # add cuda 12.1 as this is what pytorch is compiled with fo
 # SET OUTPUT FOLDER CORRECTLY (EVAL_PATH, TRAIN_PATH in glue factory)
 
 # ADAPT TO YOUR REPO AND VENV
-source /home/rkreft/3dv_venv/bin/activate
-cd /home/rkreft/glue-factory
+source /home/fmoeller/merged_3dv_venv/bin/activate
+cd /home/fmoeller/merged_gluefactory
 
 # !! if copying this script as a template, change experiment name and path to config(create new config) !!
 # Run script (adapt distributed and restore if needed)
-python -m gluefactory.train rk_jpldd_08_correct_gt_step3 --conf=gluefactory/configs/rk_jpldd_08_correct_gt_step3.yaml --distributed --no_eval_0
+python -m gluefactory.train rk_jpldd_test --conf=gluefactory/configs/rk_jpldd_test.yaml --distributed --restore
 echo "Finished training!"

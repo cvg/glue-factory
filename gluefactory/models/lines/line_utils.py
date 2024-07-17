@@ -7,6 +7,7 @@ import torch
 
 from gluefactory.datasets.homographies_deeplsd import warp_lines
 from gluefactory.utils.image import compute_image_grad
+from gluefactory.geometry.homography import warp_lines_torch
 
 UPM_EPS = 1e-8
 
@@ -273,7 +274,7 @@ def align_with_grad_angle(angle, img):
     return new_grad_angle, img_grad_angle
 
 
-def clip_line_to_boundary(lines):
+def clip_line_to_boundary(lines: torch.Tensor) -> tuple[torch.Tensor,torch.Tensor]:
     """Clip the first coordinate of a set of lines to the lower boundary 0
         and indicate which lines are completely outside of the boundary.
     Args:
@@ -281,10 +282,10 @@ def clip_line_to_boundary(lines):
     Returns:
         The clipped coordinates + a mask indicating invalid lines.
     """
-    updated_lines = lines.copy()
+    updated_lines = lines.detach().clone()
 
     # Detect invalid lines completely outside of the first boundary
-    invalid = np.all(lines[:, :, 0] < 0, axis=1)
+    invalid = torch.all(lines[:,:,0] < 0, dim=1)
 
     # Clip the lines to the boundary and update the second coordinate
     # First endpoint
@@ -307,7 +308,7 @@ def clip_line_to_boundary(lines):
     return updated_lines, invalid
 
 
-def clip_line_to_boundaries(lines, img_size, min_len=10):
+def clip_line_to_boundaries(lines: torch.Tensor, img_size: tuple[int,int], min_len=10) -> tuple[torch.Tensor,torch.Tensor]:
     """Clip a set of lines to the image boundaries and indicate
         which lines are completely outside of the boundaries.
     Args:
@@ -316,7 +317,7 @@ def clip_line_to_boundaries(lines, img_size, min_len=10):
     Returns:
         The clipped coordinates + a mask indicating valid lines.
     """
-    new_lines = lines.copy()
+    new_lines = lines.detach().clone()
 
     # Clip the first coordinate to the 0 boundary of img1
     new_lines, invalid_x0 = clip_line_to_boundary(lines)
@@ -335,13 +336,13 @@ def clip_line_to_boundaries(lines, img_size, min_len=10):
     new_lines = new_lines[:, :, [1, 0]]
 
     # Merge all the invalid lines and also remove lines that became too short
-    short = np.linalg.norm(new_lines[:, 1] - new_lines[:, 0], axis=1) < min_len
-    valid = np.logical_not(invalid_x0 | invalid_xh | invalid_y0 | invalid_yw | short)
+    short = torch.linalg.norm(new_lines[:, 1] - new_lines[:, 0], dim=1) < min_len
+    valid = torch.logical_not(invalid_x0 | invalid_xh | invalid_y0 | invalid_yw | short)
 
     return new_lines, valid
 
 
-def get_common_lines(lines0, lines1, H, img_size):
+def get_common_lines(lines0: torch.Tensor, lines1: torch.Tensor, H: torch.Tensor, img_size) -> tuple[torch.Tensor,torch.Tensor]:
     """Extract the lines in common between two views, by warping lines1
         into lines0 frame.
     Args:
@@ -352,15 +353,15 @@ def get_common_lines(lines0, lines1, H, img_size):
         Updated lines0 with a valid reprojection in img1 and warped_lines1.
     """
     # First warp lines0 to img1 to detect invalid lines
-    warped_lines0 = warp_lines(lines0, H)
+    warped_lines0, _ = warp_lines_torch(lines0, H)
 
     # Clip them to the boundary
     warped_lines0, valid = clip_line_to_boundaries(warped_lines0, img_size)
 
     # Warp all the valid lines back in img0
-    inv_H = np.linalg.inv(H)
-    new_lines0 = warp_lines(warped_lines0[valid], inv_H)
-    warped_lines1 = warp_lines(lines1, inv_H)
+    inv_H = torch.linalg.inv(H)
+    new_lines0, _= warp_lines_torch(warped_lines0[valid], inv_H)
+    warped_lines1, _ = warp_lines_torch(lines1, inv_H)
     warped_lines1, valid = clip_line_to_boundaries(warped_lines1, img_size)
 
     return new_lines0, warped_lines1[valid]

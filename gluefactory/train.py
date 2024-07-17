@@ -297,7 +297,7 @@ def training(rank, conf, output_dir, args):
         model.load_state_dict(init_cp["model"], strict=False)
     if args.distributed:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device])
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], find_unused_parameters=True)
     if rank == 0 and args.print_arch:
         logger.info(f"Model: \n{model}")
 

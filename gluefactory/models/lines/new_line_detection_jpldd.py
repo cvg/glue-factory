@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from gluefactory.models.lines.line_utils import merge_lines
+from gluefactory.models.lines.line_refinement import merge_lines
 
 
 def create_line_candidates(keypoints: torch.Tensor) -> torch.Tensor:
