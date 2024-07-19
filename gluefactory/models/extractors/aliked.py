@@ -239,6 +239,7 @@ class DKD(nn.Module):
 
         return keypoints, scoredispersitys, kptscores
 
+
 class DKDLight(nn.Module):
     def __init__(
         self,
@@ -876,7 +877,7 @@ class ALIKED(BaseModel):
 
     def loss(self, pred, data):
         raise NotImplementedError
-    
+
 
 class SMH(nn.Module):
     def __init__(self, input_dim):

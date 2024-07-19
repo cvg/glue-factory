@@ -11,20 +11,16 @@ from omegaconf import OmegaConf
 import gluefactory.models.utils.metrics_lines as LineMetrics
 from gluefactory.datasets.homographies_deeplsd import sample_homography
 from gluefactory.models import get_model
-from gluefactory.models.extractors.aliked import SMH,SDDH,DKDLight
 from gluefactory.models.backbones.backbone_encoder import AlikedEncoder, aliked_cfgs
 from gluefactory.models.base_model import BaseModel
-from gluefactory.models.extractors.jpldd.utils import (
-    InputPadder,
-    change_dict_key,
-    sync_and_time,
-)
+from gluefactory.models.extractors.aliked import SDDH, SMH, DKDLight, InputPadder
 from gluefactory.models.lines.new_line_detection_jpldd import detect_jpldd_lines
 from gluefactory.models.utils.metrics_points import (
     compute_loc_error,
     compute_pr,
     compute_repeatability,
 )
+from gluefactory.utils.misc import change_dict_key, sync_and_time
 
 default_H_params = {
     "translation": True,
@@ -111,9 +107,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
         self.descriptor_branch = SDDH(
             dim, K, M, gate=nn.SELU(inplace=True), conv2D=False, mask=False
         )
-        self.line_descriptor = (
-            torch.lerp
-        )  # we take the endpoints of lines and interpolate to get the descriptor
         # Line Attraction Field information (Line Distance Field and Angle Field)
         self.distance_field_branch = nn.Sequential(
             nn.Conv2d(dim, conf.line_df_decoder_channels, kernel_size=3, padding=1),
@@ -179,7 +172,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 "pretrained": True,
                 "nms_radius": self.conf.nms_radius,
             }
-            self.aliked_lw = get_model("backbones.aliked_light")(aliked_gt_cfg).eval()
+            self.aliked_lw = get_model("extractors.aliked_light")(aliked_gt_cfg).eval()
 
         # load model checkpoint if given -> only load weights
         if conf.checkpoint is not None and Path(conf.checkpoint).exists():
@@ -546,7 +539,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             lines = pred["lines"]
             warped_lines = warped_outputs["lines"]
             rep_lines, loc_error_lines = LineMetrics.get_rep_and_loc_error(
-                lines, warped_lines, Hs, predictions[0].shape,[50],[3]
+                lines, warped_lines, Hs, predictions[0].shape, [50], [3]
             )
             out["repeatability_lines"] = torch.tensor(
                 rep_lines, dtype=torch.float, device=device

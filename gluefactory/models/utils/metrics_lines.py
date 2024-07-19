@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 from scipy.optimize import linear_sum_assignment
 
 from gluefactory.datasets.homographies_deeplsd import warp_lines
@@ -10,8 +11,6 @@ from gluefactory.models.lines.line_distances import (
     get_structural_line_dist,
     overlap_distance_sym,
 )
-import torch
-
 from gluefactory.models.lines.line_utils import get_common_lines
 
 NUM_LINES_THRESHOLDS = [10, 25, 50, 100, 300]
@@ -26,7 +25,7 @@ def get_rep_and_loc_error(
     Hs: torch.Tensor,
     img_size: tuple[float, float],
     num_lines_thres: list[int] = NUM_LINES_THRESHOLDS,
-    pixel_thres: list[int] = PIXEL_THRESHOLDS
+    pixel_thres: list[int] = PIXEL_THRESHOLDS,
 ) -> tuple[np.ndarray, np.ndarray]:
     (struct_rep, struct_loc_error, num_lines) = [], [], []
     for i in range(len(lines)):
@@ -72,7 +71,7 @@ def match_segments_1_to_1(
     angular_th=(30 * np.pi / 180),
     overlap_th=0.5,
     dist_thresh=5,
-) -> tuple[torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Match segs1 and segs2 1-to-1, minimizing the chosen line distance.
     Ensure a minimum overlap and maximum angle difference."""
     HIGH_VALUE = 100000
@@ -112,8 +111,12 @@ def match_segments_1_to_1(
     full_distance_matrix[overlap_dist <= overlap_th] = HIGH_VALUE
 
     # Enforce the 1-to-1 assignation
-    matched_idx1, matched_idx2 = linear_sum_assignment(full_distance_matrix.cpu().numpy())
-    matched_idx1, matched_idx2 = torch.tensor(matched_idx1,device=full_distance_matrix.device), torch.tensor(matched_idx2,device=full_distance_matrix.device)
+    matched_idx1, matched_idx2 = linear_sum_assignment(
+        full_distance_matrix.cpu().numpy()
+    )
+    matched_idx1, matched_idx2 = torch.tensor(
+        matched_idx1, device=full_distance_matrix.device
+    ), torch.tensor(matched_idx2, device=full_distance_matrix.device)
     # Remove invalid matches
     distances = full_distance_matrix[matched_idx1, matched_idx2]
     valid = distances < HIGH_VALUE
@@ -133,7 +136,13 @@ def match_segments_1_to_1(
 
 
 def compute_repeatability(
-    segs1: torch.Tensor, segs2: torch.Tensor, matched_idx1: torch.Tensor, matched_idx2: torch.Tensor, distances: torch.Tensor, thresholds: list[int], rep_type="num"
+    segs1: torch.Tensor,
+    segs2: torch.Tensor,
+    matched_idx1: torch.Tensor,
+    matched_idx2: torch.Tensor,
+    distances: torch.Tensor,
+    thresholds: list[int],
+    rep_type="num",
 ) -> list[np.ndarray]:
     """Compute the repeatability between two sets of matched lines.
     Args:
@@ -163,14 +172,18 @@ def compute_repeatability(
             len2 = torch.linalg.norm(segs2[:, 0] - segs2[:, 1], axis=1)
             matched_len1 = len1[matched_idx1[correct]]
             matched_len2 = len2[matched_idx2[correct]]
-            rep = (matched_len1.sum() + matched_len2.sum()) / (len1.sum() + len2.sum()).cpu().numpy()
+            rep = (matched_len1.sum() + matched_len2.sum()) / (
+                len1.sum() + len2.sum()
+            ).cpu().numpy()
         else:
             raise ValueError("Unknown repeatability type: " + rep_type)
         reps.append(rep)
     return reps
 
 
-def compute_loc_error(distances: torch.Tensor, thresholds: list[int]) -> list[np.ndarray]:
+def compute_loc_error(
+    distances: torch.Tensor, thresholds: list[int]
+) -> list[np.ndarray]:
     """Compute the line localization error between two sets of lines.
     Args:
         distances: the line distance of the matches, in increasing order.

@@ -21,7 +21,7 @@ data:
             path: "outputs/results/deeplsd_gt"   # as subdirectory of DATA_PATH(defined in settings.py)
             data_keys: [ "deeplsd_distance_field", "deeplsd_angle_field" ]
 model:
-    name: jpldd.joint_point_line_extractor
+    name: joint_point_line_extractor
     model_name: "aliked-n16"
     line_neighborhood: 5
     max_num_keypoints: 500  # setting for training, for eval: -1

@@ -1,6 +1,5 @@
 import numpy as np
 
-
 default_H_params = {
     "translation": True,
     "rotation": True,
@@ -69,7 +68,9 @@ def compute_tp_fp(
     return tp, fp, probs, n_gt
 
 
-def compute_pr(data: np.ndarray, pred: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def compute_pr(
+    data: np.ndarray, pred: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute precision and recall.
 

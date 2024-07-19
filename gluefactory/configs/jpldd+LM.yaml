@@ -1,7 +1,7 @@
 model:
   name: two_view_pipeline
   extractor:
-    name: extractors.jpldd.joint_point_line_extractor
+    name: extractors.joint_point_line_extractor
     training:
       do: False
     max_num_keypoints: 512

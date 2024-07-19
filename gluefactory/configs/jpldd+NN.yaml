@@ -1,7 +1,7 @@
 model:
   name: two_view_pipeline
   extractor:
-    name: extractors.jpldd.joint_point_line_extractor
+    name: extractors.joint_point_line_extractor
     aliked_model_name: "aliked-n16"
     max_num_keypoints: 2048  # setting for training, for eval: -1
     detection_threshold: 0.0

@@ -252,7 +252,11 @@ def angular_distance(segs1, segs2):
     dirs2 = segs2[:, 1] - segs2[:, 0]
     dirs2 /= torch.linalg.norm(dirs2, dim=1, keepdim=True) + UPM_EPS
     # https://en.wikipedia.org/wiki/Cosine_similarity
-    return torch.arccos(torch.minimum(torch.tensor(1), torch.abs(torch.einsum("ij,kj->ik", dirs1, dirs2))))
+    return torch.arccos(
+        torch.minimum(
+            torch.tensor(1), torch.abs(torch.einsum("ij,kj->ik", dirs1, dirs2))
+        )
+    )
 
 
 def overlap_distance_sym(line_seg1, line_seg2):
