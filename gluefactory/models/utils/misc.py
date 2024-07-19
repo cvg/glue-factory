@@ -1,5 +1,4 @@
 import math
-import time
 from typing import List, Optional, Tuple
 
 import torch
@@ -70,13 +69,3 @@ def pad_and_stack(
     y = torch.stack([pad_to_length(x, length, pad_dim, **kwargs) for x in sequences], 0)
     return y
 
-
-def sync_and_time():
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
-    t = time.time()
-    return t
-
-
-def change_dict_key(d: dict, old_key: str, new_key: str, default_value=None):
-    d[new_key] = d.pop(old_key, default_value)

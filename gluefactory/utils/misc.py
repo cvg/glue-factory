@@ -1,5 +1,5 @@
 import torch
-
+import time
 
 def to_view(data, i):
     return {k + i: v for k, v in data.items()}
@@ -42,3 +42,13 @@ def unstack_twoviews(data, B, indices=["0to1", "0to2", "1to2"]):
     for i, idx in enumerate(indices):
         out[idx] = {k: v[i * B : (i + 1) * B] for k, v in data.items()}
     return out
+
+def sync_and_time():
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    t = time.time()
+    return t
+
+
+def change_dict_key(d: dict, old_key: str, new_key: str, default_value=None):
+    d[new_key] = d.pop(old_key, default_value)
