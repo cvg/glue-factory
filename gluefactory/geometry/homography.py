@@ -158,7 +158,7 @@ def warp_points(points, homography, inverse=True):
     return warped_points[0] if len(homography.shape) == 2 else warped_points
 
 
-def warp_points_torch(points, H, inverse=True):
+def warp_points_torch(points: torch.Tensor, H: torch.Tensor, inverse=True):
     """
     Warp a list of points with the INVERSE of the given homography.
     The inverse is used to be coherent with tf.contrib.image.transform
@@ -273,7 +273,10 @@ def shrink_segs_to_img(segs: torch.Tensor, img_shape: Tuple[int, int]) -> torch.
 
 
 def warp_lines_torch(
-    lines, H, inverse=True, dst_shape: Tuple[int, int] = None
+    lines: torch.Tensor,
+    H: torch.Tensor,
+    inverse=True,
+    dst_shape: Tuple[int, int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     :param lines: A tensor of shape (B, N, 2, 2)
@@ -285,6 +288,8 @@ def warp_lines_torch(
     """
     device = lines.device
     batch_size = len(lines)
+    if batch_size == 0:
+        return torch.empty((0, 2, 2)), torch.empty(0)
     lines = warp_points_torch(lines.reshape(batch_size, -1, 2), H, inverse).reshape(
         lines.shape
     )

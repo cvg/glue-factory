@@ -1,0 +1,33 @@
+model:
+  name: two_view_pipeline
+  extractor:
+    name: extractors.joint_point_line_extractor
+    aliked_model_name: "aliked-n16"
+    max_num_keypoints: 2048  # setting for training, for eval: -1
+    detection_threshold: 0.0
+    nms_radius: 3
+    training:
+      do: False
+    checkpoint: "/cluster/courses/3dv/data/team-2/outputs/training/rk_jpldd_10_refine_09/checkpoint_best.tar"  # if given load model weights from this checkpoint
+    timeit: False  # override timeit: False from BaseModel
+    line_detection:
+      do: False
+  matcher:
+    name: matchers.nearest_neighbor_matcher
+benchmarks:
+  megadepth1500:
+    data:
+    preprocessing:
+      side: long
+      resize: 1600
+    eval:
+      estimator: poselib
+      ransac_th: -1
+  hpatches:
+    eval:
+      estimator: poselib
+      ransac_th: -1
+    model:
+      extractor:
+        max_num_keypoints: 1024 # overwrite config above
+

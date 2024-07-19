@@ -6,11 +6,11 @@ artifacts.
 
 import argparse
 import logging
+import pickle
 import shutil
 import tarfile
 from pathlib import Path
 
-import pickle
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -27,13 +27,17 @@ from ..geometry.homography import (
 from ..models.cache_loader import CacheLoader, pad_local_features
 from ..settings import DATA_PATH
 from ..utils.image import read_image
-from ..utils.tools import fork_rng
 from ..utils.tensor import batch_to_device
-from ..visualization.viz2d import plot_image_grid
+from ..utils.tools import fork_rng
+from ..visualization.viz2d import (
+    get_flow_vis,
+    plot_image_grid,
+    plot_images,
+    plot_keypoints,
+)
 from .augmentations import IdentityAugmentation, augmentations
 from .base_dataset import BaseDataset
 from .utils import warp_points
-from ..visualization.viz2d import plot_images, plot_keypoints, get_flow_vis
 
 logger = logging.getLogger(__name__)
 
@@ -47,24 +51,25 @@ def sample_homography(img, conf: dict, size: list):
     data["image_size"] = np.array(size, dtype=np.float32)
     return data
 
-def plot_predictions(pred, data):
-    kp_0 = data['view0']['cache']['keypoints'][0].cpu().numpy()
-    df_0 = data['view0']['cache']['df'][0].cpu().numpy()
-    angle_0 = data['view0']['cache']['line_level'][0].cpu().numpy()
-    angle_0 = np.arctan2(angle_0[1,:], angle_0[0,:])
-    flow_0 = get_flow_vis(df_0, angle_0)
-    img_0 = data['view0']['image'][0].permute(1, 2, 0).cpu().numpy()
 
-    kp_jpl = pred['keypoints0'][0].cpu().numpy()
-    df_jpl = pred['df0'][0].cpu().numpy()
-    angle_jpl = pred['line_level0'][0].cpu().numpy()
+def plot_predictions(pred, data):
+    kp_0 = data["view0"]["cache"]["keypoints"][0].cpu().numpy()
+    df_0 = data["view0"]["cache"]["df"][0].cpu().numpy()
+    angle_0 = data["view0"]["cache"]["line_level"][0].cpu().numpy()
+    angle_0 = np.arctan2(angle_0[1, :], angle_0[0, :])
+    flow_0 = get_flow_vis(df_0, angle_0)
+    img_0 = data["view0"]["image"][0].permute(1, 2, 0).cpu().numpy()
+
+    kp_jpl = pred["keypoints0"][0].cpu().numpy()
+    df_jpl = pred["df0"][0].cpu().numpy()
+    angle_jpl = pred["line_level0"][0].cpu().numpy()
     angle_jpl = np.arctan2(angle_jpl[1], angle_jpl[0])
     flow_jpl = get_flow_vis(df_jpl, angle_jpl)
 
     plot_images(
         [img_0, df_jpl, flow_jpl],
-        ['Keypoints', 'DF', 'Angle'],
-        cmaps = ['gray', 'viridis', 'gray']
+        ["Keypoints", "DF", "Angle"],
+        cmaps=["gray", "viridis", "gray"],
     )
     plot_keypoints([kp_jpl])
     fig_pred = plt.gcf()
@@ -72,17 +77,13 @@ def plot_predictions(pred, data):
     plt.close()
     plot_images(
         [img_0, df_0, flow_0],
-        ['Keypoints', 'DF', 'Angle'],
-        cmaps = ['gray', 'viridis', 'gray']
+        ["Keypoints", "DF", "Angle"],
+        cmaps=["gray", "viridis", "gray"],
     )
     plot_keypoints([kp_0])
     fig_gt = plt.gcf()
 
-
-    return {
-        'Predictions': fig_pred,
-        'Ground Truth': fig_gt
-    }
+    return {"Predictions": fig_pred, "Ground Truth": fig_gt}
 
 
 class HomographyDataset(BaseDataset):
@@ -244,69 +245,71 @@ class _Dataset(torch.utils.data.Dataset):
                 )
 
         return features
-    
+
     def df_and_angle_to_offset(self, df, angle):
-        """ Convert a DF and angle representation back to an offset map. """
+        """Convert a DF and angle representation back to an offset map."""
         # Calculate x and y components of the offset using angle and magnitude (df)
-        offset_x = df * np.sin(angle + np.pi/2)
-        offset_y = df * np.cos(angle + np.pi/2)
+        offset_x = df * np.sin(angle + np.pi / 2)
+        offset_y = df * np.cos(angle + np.pi / 2)
 
         # Stack offset_x and offset_y to create the offset map
         offset = np.stack((offset_x, offset_y), axis=-1)
 
         return offset
-    
+
     def offset_to_df_and_angle(self, offset):
-        """ Convert an offset map into a DF and angle representation. """
+        """Convert an offset map into a DF and angle representation."""
         df = np.linalg.norm(offset, axis=-1)
         angle = np.arctan2(offset[:, :, 0], offset[:, :, 1])
         return df, angle
-    
+
     def warp_data(self, img, df, angle, offset, H, ps: list):
         h, w = img.shape[:2]
         ps = tuple(ps)
 
-        valid_mask = cv2.warpPerspective(np.ones_like(df), H, ps,
-                                         flags=cv2.INTER_NEAREST).astype(bool)
+        valid_mask = cv2.warpPerspective(
+            np.ones_like(df), H, ps, flags=cv2.INTER_NEAREST
+        ).astype(bool)
 
         # Warp the closest point on a line
-        pix_loc = np.stack(np.meshgrid(np.arange(h), np.arange(w),
-                                       indexing='ij'), axis=-1)
+        pix_loc = np.stack(
+            np.meshgrid(np.arange(h), np.arange(w), indexing="ij"), axis=-1
+        )
         closest = pix_loc + offset
-        warped_closest = warp_points(closest.reshape(-1, 2),
-                                     H).reshape(h, w, 2)
-        warped_pix_loc = warp_points(pix_loc.reshape(-1, 2),
-                                     H).reshape(h, w, 2)
+        warped_closest = warp_points(closest.reshape(-1, 2), H).reshape(h, w, 2)
+        warped_pix_loc = warp_points(pix_loc.reshape(-1, 2), H).reshape(h, w, 2)
         # angle = np.arctan2(warped_closest[:, :, 0] - warped_pix_loc[:, :, 0],
         #                    warped_closest[:, :, 1] - warped_pix_loc[:, :, 1])
         offset_norm = np.linalg.norm(offset, axis=-1)
         zero_offset = offset_norm < 1e-3
         offset_norm[zero_offset] = 1
-        scaling = (np.linalg.norm(warped_closest - warped_pix_loc, axis=-1)
-                   / offset_norm)
+        scaling = np.linalg.norm(warped_closest - warped_pix_loc, axis=-1) / offset_norm
         scaling[zero_offset] = 0
 
         warped_closest[:, :, 0] = cv2.warpPerspective(
-            warped_closest[:, :, 0], H, (w, h), flags=cv2.INTER_NEAREST)
+            warped_closest[:, :, 0], H, (w, h), flags=cv2.INTER_NEAREST
+        )
         warped_closest[:, :, 1] = cv2.warpPerspective(
-            warped_closest[:, :, 1], H, (w, h), flags=cv2.INTER_NEAREST)
+            warped_closest[:, :, 1], H, (w, h), flags=cv2.INTER_NEAREST
+        )
         warped_offset = warped_closest - pix_loc
 
         # Warp the DF
         warped_df = cv2.warpPerspective(df, H, ps, flags=cv2.INTER_LINEAR)
-        warped_scaling = cv2.warpPerspective(scaling, H, ps,
-                                             flags=cv2.INTER_LINEAR)
+        warped_scaling = cv2.warpPerspective(scaling, H, ps, flags=cv2.INTER_LINEAR)
         warped_df *= warped_scaling
 
         # Warp the angle
         closest = pix_loc + np.stack([np.sin(angle), np.cos(angle)], axis=-1)
-        warped_closest = warp_points(closest.reshape(-1, 2),
-                                     H).reshape(h, w, 2)
-        warped_angle = np.mod(np.arctan2(
-            warped_closest[:, :, 0] - warped_pix_loc[:, :, 0],
-            warped_closest[:, :, 1] - warped_pix_loc[:, :, 1]), np.pi)
-        warped_angle = cv2.warpPerspective(warped_angle, H, ps,
-                                           flags=cv2.INTER_NEAREST)
+        warped_closest = warp_points(closest.reshape(-1, 2), H).reshape(h, w, 2)
+        warped_angle = np.mod(
+            np.arctan2(
+                warped_closest[:, :, 0] - warped_pix_loc[:, :, 0],
+                warped_closest[:, :, 1] - warped_pix_loc[:, :, 1],
+            ),
+            np.pi,
+        )
+        warped_angle = cv2.warpPerspective(warped_angle, H, ps, flags=cv2.INTER_NEAREST)
 
         return (valid_mask, warped_df, warped_angle, warped_offset)
 
@@ -341,10 +344,14 @@ class _Dataset(torch.utils.data.Dataset):
             kps_file = self.image_dir / name[:-4] / "keypoint_scores.npy"
 
             # Load keypoints and scores
-            features["keypoints"] = torch.from_numpy(np.load(kp_file)).to(dtype=torch.float32)
-            features["keypoint_scores"] = torch.from_numpy(np.load(kps_file)).to(dtype=torch.float32)
+            features["keypoints"] = torch.from_numpy(np.load(kp_file)).to(
+                dtype=torch.float32
+            )
+            features["keypoint_scores"] = torch.from_numpy(np.load(kps_file)).to(
+                dtype=torch.float32
+            )
             features = batch_to_device(features, data["image"].device)
-            
+
             features = self._transform_keypoints(features, data)
 
             # Load pickle file for DF max and min values
@@ -360,7 +367,7 @@ class _Dataset(torch.utils.data.Dataset):
             af_img = read_image(self.image_dir / name[:-4] / "angle.jpg", True)
             af_img = af_img.astype(np.float32) / 255.0
             af_img *= np.pi
-            
+
             # Get closest point to line for each pixel
             # offset = self.df_and_angle_to_offset(df_img, af_img)
             ofx_img = read_image(self.image_dir / name[:-4] / "offset_x.jpg", True)
@@ -368,8 +375,8 @@ class _Dataset(torch.utils.data.Dataset):
             ofy_img = read_image(self.image_dir / name[:-4] / "offset_y.jpg", True)
             ofy_img = ofy_img.astype(np.float32) / 255.0
             offset = np.stack((ofx_img, ofy_img), axis=-1)
-            offset = offset * values['max_offset']
-            offset = offset + values['min_offset']
+            offset = offset * values["max_offset"]
+            offset = offset + values["min_offset"]
 
             """
             # check offset calculation
@@ -388,18 +395,27 @@ class _Dataset(torch.utils.data.Dataset):
 
             # Warp the DF, and AF according to the homography
             ref_valid_mask, warped_df, warped_angle, warped_offset = self.warp_data(
-                img, df_img, af_img, offset, H, ps)
+                img, df_img, af_img, offset, H, ps
+            )
 
             # convert angle field to 2 channel direction field (x,y)
-            warped_direction_field = np.stack((np.cos(warped_angle), np.sin(warped_angle)), axis=-1)
+            warped_direction_field = np.stack(
+                (np.cos(warped_angle), np.sin(warped_angle)), axis=-1
+            )
 
             # Add the warped features to the dictionary
             features["df"] = torch.from_numpy(warped_df).to(dtype=torch.float32)
             # features["line_level"] = torch.from_numpy(warped_angle).to(dtype=torch.float32)
-            features["line_level"] = torch.from_numpy(warped_direction_field).to(dtype=torch.float32).permute(2, 0, 1)
-            features["ref_valid_mask"] = torch.from_numpy(ref_valid_mask).to(dtype=torch.float32)
+            features["line_level"] = (
+                torch.from_numpy(warped_direction_field)
+                .to(dtype=torch.float32)
+                .permute(2, 0, 1)
+            )
+            features["ref_valid_mask"] = torch.from_numpy(ref_valid_mask).to(
+                dtype=torch.float32
+            )
 
-            features = batch_to_device(features, data["image"].device)            
+            features = batch_to_device(features, data["image"].device)
             data["cache"] = features
 
         return data

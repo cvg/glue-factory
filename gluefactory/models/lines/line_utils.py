@@ -4,7 +4,10 @@
 
 import numpy as np
 import torch
+from torch.nn.functional import pixel_shuffle, softmax
 
+from gluefactory.datasets.homographies_deeplsd import warp_lines
+from gluefactory.geometry.homography import warp_lines_torch
 from gluefactory.utils.image import compute_image_grad
 
 UPM_EPS = 1e-8
@@ -41,31 +44,38 @@ def bilinear_interpolate_numpy(im, x, y):
 
 
 def orientation(p, q, r):
-    """ Compute the orientation of a list of triplets of points. """
-    return np.sign((q[:, 1] - p[:, 1]) * (r[:, 0] - q[:, 0])
-                   - (q[:, 0] - p[:, 0]) * (r[:, 1] - q[:, 1]))
+    """Compute the orientation of a list of triplets of points."""
+    return np.sign(
+        (q[:, 1] - p[:, 1]) * (r[:, 0] - q[:, 0])
+        - (q[:, 0] - p[:, 0]) * (r[:, 1] - q[:, 1])
+    )
 
 
 def is_on_segment(line_seg, p):
-    """ Check whether a point p is on a line segment, assuming the point
-        to be colinear with the two endpoints. """
-    return ((p[:, 0] >= np.min(line_seg[:, :, 0], axis=1))
-            & (p[:, 0] <= np.max(line_seg[:, :, 0], axis=1))
-            & (p[:, 1] >= np.min(line_seg[:, :, 1], axis=1))
-            & (p[:, 1] <= np.max(line_seg[:, :, 1], axis=1)))
+    """Check whether a point p is on a line segment, assuming the point
+    to be colinear with the two endpoints."""
+    return (
+        (p[:, 0] >= np.min(line_seg[:, :, 0], axis=1))
+        & (p[:, 0] <= np.max(line_seg[:, :, 0], axis=1))
+        & (p[:, 1] >= np.min(line_seg[:, :, 1], axis=1))
+        & (p[:, 1] <= np.max(line_seg[:, :, 1], axis=1))
+    )
+
 
 def intersect(line_seg1, line_seg2):
-    """ Check whether two sets of lines segments
-        intersects with each other. """
+    """Check whether two sets of lines segments
+    intersects with each other."""
     ori1 = orientation(line_seg1[:, 0], line_seg1[:, 1], line_seg2[:, 0])
     ori2 = orientation(line_seg1[:, 0], line_seg1[:, 1], line_seg2[:, 1])
     ori3 = orientation(line_seg2[:, 0], line_seg2[:, 1], line_seg1[:, 0])
     ori4 = orientation(line_seg2[:, 0], line_seg2[:, 1], line_seg1[:, 1])
-    return (((ori1 != ori2) & (ori3 != ori4))
-            | ((ori1 == 0) & is_on_segment(line_seg1, line_seg2[:, 0]))
-            | ((ori2 == 0) & is_on_segment(line_seg1, line_seg2[:, 1]))
-            | ((ori3 == 0) & is_on_segment(line_seg2, line_seg1[:, 0]))
-            | ((ori4 == 0) & is_on_segment(line_seg2, line_seg1[:, 1])))
+    return (
+        ((ori1 != ori2) & (ori3 != ori4))
+        | ((ori1 == 0) & is_on_segment(line_seg1, line_seg2[:, 0]))
+        | ((ori2 == 0) & is_on_segment(line_seg1, line_seg2[:, 1]))
+        | ((ori3 == 0) & is_on_segment(line_seg2, line_seg1[:, 0]))
+        | ((ori4 == 0) & is_on_segment(line_seg2, line_seg1[:, 1]))
+    )
 
 
 def project_point_to_line(line_segs, points):
@@ -238,23 +248,287 @@ def nn_interpolate_numpy(img, x, y):
     yi = np.clip(np.round(y).astype(int), 0, img.shape[0] - 1)
     return img[yi, xi]
 
+
 def align_with_grad_angle(angle, img):
-    """ Starting from an angle in [0, pi], find the sign of the angle based on
-        the image gradient of the corresponding pixel. """
+    """Starting from an angle in [0, pi], find the sign of the angle based on
+    the image gradient of the corresponding pixel."""
     # Image gradient
     img_grad_angle = compute_image_grad(img)[3]
-    
+
     # Compute the distance of the image gradient to the angle
     # and angle - pi
     pred_grad = np.mod(angle, np.pi)  # in [0, pi]
-    pos_dist = np.minimum(np.abs(img_grad_angle - pred_grad),
-                          2 * np.pi - np.abs(img_grad_angle - pred_grad))
+    pos_dist = np.minimum(
+        np.abs(img_grad_angle - pred_grad),
+        2 * np.pi - np.abs(img_grad_angle - pred_grad),
+    )
     neg_dist = np.minimum(
         np.abs(img_grad_angle - pred_grad + np.pi),
-        2 * np.pi - np.abs(img_grad_angle - pred_grad + np.pi))
-    
+        2 * np.pi - np.abs(img_grad_angle - pred_grad + np.pi),
+    )
+
     # Assign the new grad angle to the closest of the two
-    is_pos_closest = np.argmin(np.stack([neg_dist, pos_dist],
-                                        axis=-1), axis=-1).astype(bool)
+    is_pos_closest = np.argmin(np.stack([neg_dist, pos_dist], axis=-1), axis=-1).astype(
+        bool
+    )
     new_grad_angle = np.where(is_pos_closest, pred_grad, pred_grad - np.pi)
     return new_grad_angle, img_grad_angle
+
+
+def clip_line_to_boundary(lines: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Clip the first coordinate of a set of lines to the lower boundary 0
+        and indicate which lines are completely outside of the boundary.
+    Args:
+        lines: a [N, 2, 2] tensor of lines.
+    Returns:
+        The clipped coordinates + a mask indicating invalid lines.
+    """
+    updated_lines = lines.detach().clone()
+
+    # Detect invalid lines completely outside of the first boundary
+    invalid = torch.all(lines[:, :, 0] < 0, dim=1)
+
+    # Clip the lines to the boundary and update the second coordinate
+    # First endpoint
+    out = lines[:, 0, 0] < 0
+    denom = lines[:, 1, 0] - lines[:, 0, 0]
+    denom[denom == 0] = 1e-6
+    ratio = lines[:, 1, 0] / denom
+    updated_y = ratio * lines[:, 0, 1] + (1 - ratio) * lines[:, 1, 1]
+    updated_lines[out, 0, 1] = updated_y[out]
+    updated_lines[out, 0, 0] = 0
+    # Second endpoint
+    out = lines[:, 1, 0] < 0
+    denom = lines[:, 0, 0] - lines[:, 1, 0]
+    denom[denom == 0] = 1e-6
+    ratio = lines[:, 0, 0] / denom
+    updated_y = ratio * lines[:, 1, 1] + (1 - ratio) * lines[:, 0, 1]
+    updated_lines[out, 1, 1] = updated_y[out]
+    updated_lines[out, 1, 0] = 0
+
+    return updated_lines, invalid
+
+
+def clip_line_to_boundaries(
+    lines: torch.Tensor, img_size: tuple[int, int], min_len=10
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Clip a set of lines to the image boundaries and indicate
+        which lines are completely outside of the boundaries.
+    Args:
+        lines: a [N, 2, 2] tensor of lines.
+        img_size: the original image size.
+    Returns:
+        The clipped coordinates + a mask indicating valid lines.
+    """
+    new_lines = lines.detach().clone()
+
+    # Clip the first coordinate to the 0 boundary of img1
+    new_lines, invalid_x0 = clip_line_to_boundary(lines)
+
+    # Mirror in first coordinate to clip to the H-1 boundary
+    new_lines[:, :, 0] = img_size[0] - 1 - new_lines[:, :, 0]
+    new_lines, invalid_xh = clip_line_to_boundary(new_lines)
+    new_lines[:, :, 0] = img_size[0] - 1 - new_lines[:, :, 0]
+
+    # Swap the two coordinates, perform the same for y, and swap back
+    new_lines = new_lines[:, :, [1, 0]]
+    new_lines, invalid_y0 = clip_line_to_boundary(new_lines)
+    new_lines[:, :, 0] = img_size[1] - 1 - new_lines[:, :, 0]
+    new_lines, invalid_yw = clip_line_to_boundary(new_lines)
+    new_lines[:, :, 0] = img_size[1] - 1 - new_lines[:, :, 0]
+    new_lines = new_lines[:, :, [1, 0]]
+
+    # Merge all the invalid lines and also remove lines that became too short
+    short = torch.linalg.norm(new_lines[:, 1] - new_lines[:, 0], dim=1) < min_len
+    valid = torch.logical_not(invalid_x0 | invalid_xh | invalid_y0 | invalid_yw | short)
+
+    return new_lines, valid
+
+
+def get_common_lines(
+    lines0: torch.Tensor, lines1: torch.Tensor, H: torch.Tensor, img_size
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Extract the lines in common between two views, by warping lines1
+        into lines0 frame.
+    Args:
+        lines0, lines1: sets of lines of size [N, 2, 2].
+        H: homography relating the lines.
+        img_size: size of the original images img0 and img1.
+    Returns:
+        Updated lines0 with a valid reprojection in img1 and warped_lines1.
+    """
+    # First warp lines0 to img1 to detect invalid lines
+    warped_lines0, _ = warp_lines_torch(lines0, H)
+
+    # Clip them to the boundary
+    warped_lines0, valid = clip_line_to_boundaries(warped_lines0, img_size)
+
+    # Warp all the valid lines back in img0
+    inv_H = torch.linalg.inv(H)
+    new_lines0, _ = warp_lines_torch(warped_lines0[valid], inv_H)
+    warped_lines1, _ = warp_lines_torch(lines1, inv_H)
+    warped_lines1, valid = clip_line_to_boundaries(warped_lines1, img_size)
+
+    return new_lines0, warped_lines1[valid]
+
+
+# Taken from SOLD2
+def line_map_to_segments(junctions: np.ndarray, line_map: np.ndarray) -> np.ndarray:
+    """Convert a line map to a Nx2x2 list of segments."""
+    line_map_tmp = line_map.copy()
+
+    output_segments = np.zeros([0, 2, 2])
+    for idx in range(junctions.shape[0]):
+        # if no connectivity, just skip it
+        if line_map_tmp[idx, :].sum() == 0:
+            continue
+        # Record the line segment
+        else:
+            for idx2 in np.where(line_map_tmp[idx, :] == 1)[0]:
+                p1 = junctions[idx, :]  # HW format
+                p2 = junctions[idx2, :]
+                single_seg = np.concatenate([p1[None, ...], p2[None, ...]], axis=0)
+                output_segments = np.concatenate(
+                    (output_segments, single_seg[None, ...]), axis=0
+                )
+
+                # Update line_map
+                line_map_tmp[idx, idx2] = 0
+                line_map_tmp[idx2, idx] = 0
+
+    return output_segments
+
+
+# Taken from SOLD2
+def convert_junc_predictions(predictions, grid_size, detect_thresh=1 / 65, topk=300):
+    """Convert torch predictions to numpy arrays for evaluation."""
+    # Convert to probability outputs first
+    junc_prob = softmax(predictions.detach(), dim=1).cpu()
+    junc_pred = junc_prob[:, :-1, :, :]
+
+    junc_prob_np = junc_prob.numpy().transpose(0, 2, 3, 1)[:, :, :, :-1]
+    junc_prob_np = np.sum(junc_prob_np, axis=-1)
+    junc_pred_np = (
+        pixel_shuffle(junc_pred, grid_size).cpu().numpy().transpose(0, 2, 3, 1)
+    )
+    junc_pred_np_nms = super_nms(junc_pred_np, grid_size, detect_thresh, topk)
+    junc_pred_np = junc_pred_np.squeeze(-1)
+
+    return {
+        "junc_pred": junc_pred_np,
+        "junc_pred_nms": junc_pred_np_nms,
+        "junc_prob": junc_prob_np,
+    }
+
+
+# Taken from SOLD2
+def super_nms(prob_predictions, dist_thresh, prob_thresh=0.01, top_k=0):
+    """Non-maximum suppression adapted from SuperPoint."""
+    # Iterate through batch dimension
+    im_h = prob_predictions.shape[1]
+    im_w = prob_predictions.shape[2]
+    output_lst = []
+    for i in range(prob_predictions.shape[0]):
+        # print(i)
+        prob_pred = prob_predictions[i, ...]
+        # Filter the points using prob_thresh
+        coord = np.where(prob_pred >= prob_thresh)  # HW format
+        points = np.concatenate(
+            (coord[0][..., None], coord[1][..., None]), axis=1
+        )  # HW format
+
+        # Get the probability score
+        prob_score = prob_pred[points[:, 0], points[:, 1]]
+
+        # Perform super nms
+        # Modify the in_points to xy format (instead of HW format)
+        in_points = np.concatenate(
+            (coord[1][..., None], coord[0][..., None], prob_score), axis=1
+        ).T
+        keep_points_, keep_inds = nms_fast(in_points, im_h, im_w, dist_thresh)
+        # Remember to flip outputs back to HW format
+        keep_points = np.round(np.flip(keep_points_[:2, :], axis=0).T)
+        keep_score = keep_points_[-1, :].T
+
+        # Whether we only keep the topk value
+        if (top_k > 0) or (top_k is None):
+            k = min([keep_points.shape[0], top_k])
+            keep_points = keep_points[:k, :]
+            keep_score = keep_score[:k]
+
+        # Re-compose the probability map
+        output_map = np.zeros([im_h, im_w])
+        output_map[
+            keep_points[:, 0].astype(np.int), keep_points[:, 1].astype(np.int)
+        ] = keep_score.squeeze()
+
+        output_lst.append(output_map[None, ...])
+
+    return np.concatenate(output_lst, axis=0)
+
+
+# Taken from SOLD2
+def nms_fast(in_corners, H, W, dist_thresh):
+    """
+    Run a faster approximate Non-Max-Suppression on numpy corners shaped:
+      3xN [x_i,y_i,conf_i]^T
+
+    Algo summary: Create a grid sized HxW. Assign each corner location a 1,
+    rest are zeros. Iterate through all the 1's and convert them to -1 or 0.
+    Suppress points by setting nearby values to 0.
+
+    Grid Value Legend:
+    -1 : Kept.
+     0 : Empty or suppressed.
+     1 : To be processed (converted to either kept or supressed).
+
+    NOTE: The NMS first rounds points to integers, so NMS distance might not
+    be exactly dist_thresh. It also assumes points are within image boundary.
+
+    Inputs
+      in_corners - 3xN numpy array with corners [x_i, y_i, confidence_i]^T.
+      H - Image height.
+      W - Image width.
+      dist_thresh - Distance to suppress, measured as an infinite distance.
+    Returns
+      nmsed_corners - 3xN numpy matrix with surviving corners.
+      nmsed_inds - N length numpy vector with surviving corner indices.
+    """
+    grid = np.zeros((H, W)).astype(int)  # Track NMS data.
+    inds = np.zeros((H, W)).astype(int)  # Store indices of points.
+    # Sort by confidence and round to nearest int.
+    inds1 = np.argsort(-in_corners[2, :])
+    corners = in_corners[:, inds1]
+    rcorners = corners[:2, :].round().astype(int)  # Rounded corners.
+    # Check for edge case of 0 or 1 corners.
+    if rcorners.shape[1] == 0:
+        return np.zeros((3, 0)).astype(int), np.zeros(0).astype(int)
+    if rcorners.shape[1] == 1:
+        out = np.vstack((rcorners, in_corners[2])).reshape(3, 1)
+        return out, np.zeros((1)).astype(int)
+    # Initialize the grid.
+    for i, rc in enumerate(rcorners.T):
+        grid[rcorners[1, i], rcorners[0, i]] = 1
+        inds[rcorners[1, i], rcorners[0, i]] = i
+    # Pad the border of the grid, so that we can NMS points near the border.
+    pad = dist_thresh
+    grid = np.pad(grid, ((pad, pad), (pad, pad)), mode="constant")
+    # Iterate through points, highest to lowest conf, suppress neighborhood.
+    count = 0
+    for i, rc in enumerate(rcorners.T):
+        # Account for top and left padding.
+        pt = (rc[0] + pad, rc[1] + pad)
+        if grid[pt[1], pt[0]] == 1:  # If not yet suppressed.
+            grid[pt[1] - pad : pt[1] + pad + 1, pt[0] - pad : pt[0] + pad + 1] = 0
+            grid[pt[1], pt[0]] = -1
+            count += 1
+    # Get all surviving -1's and return sorted array of remaining corners.
+    keepy, keepx = np.where(grid == -1)
+    keepy, keepx = keepy - pad, keepx - pad
+    inds_keep = inds[keepy, keepx]
+    out = corners[:, inds_keep]
+    values = out[-1, :]
+    inds2 = np.argsort(-values)
+    out = out[:, inds2]
+    out_inds = inds1[inds_keep[inds2]]
+    return out, out_inds

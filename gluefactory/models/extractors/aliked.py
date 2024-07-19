@@ -240,6 +240,105 @@ class DKD(nn.Module):
         return keypoints, scoredispersitys, kptscores
 
 
+class DKDLight(nn.Module):
+    def __init__(
+        self,
+        radius: int = 2,
+        top_k: int = 0,
+        scores_th: float = 0.2,
+        n_limit: int = 20000,
+    ):
+        """
+        Args:
+            radius: soft detection radius, kernel size is (2 * radius + 1)
+            top_k: top_k > 0: return top k keypoints
+            scores_th: top_k <= 0 threshold mode:
+                scores_th > 0: return keypoints with scores>scores_th
+                else: return keypoints with scores > scores.mean()
+            n_limit: max number of keypoint in threshold mode
+        """
+        super().__init__()
+        self.radius = radius
+        self.top_k = top_k
+        self.scores_th = scores_th
+        self.n_limit = n_limit
+        self.kernel_size = 2 * self.radius + 1
+        self.temperature = 0.1  # tuned temperature
+        self.unfold = nn.Unfold(kernel_size=self.kernel_size, padding=self.radius)
+
+    def forward(
+        self,
+        scores_map: torch.Tensor,
+    ):
+        """
+        :param scores_map: Bx1xHxW
+        :return: kpts: list[Nx2,...]; kptscores: list[N,....] normalised position: -1~1
+        """
+        b, c, h, w = scores_map.shape
+        scores_nograd = scores_map.detach()
+        nms_scores = simple_nms(scores_nograd, self.radius)
+
+        # remove border
+        nms_scores[:, :, : self.radius, :] = 0
+        nms_scores[:, :, :, : self.radius] = 0
+        nms_scores[:, :, -self.radius :, :] = 0
+        nms_scores[:, :, :, -self.radius :] = 0
+
+        # detect keypoints without grad
+        if self.top_k > 0:
+            topk = torch.topk(nms_scores.view(b, -1), self.top_k)
+            indices_keypoints = [topk.indices[i] for i in range(b)]  # B x top_k
+        else:
+            if self.scores_th > 0:
+                masks = nms_scores > self.scores_th
+                if masks.sum() == 0:
+                    th = scores_nograd.reshape(b, -1).mean(dim=1)  # th = self.scores_th
+                    masks = nms_scores > th.reshape(b, 1, 1, 1)
+            else:
+                th = scores_nograd.reshape(b, -1).mean(dim=1)  # th = self.scores_th
+                masks = nms_scores > th.reshape(b, 1, 1, 1)
+            masks = masks.reshape(b, -1)
+
+            indices_keypoints = []  # list, B x (any size)
+            scores_view = scores_nograd.reshape(b, -1)
+            for mask, scores in zip(masks, scores_view):
+                indices = mask.nonzero()[:, 0]
+                if len(indices) > self.n_limit:
+                    kpts_sc = scores[indices]
+                    sort_idx = kpts_sc.sort(descending=True)[1]
+                    sel_idx = sort_idx[: self.n_limit]
+                    indices = indices[sel_idx]
+                indices_keypoints.append(indices)
+
+        wh = torch.tensor([w - 1, h - 1], device=scores_nograd.device)
+
+        keypoints = []
+        kptscores = []
+
+        for b_idx in range(b):
+            indices_kpt = indices_keypoints[
+                b_idx
+            ]  # one dimension vector, say its size is M
+            # To avoid warning: UserWarning: __floordiv__ is deprecated
+            keypoints_xy_nms = torch.stack(
+                [indices_kpt % w, torch.div(indices_kpt, w, rounding_mode="trunc")],
+                dim=1,
+            )  # Mx2
+            keypoints_xy = keypoints_xy_nms / wh * 2 - 1  # (w,h) -> (-1~1,-1~1)
+            kptscore = torch.nn.functional.grid_sample(
+                scores_nograd[b_idx].unsqueeze(0),
+                keypoints_xy.view(1, 1, -1, 2),
+                mode="bilinear",
+                align_corners=True,
+            )[
+                0, 0, 0, :
+            ]  # CxN
+            keypoints.append(keypoints_xy)
+            kptscores.append(kptscore)
+
+        return keypoints, kptscores
+
+
 class InputPadder(object):
     """Pads images such that dimensions are divisible by 8"""
 
@@ -703,15 +802,7 @@ class ALIKED(BaseModel):
         self.upsample32 = nn.Upsample(
             scale_factor=32, mode="bilinear", align_corners=True
         )
-        self.score_head = nn.Sequential(
-            resnet.conv1x1(dim, 8),
-            self.gate,
-            resnet.conv3x3(8, 4),
-            self.gate,
-            resnet.conv3x3(4, 4),
-            self.gate,
-            resnet.conv3x3(4, 1),
-        )
+        self.score_head = SMH(dim)
         self.desc_head = SDDH(dim, K, M, gate=self.gate, conv2D=conv2D, mask=mask)
         self.dkd = DKD(
             radius=conf.nms_radius,
@@ -755,7 +846,7 @@ class ALIKED(BaseModel):
         x4_up = self.upsample32(x4)  # B x dim//4 x H x W
         x1234 = torch.cat([x1, x2_up, x3_up, x4_up], dim=1)
         # ================================== score head
-        score_map = torch.sigmoid(self.score_head(x1234))
+        score_map = self.score_head(x1234)
         feature_map = torch.nn.functional.normalize(x1234, p=2, dim=1)
 
         # Unpads images
@@ -786,3 +877,22 @@ class ALIKED(BaseModel):
 
     def loss(self, pred, data):
         raise NotImplementedError
+
+
+class SMH(nn.Module):
+    def __init__(self, input_dim):
+        super(SMH, self).__init__()
+        self.gate = nn.SELU(inplace=True)
+        self.score_head = nn.Sequential(
+            resnet.conv1x1(input_dim, 8),
+            self.gate,
+            resnet.conv3x3(8, 4),
+            self.gate,
+            resnet.conv3x3(4, 4),
+            self.gate,
+            resnet.conv3x3(4, 1),
+        )
+
+    def forward(self, x):
+        # expects feature map not normalized
+        return torch.sigmoid(self.score_head(x))

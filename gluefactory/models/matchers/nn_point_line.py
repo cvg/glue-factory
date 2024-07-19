@@ -5,15 +5,14 @@ Optionally apply the mutual check and threshold the distance or ratio.
 
 import logging
 
+import numpy as np
 import torch
 import torch.nn.functional as F
-import numpy as np
 
 from ..base_model import BaseModel
 from ..utils.metrics import matcher_metrics
 
-
-MATCH_THRESHOLD =  0.01
+MATCH_THRESHOLD = 0.01
 SINKHORN_ITERATIONS = 30
 DESC_SIZE = 128
 DEBUG = False
@@ -45,28 +44,30 @@ def mutual_check(m0, m1):
 def mutual_match(m0, m1, scores):
 
     matches = []
-    m1_set = set(tuple(x) for x in m1[:, [1,0]])
+    m1_set = set(tuple(x) for x in m1[:, [1, 0]])
     for idx in range(len(m0)):
-            matches.append(idx)
+        matches.append(idx)
 
     matches = m0[np.array(matches)]
     scores = scores[matches[:, 0], matches[:, 1]]
     return matches, scores
 
 
-
 ## Ref : https://github.com/cvg/limap/blob/main/limap/point2d/superglue/superglue.py LINE 263
 
-def solve_optimal_transport( scores):
-    bin_score = torch.nn.Parameter(torch.tensor(1.)).to(scores.device)
-    return log_optimal_transport(
-        scores, bin_score, iters=SINKHORN_ITERATIONS)
+
+def solve_optimal_transport(scores):
+    bin_score = torch.nn.Parameter(torch.tensor(1.0)).to(scores.device)
+    return log_optimal_transport(scores, bin_score, iters=SINKHORN_ITERATIONS)
 
 
 ## Ref : https://github.com/cvg/limap/blob/main/limap/point2d/superglue/superglue.py LINE 267
 
-def log_sinkhorn_iterations(Z: torch.Tensor, log_mu: torch.Tensor, log_nu: torch.Tensor, iters: int) -> torch.Tensor:
-    """ Perform Sinkhorn Normalization in Log-space for stability"""
+
+def log_sinkhorn_iterations(
+    Z: torch.Tensor, log_mu: torch.Tensor, log_nu: torch.Tensor, iters: int
+) -> torch.Tensor:
+    """Perform Sinkhorn Normalization in Log-space for stability"""
     u, v = torch.zeros_like(log_mu), torch.zeros_like(log_nu)
     for _ in range(iters):
         u = log_mu - torch.logsumexp(Z + v.unsqueeze(1), dim=2)
@@ -76,20 +77,24 @@ def log_sinkhorn_iterations(Z: torch.Tensor, log_mu: torch.Tensor, log_nu: torch
 
 ## Ref : https://github.com/cvg/limap/blob/main/limap/point2d/superglue/superglue.py LINE 275
 
-def log_optimal_transport(scores: torch.Tensor, alpha: torch.Tensor, iters: int) -> torch.Tensor:
-    """ Perform Differentiable Optimal Transport in Log-space for stability"""
+
+def log_optimal_transport(
+    scores: torch.Tensor, alpha: torch.Tensor, iters: int
+) -> torch.Tensor:
+    """Perform Differentiable Optimal Transport in Log-space for stability"""
     b, m, n = scores.shape
     one = scores.new_tensor(1)
-    ms, ns = (m*one).to(scores), (n*one).to(scores)
+    ms, ns = (m * one).to(scores), (n * one).to(scores)
 
     bins0 = alpha.expand(b, m, 1)
     bins1 = alpha.expand(b, 1, n)
     alpha = alpha.expand(b, 1, 1)
 
-    couplings = torch.cat([torch.cat([scores, bins0], -1),
-                        torch.cat([bins1, alpha], -1)], 1)
+    couplings = torch.cat(
+        [torch.cat([scores, bins0], -1), torch.cat([bins1, alpha], -1)], 1
+    )
 
-    norm = - (ms + ns).log()
+    norm = -(ms + ns).log()
     log_mu = torch.cat([norm.expand(m), ns.log()[None] + norm])
     log_nu = torch.cat([norm.expand(n), ms.log()[None] + norm])
     log_mu, log_nu = log_mu[None].expand(b, -1), log_nu[None].expand(b, -1)
@@ -101,10 +106,13 @@ def log_optimal_transport(scores: torch.Tensor, alpha: torch.Tensor, iters: int)
 
 ## Ref : https://github.com/cvg/limap/blob/main/limap/point2d/superglue/superglue.py LINE 144
 
+
 def arange_like(x, dim: int):
     return x.new_ones(x.shape[dim]).cumsum(0) - 1
 
+
 ## Ref : https://github.com/cvg/limap/blob/main/limap/point2d/superglue/superglue.py LINE 297
+
 
 def get_matches(scores_mat):
     max0, max1 = scores_mat[:, :-1, :-1].max(2), scores_mat[:, :-1, :-1].max(1)
@@ -120,7 +128,9 @@ def get_matches(scores_mat):
     m1 = torch.where(valid1, m1, m1.new_tensor(-1))
     return m0, m1, mscores0, mscores1
 
-## REF https://github.com/cvg/limap/blob/main/limap/line2d/endpoints/matcher.py#L33-L53 
+
+## REF https://github.com/cvg/limap/blob/main/limap/line2d/endpoints/matcher.py#L33-L53
+
 
 def line_match(desc1, desc2):
     with torch.no_grad():
@@ -128,7 +138,6 @@ def line_match(desc1, desc2):
         desc1 = desc1.reshape(-1, DESC_SIZE)
         desc2 = desc2.reshape(-1, DESC_SIZE)
 
-        
         # Run the point matching
         scores = desc1 @ desc2.t()
 
@@ -138,7 +147,8 @@ def line_match(desc1, desc2):
         scores = scores.reshape(n_lines1, 2, n_lines2, 2)
         scores = 0.5 * torch.maximum(
             scores[:, 0, :, 0] + scores[:, 1, :, 1],
-            scores[:, 0, :, 1] + scores[:, 1, :, 0])
+            scores[:, 0, :, 1] + scores[:, 1, :, 0],
+        )
 
         # Run the Sinkhorn algorithm and get the line matches
         # TODO figure out why this causes issues 0 matches
@@ -166,7 +176,8 @@ def match_segs_with_descinfo_topk(desc1, desc2, topk=1):
         scores = scores.reshape(n_lines1, 2, n_lines2, 2)
         scores = 0.5 * torch.maximum(
             scores[:, 0, :, 0] + scores[:, 1, :, 1],
-            scores[:, 0, :, 1] + scores[:, 1, :, 0])
+            scores[:, 0, :, 1] + scores[:, 1, :, 0],
+        )
 
         # For each line in img1, retrieve the topk matches in img2
         matches = torch.argsort(scores, dim=1)[:, -topk:]
@@ -176,8 +187,7 @@ def match_segs_with_descinfo_topk(desc1, desc2, topk=1):
     # Transform matches to [n_matches, 2]
     n_lines = matches.shape[0]
     topk = matches.shape[1]
-    matches_t = np.stack([np.arange(n_lines).repeat(topk),
-                            matches.flatten()], axis=1)
+    matches_t = np.stack([np.arange(n_lines).repeat(topk), matches.flatten()], axis=1)
     return matches_t, scores.cpu().numpy()
 
 
@@ -209,13 +219,11 @@ class NearestNeighborPointLineMatcher(BaseModel):
         mscores0 = (matches0 > -1).float()
         mscores1 = (matches1 > -1).float()
 
-
         # Lines
         line_matches0 = []
         line_matches1 = []
         line_matching_scores0 = []
         line_matching_scores1 = []
-
 
         # TODO Batching makes no sense, always 1
         for batch_idx in range(len(data["lines0"])):
@@ -224,21 +232,29 @@ class NearestNeighborPointLineMatcher(BaseModel):
             lm1 = np.array([])
             lms0 = np.array([])
             lms1 = np.array([])
-            desc1 = torch.stack([data["descriptors0"][batch_idx][data["lines0"][batch_idx][:, 0]], 
-                              data["descriptors0"][batch_idx][data["lines0"][batch_idx][:, 1]]]
-                              , 1)
-            
-            desc2 = torch.stack([data["descriptors1"][batch_idx][data["lines1"][batch_idx][:, 0]], 
-                              data["descriptors1"][batch_idx][data["lines1"][batch_idx][:, 1]]]
-                              , 1)
-            
+            desc1 = torch.stack(
+                [
+                    data["descriptors0"][batch_idx][data["lines0"][batch_idx][:, 0]],
+                    data["descriptors0"][batch_idx][data["lines0"][batch_idx][:, 1]],
+                ],
+                1,
+            )
+
+            desc2 = torch.stack(
+                [
+                    data["descriptors1"][batch_idx][data["lines1"][batch_idx][:, 0]],
+                    data["descriptors1"][batch_idx][data["lines1"][batch_idx][:, 1]],
+                ],
+                1,
+            )
+
             if DEBUG:
                 print(f"lines0 : {data['lines0'][batch_idx].shape}")
                 print(f"lines1 : {data['lines1'][batch_idx].shape}")
                 print(f"desc1 : {desc1.shape}")
                 print(f"desc2 : {desc2.shape}")
 
-            if desc1.shape[0]*desc2.shape[0] > 0:
+            if desc1.shape[0] * desc2.shape[0] > 0:
                 # matches, scores = line_match(desc1, desc2)
 
                 matches_1, scores1 = match_segs_with_descinfo_topk(desc1, desc2)
@@ -248,25 +264,32 @@ class NearestNeighborPointLineMatcher(BaseModel):
                     print(f"Matches 1 : {matches_1.shape}")
                     print(f"Matches 2 : {matches_2.shape}")
 
-                matches = np.array([x for x in set(tuple(x) for x in matches_1) & set(tuple(x) for x in matches_2[:, [1,0]])])
+                matches = np.array(
+                    [
+                        x
+                        for x in set(tuple(x) for x in matches_1)
+                        & set(tuple(x) for x in matches_2[:, [1, 0]])
+                    ]
+                )
                 if DEBUG:
                     print(f"Matches : {matches.shape}")
                 # match_idx = (matches_1[:, None] == matches_2[:, [1,0]]).all(-1).argmax(0)
                 # matches, scores = mutual_match(matches_1, matches_2, line_matching_scores0)
 
-                lm0 = np.ones(data["lines0"][batch_idx].shape[0], dtype=np.int32)*(-1)
+                lm0 = np.ones(data["lines0"][batch_idx].shape[0], dtype=np.int32) * (-1)
                 lm0[matches[:, 0]] = matches[:, 1]
-                lm1 = np.ones(data["lines1"][batch_idx].shape[0], dtype=np.int32)*(-1)
+                lm1 = np.ones(data["lines1"][batch_idx].shape[0], dtype=np.int32) * (-1)
                 lm1[matches[:, 1]] = matches[:, 0]
                 # lm0 = matches[:, 0]
                 # lm1 = matches[:, 1]
-                lms0 = np.ones(data["lines0"][batch_idx].shape[0])*(-1)
-                lms1 = np.ones(data["lines1"][batch_idx].shape[0])*(-1)
-                lms0[matches[:, 0]] = lms1[matches[:, 1]] = scores1[matches[:, 0], matches[:, 1]]
+                lms0 = np.ones(data["lines0"][batch_idx].shape[0]) * (-1)
+                lms1 = np.ones(data["lines1"][batch_idx].shape[0]) * (-1)
+                lms0[matches[:, 0]] = lms1[matches[:, 1]] = scores1[
+                    matches[:, 0], matches[:, 1]
+                ]
             else:
                 print(f'Lines0 Detected Issue:{data["lines0"][batch_idx].shape}')
                 print(f'Lines1 Detected Issue:{data["lines1"][batch_idx].shape}')
-
 
             # TODO Batching makes no sense, always 1
             # line_matches0.append(torch.from_numpy(lm0).to(data['descriptors0'][batch_idx].device))
@@ -274,10 +297,26 @@ class NearestNeighborPointLineMatcher(BaseModel):
             # line_matching_scores0.append(torch.from_numpy(lms0).to(data['descriptors0'][batch_idx].device))
             # line_matching_scores1.append(torch.from_numpy(lms1).to(data['descriptors0'][batch_idx].device))
 
-            line_matches0 = torch.from_numpy(lm0).to(data['descriptors0'][batch_idx].device).unsqueeze(0)
-            line_matches1 = torch.from_numpy(lm1).to(data['descriptors0'][batch_idx].device).unsqueeze(0)
-            line_matching_scores0 = torch.from_numpy(lms0).to(data['descriptors0'][batch_idx].device).unsqueeze(0)
-            line_matching_scores1 = torch.from_numpy(lms1).to(data['descriptors0'][batch_idx].device).unsqueeze(0)
+            line_matches0 = (
+                torch.from_numpy(lm0)
+                .to(data["descriptors0"][batch_idx].device)
+                .unsqueeze(0)
+            )
+            line_matches1 = (
+                torch.from_numpy(lm1)
+                .to(data["descriptors0"][batch_idx].device)
+                .unsqueeze(0)
+            )
+            line_matching_scores0 = (
+                torch.from_numpy(lms0)
+                .to(data["descriptors0"][batch_idx].device)
+                .unsqueeze(0)
+            )
+            line_matching_scores1 = (
+                torch.from_numpy(lms1)
+                .to(data["descriptors0"][batch_idx].device)
+                .unsqueeze(0)
+            )
 
         return {
             "matches0": matches0,
@@ -286,10 +325,10 @@ class NearestNeighborPointLineMatcher(BaseModel):
             "matching_scores1": mscores1,
             "similarity": sim,
             "log_assignment": la,
-            "line_matches0" : line_matches0,
-            "line_matches1" : line_matches1,
-            "line_matching_scores0" : line_matching_scores0,
-            "line_matching_scores1" : line_matching_scores1,
+            "line_matches0": line_matches0,
+            "line_matches1": line_matches1,
+            "line_matching_scores0": line_matching_scores0,
+            "line_matching_scores1": line_matching_scores1,
         }
 
     def loss(self, pred, data):

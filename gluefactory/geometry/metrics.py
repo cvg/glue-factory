@@ -1,13 +1,13 @@
 import torch
 
-from .homography_adaptation import warp_points
 from .desc_losses import get_sparse_desc
+from .homography_adaptation import warp_points
 
 
 def get_metric_one_way(kp0, kp1, valid_mask0, valid_mask1, H, thresh=3):
-    """ Given a list of keypoints [B, N, 2] in 2 images (xy convention)
-        related by a homography, compute the repeatability score and
-        localization error from image 0 to 1. """
+    """Given a list of keypoints [B, N, 2] in 2 images (xy convention)
+    related by a homography, compute the repeatability score and
+    localization error from image 0 to 1."""
     # Warp the kp0 to image 1
     w_kp0 = warp_points(kp0[:, :, [1, 0]], H)[:, :, [1, 0]]
 
@@ -29,20 +29,20 @@ def get_metric_one_way(kp0, kp1, valid_mask0, valid_mask1, H, thresh=3):
 
 
 def get_repeatability_and_loc_error(kp0, kp1, scores0, scores1, H, thresh=3):
-    """ Given a list of keypoints [B, N, 2] in 2 images (xy convention)
-        related by a homography, compute the repeatability score
-        and localization error. """
+    """Given a list of keypoints [B, N, 2] in 2 images (xy convention)
+    related by a homography, compute the repeatability score
+    and localization error."""
     # Ignore points with score 0
     valid_mask0 = scores0 > 0
     valid_mask1 = scores1 > 0
 
     # One way 0 -> 1
-    rep, loc_err = get_metric_one_way(kp0, kp1, valid_mask0,
-                                      valid_mask1, H, thresh)
+    rep, loc_err = get_metric_one_way(kp0, kp1, valid_mask0, valid_mask1, H, thresh)
 
     # One way 1 -> 0
-    rep2, loc_err2 = get_metric_one_way(kp1, kp0, valid_mask1, valid_mask0,
-                                        torch.inverse(H), thresh)
+    rep2, loc_err2 = get_metric_one_way(
+        kp1, kp0, valid_mask1, valid_mask0, torch.inverse(H), thresh
+    )
 
     rep = (rep + rep2) / 2
     loc_err = (loc_err + loc_err2) / 2
@@ -52,7 +52,8 @@ def get_repeatability_and_loc_error(kp0, kp1, scores0, scores1, H, thresh=3):
 def matching_score(kp0, valid_kp0, H, dense_desc0, dense_desc1):
     # Compute the descriptor distances
     kp1, valid_mask, valid_desc0, valid_desc1 = get_sparse_desc(
-        kp0, valid_kp0, H, dense_desc0, dense_desc1)
+        kp0, valid_kp0, H, dense_desc0, dense_desc1
+    )
     valid_desc0 = valid_desc0[valid_mask]
     valid_desc1 = valid_desc1[valid_mask]
     desc_sim = valid_desc0 @ valid_desc1.t()

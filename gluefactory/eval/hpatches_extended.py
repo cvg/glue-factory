@@ -1,29 +1,42 @@
+import os
+import pickle
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
 from pprint import pprint
 
+import cv2
+import h5py
 import matplotlib.pyplot as plt
 import numpy as np
-import pickle
-import h5py
-import os
-import cv2
 import torch
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
-from gluefactory.visualization.viz2d import plot_images, plot_keypoints, save_plot, plot_lines
+from gluefactory.utils.desc_evaluation import compute_homography, compute_matching_score
+from gluefactory.utils.kp_evaluation import compute_rep_loc_H
+from gluefactory.utils.ls_evaluation import (
+    compute_loc_error,
+    compute_repeatability,
+    match_segments_to_distance,
+)
+from gluefactory.visualization.viz2d import (
+    plot_images,
+    plot_keypoints,
+    plot_lines,
+    save_plot,
+)
+
 from ..datasets import get_dataset
 from ..models.cache_loader import CacheLoader
 from ..settings import EVAL_PATH
+
 # from ..utils.export_predictions import export_predictions
-from ..utils.tensor import map_tensor
+from ..utils.tensor import batch_to_device, map_tensor
 from ..utils.tools import AUCMetric
 from ..visualization.viz2d import plot_cumulative
 from .eval_pipeline import EvalPipeline
 from .io import get_eval_parser, load_model, parse_eval_args
-from ..utils.tensor import batch_to_device 
 from .utils import (
     eval_homography_dlt,
     eval_homography_robust,
@@ -31,12 +44,11 @@ from .utils import (
     eval_poses,
     get_matches_scores,
 )
-from gluefactory.utils.kp_evaluation import compute_rep_loc_H
-from gluefactory.utils.desc_evaluation import compute_homography, compute_matching_score
-from gluefactory.utils.ls_evaluation import match_segments_to_distance, compute_repeatability, compute_loc_error
-# from .ls_evaluation import 
+
+# from .ls_evaluation import
 
 IMAGE_SHAPE = [640, 480]
+
 
 @torch.no_grad()
 def export_predictions(
@@ -82,7 +94,11 @@ def export_predictions(
                 if (len(pred[f"keypoints{idx}"][0].shape)) == 3:
                     pred[k] = pred[k] * scales[None]
                 else:
-                    pred[k] = (pred[f"keypoints{idx}"][0][pred[k]].reshape(1, -1, 2)).reshape(-1, 2, 2).unsqueeze(0)
+                    pred[k] = (
+                        (pred[f"keypoints{idx}"][0][pred[k]].reshape(1, -1, 2))
+                        .reshape(-1, 2, 2)
+                        .unsqueeze(0)
+                    )
             if k.startswith("orig_lines"):
                 idx = k.replace("orig_lines", "")
                 scales = 1.0 / (
@@ -110,7 +126,6 @@ def export_predictions(
     return output_file
 
 
-
 class HPatchesPipeline(EvalPipeline):
     default_conf = {
         "data": {
@@ -118,7 +133,7 @@ class HPatchesPipeline(EvalPipeline):
             "name": "hpatches",
             "num_workers": 16,
             "preprocessing": {
-                "resize":IMAGE_SHAPE #[320, 240],  # we also resize during eval to have comparable metrics
+                "resize": IMAGE_SHAPE  # [320, 240],  # we also resize during eval to have comparable metrics
                 # "side": "short",
             },
         },
@@ -126,9 +141,7 @@ class HPatchesPipeline(EvalPipeline):
             "ground_truth": {
                 "name": None,  # remove gt matches
             },
-            "matcher": {
-                "name": "nn_point_line"
-            }
+            "matcher": {"name": "nn_point_line"},
         },
         "eval": {
             "estimator": "poselib",
@@ -224,36 +237,52 @@ class HPatchesPipeline(EvalPipeline):
             if "lines0" in pred or "keypoints0" in pred:
 
                 # Individual KP metrics
-                m0 = pred['matches0'] > -1
-                m1 = pred['matches0'][m0]
-                kp0 = pred['keypoints0'][m0]
-                kp1 = pred['keypoints1'][m1]
-                desc0 = pred['descriptors0'][m0]
-                desc1 = pred['descriptors1'][m1]
-                scores = pred['matching_scores0'][m0]
+                m0 = pred["matches0"] > -1
+                m1 = pred["matches0"][m0]
+                kp0 = pred["keypoints0"][m0]
+                kp1 = pred["keypoints1"][m1]
+                desc0 = pred["descriptors0"][m0]
+                desc1 = pred["descriptors1"][m1]
+                scores = pred["matching_scores0"][m0]
 
                 rep, loc = compute_rep_loc_H(
-                    np.concatenate([kp0, pred['keypoint_scores0'][m0].reshape(-1, 1)], axis=-1), 
-                    np.concatenate([kp1, pred['keypoint_scores1'][m1].reshape(-1, 1)], axis=-1), 
-                    data['H_0to1'].numpy(), 
-                    IMAGE_SHAPE)
-                
+                    np.concatenate(
+                        [kp0, pred["keypoint_scores0"][m0].reshape(-1, 1)], axis=-1
+                    ),
+                    np.concatenate(
+                        [kp1, pred["keypoint_scores1"][m1].reshape(-1, 1)], axis=-1
+                    ),
+                    data["H_0to1"].numpy(),
+                    IMAGE_SHAPE,
+                )
 
-                correctness1, correctness3, correctness5 = compute_homography(np.concatenate([kp0, pred['keypoint_scores0'][m0].reshape(-1, 1)], axis=-1), 
-                                                                            np.concatenate([kp1, pred['keypoint_scores1'][m1].reshape(-1, 1)], axis=-1), 
-                                                                            desc0,
-                                                                            desc1,
-                                                                            data['H_0to1'].numpy(),
-                                                                            IMAGE_SHAPE)
-                
-                match_score = compute_matching_score(np.concatenate([kp0, pred['keypoint_scores0'][m0].reshape(-1, 1)], axis=-1), 
-                                                    np.concatenate([kp1, pred['keypoint_scores1'][m1].reshape(-1, 1)], axis=-1), 
-                                                    desc0,
-                                                    desc1,
-                                                    data['H_0to1'].numpy(), 
-                                                    IMAGE_SHAPE, 
-                                                    keep_k_points=500,
-                                                    thresh=[1,3,5])
+                correctness1, correctness3, correctness5 = compute_homography(
+                    np.concatenate(
+                        [kp0, pred["keypoint_scores0"][m0].reshape(-1, 1)], axis=-1
+                    ),
+                    np.concatenate(
+                        [kp1, pred["keypoint_scores1"][m1].reshape(-1, 1)], axis=-1
+                    ),
+                    desc0,
+                    desc1,
+                    data["H_0to1"].numpy(),
+                    IMAGE_SHAPE,
+                )
+
+                match_score = compute_matching_score(
+                    np.concatenate(
+                        [kp0, pred["keypoint_scores0"][m0].reshape(-1, 1)], axis=-1
+                    ),
+                    np.concatenate(
+                        [kp1, pred["keypoint_scores1"][m1].reshape(-1, 1)], axis=-1
+                    ),
+                    desc0,
+                    desc1,
+                    data["H_0to1"].numpy(),
+                    IMAGE_SHAPE,
+                    keep_k_points=500,
+                    thresh=[1, 3, 5],
+                )
                 """
                 if match_score == 0:
                     plot_images([data['view0']['image'].permute(1,2,0), data['view1']['image'].permute(1,2,0)], ['H0', 'H1'])
@@ -261,45 +290,46 @@ class HPatchesPipeline(EvalPipeline):
                     save_plot(os.path.join('./match_score/', f'{i}.jpg'))
                 """
 
-                results['Desc_correctness1'].append(float(correctness1))
-                results['Desc_correctness3'].append(float(correctness3))
-                results['Desc_correctness5'].append(float(correctness5))
-                results['Match_score1'].append(float(match_score[0]))
-                results['Match_score3'].append(float(match_score[1]))
-                results['Match_score5'].append(float(match_score[2]))
-                results['Point_repeatability'].append(rep)
-                results['Point_localization'].append(loc)
-
+                results["Desc_correctness1"].append(float(correctness1))
+                results["Desc_correctness3"].append(float(correctness3))
+                results["Desc_correctness5"].append(float(correctness5))
+                results["Match_score1"].append(float(match_score[0]))
+                results["Match_score3"].append(float(match_score[1]))
+                results["Match_score5"].append(float(match_score[2]))
+                results["Point_repeatability"].append(rep)
+                results["Point_localization"].append(loc)
 
                 if "lines0" in pred:
 
                     # Individual Line metrics
-                    m0 = pred['line_matches0'] > -1
-                    m1 = pred['line_matches0'][m0]
-                    line_seg0 = pred['lines0'][m0]
-                    line_seg1 = pred['lines1'][m1]
+                    m0 = pred["line_matches0"] > -1
+                    m1 = pred["line_matches0"][m0]
+                    line_seg0 = pred["lines0"][m0]
+                    line_seg1 = pred["lines1"][m1]
                     # line_seg0 = np.concatenate([pred['keypoints0'][pred['lines0'][m0][0]], pred['keypoints0'][pred['lines0'][m0][1]]], axis = 1).reshape(-1, 2, 2)
                     # line_seg1 = np.concatenate([pred['keypoints1'][pred['lines1'][m1][0]], pred['keypoints1'][pred['lines1'][m1][1]]], axis = 1).reshape(-1, 2, 2)
-                    distances = match_segments_to_distance(line_seg0, line_seg1, data['H_0to1'])
-                    line_rep = compute_repeatability(line_seg0, line_seg1, distances, [1, 3, 5])
+                    distances = match_segments_to_distance(
+                        line_seg0, line_seg1, data["H_0to1"]
+                    )
+                    line_rep = compute_repeatability(
+                        line_seg0, line_seg1, distances, [1, 3, 5]
+                    )
                     line_loc_error = compute_loc_error(distances, [1, 3, 5])
-
 
                     ## TODO : ADD CONFIG FOR SAVING IMAGES
 
                     # if line_rep[0] == 0:
                     #     print("Rep 0")
                     #     plot_images([data['view0']['image'].permute(1,2,0), data['view1']['image'].permute(1,2,0)], ['H0', 'H1'])
-                    #     plot_keypoints(kpts=[pred['keypoints0'], pred['keypoints1']])  
+                    #     plot_keypoints(kpts=[pred['keypoints0'], pred['keypoints1']])
                     #     plot_lines(lines= [pred['lines0'], pred['lines1']])
                     #     save_plot(os.path.join('./match_score/', f'{i}.jpg'))
-                    results['line_rep_1px'].append(line_rep[0])
-                    results['line_rep_3px'].append(line_rep[1])
-                    results['line_rep_5px'].append(line_rep[2])
-                    results['line_loc_error_1px'].append(line_loc_error[0])
-                    results['line_loc_error_3px'].append(line_loc_error[1])
-                    results['line_loc_error_5px'].append(line_loc_error[2])
-            
+                    results["line_rep_1px"].append(line_rep[0])
+                    results["line_rep_3px"].append(line_rep[1])
+                    results["line_rep_5px"].append(line_rep[2])
+                    results["line_loc_error_1px"].append(line_loc_error[0])
+                    results["line_loc_error_3px"].append(line_loc_error[1])
+                    results["line_loc_error_5px"].append(line_loc_error[2])
 
             for k, v in results_i.items():
                 results[k].append(v)
