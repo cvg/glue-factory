@@ -80,7 +80,7 @@ def get_dataset_and_loader(num_workers: int, dataset: str):  # folder where data
         "val_batch_size": 1,  # prefix must match split mode
         "all_batch_size": 1,
         "num_workers": num_workers,
-        "split": "all",  # if implemented by dataset class gives different splits
+        "split": "all" if dataset == "minidepth" else "train",  # if implemented by dataset class gives different splits
     }
     omega_conf = OmegaConf.create(config)
     dataset = get_dataset(omega_conf.name)(omega_conf)
