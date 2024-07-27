@@ -13,7 +13,7 @@ class DeepLSD(BaseModel):
         "max_num_lines": None,
         "force_num_lines": False,
         "model_conf": {
-            "detect_lines": True,
+            "detect_lines": False,
             "line_detection_params": {
                 "merge": False,
                 "grad_nfa": True,
@@ -102,6 +102,18 @@ class DeepLSD(BaseModel):
             )
 
         return {"lines": lines, "line_scores": line_scores, "valid_lines": valid_lines}
+    
+    def forward_ha(self, data):
+        image = data["image"]
+        if image.shape[1] == 3:
+            # Convert to grayscale
+            scale = image.new_tensor([0.299, 0.587, 0.114]).view(1, 3, 1, 1)
+            image = (image * scale).sum(1, keepdim=True)
+
+        # Forward pass
+        with torch.no_grad():
+            outputs = self.net({"image": image})
+        return outputs
 
     def loss(self, pred, data):
         raise NotImplementedError

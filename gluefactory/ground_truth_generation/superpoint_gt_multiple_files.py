@@ -56,7 +56,7 @@ homography_params = {
 
 def get_dataset_and_loader(num_workers):  # folder where dataset images are placed
     config = {
-        "name": "minidepth",  # name of dataset class in gluefactory > datasets
+        "name": "oxford_paris_mini",  # name of dataset class in gluefactory > datasets
         "grayscale": True,  # commented out things -> dataset must also have these keys but has not
         "preprocessing": {"resize": [800, 800]},
         "train_batch_size": 1,  # prefix must match split mode

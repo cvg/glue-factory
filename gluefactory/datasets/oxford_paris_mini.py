@@ -7,6 +7,7 @@ import h5py
 import numpy as np
 import torch
 from tqdm import tqdm
+import os
 
 from gluefactory.datasets import BaseDataset
 from gluefactory.settings import DATA_PATH, root
@@ -43,23 +44,23 @@ class OxfordParisMini(BaseDataset):
             "check_nan": False,
             "device": None,  # choose device to move groundtruthdata to if None is given, just read, skip move to device
             "point_gt": {
-                "path": "outputs/results/superpoint_gt",
+                "path": "outputs/results/superpoint_gt/oxford_paris_mini",
                 "data_keys": ["superpoint_heatmap"],
             },
             "line_gt": {
-                "path": "outputs/results/deeplsd_gt",
+                "path": "outputs/results/deeplsd_gt/oxford_paris_mini",
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
             },
         },
         "img_list": "gluefactory/datasets/oxford_paris_images.txt",  # path to image list containing images we want to use for this dataset to be consitent (given from repo root)
         "rand_shuffle_seed": None,  # seed to randomly shuffle before split in train and val
         "val_size": 10,  # size of validation set given TODO: isn't it better to just give a percentage??
-        "train_size": 100,
+        "train_size": 100000,
     }
 
     def _init(self, conf):
         with open(root / self.conf.img_list, "r") as f:
-            self.img_list = f.readlines()
+            self.img_list = [file_name.strip("\n") for file_name in f.readlines()]
         # Auto-download the dataset if not existing
         if not (DATA_PATH / conf.data_dir).exists():
             self.download_oxford_paris_mini()
@@ -96,13 +97,23 @@ class OxfordParisMini(BaseDataset):
             for d in to_del:
                 Path(data_dir / d).unlink()
 
+        shutil.rmtree(tmp_dir)
+
+        #remove empty directories
+        for file in os.listdir(data_dir):
+            cur_file: Path = data_dir / file
+            if cur_file.is_file():
+                continue
+            if len(os.listdir(cur_file)) == 0:
+                shutil.rmtree(cur_file)
+
     def get_dataset(self, split):
         assert split in ["train", "val", "test", "all"]
         return _Dataset(self.conf, self.images[split], split)
 
 
 class _Dataset(torch.utils.data.Dataset):
-    def __init__(self, conf, image_paths, split):
+    def __init__(self, conf, image_paths: list[str], split):
         self.split = split
         self.conf = conf
         self.grayscale = bool(conf.grayscale)
@@ -114,12 +125,9 @@ class _Dataset(torch.utils.data.Dataset):
         self.img_dir = DATA_PATH / conf.data_dir
 
         # Extract image paths
-        self.image_paths = image_paths
+        self.image_paths = [Path(i) for i in image_paths]
 
         # making them relative for system independent names in export files (path used as name in export)
-        self.image_paths = [
-            i.relative_to(self.img_dir) for i in self.image_paths.copy()
-        ]
         if len(self.image_paths) == 0:
             raise ValueError(f"Could not find any image in folder: {self.img_dir}.")
         logger.info(f"NUMBER OF IMAGES: {len(self.image_paths)}")

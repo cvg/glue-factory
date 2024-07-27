@@ -59,18 +59,18 @@ def get_dataset_and_loader(
     num_workers, distributed: bool = False
 ):  # folder where dataset images are placed
     config = {
-        "name": "minidepth",  # name of dataset class in gluefactory > datasets
+        "name": "oxford_paris_mini",  # name of dataset class in gluefactory > datasets
         "grayscale": True,  # commented out things -> dataset must also have these keys but has not
         "preprocessing": {"resize": [800, 800]},
-        "test_batch_size": 1,  # prefix must match split mode
+        "train_batch_size": 1,  # prefix must match split mode
         "num_workers": num_workers,
-        "split": "test",  # if implemented by dataset class gives different splits
+        "split": "train",  # if implemented by dataset class gives different splits
         "prefetch_factor": None if num_workers == 0 else 2,
     }
     omega_conf = OmegaConf.create(config)
     dataset = get_dataset(omega_conf.name)(omega_conf)
     loader = dataset.get_data_loader(
-        omega_conf.get("split", "test"), shuffle=False, distributed=distributed
+        omega_conf.get("split", "train"), shuffle=False, distributed=distributed
     )
     return loader
 

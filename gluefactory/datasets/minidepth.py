@@ -42,11 +42,11 @@ class MiniDepthDataset(BaseDataset):
             "check_nan": False,
             "device": None,  # choose device to move groundtruthdata to if None is given, just read, skip move to device
             "point_gt": {
-                "path": "outputs/results/superpoint_gt",
+                "path": "outputs/results/superpoint_gt/minidepth",
                 "data_keys": ["superpoint_heatmap"],
             },
             "line_gt": {
-                "path": "outputs/results/deeplsd_gt",
+                "path": "outputs/results/deeplsd_gt/minidepth",
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
             },
         },
