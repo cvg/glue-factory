@@ -138,6 +138,9 @@ class SuperPoint(BaseModel):
         scores = scores.permute(0, 1, 3, 2, 4).reshape(
             b, h * self.stride, w * self.stride
         )
+
+        scoremap_raw = scores.clone()
+
         scores = batched_nms(scores, self.conf.nms_radius)
 
         # Discard keypoints near the image borders
@@ -206,6 +209,7 @@ class SuperPoint(BaseModel):
             "keypoints": keypoints + 0.5,
             "keypoint_scores": scores,
             "descriptors": desc.transpose(-1, -2),
+            "heatmap": scoremap_raw
         }
         if self.conf.dense_outputs:
             pred["dense_descriptors"] = descriptors_dense
