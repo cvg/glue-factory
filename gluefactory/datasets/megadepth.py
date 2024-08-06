@@ -283,9 +283,9 @@ class _PairDataset(torch.utils.data.Dataset):
             k = 0
             if np.random.rand() < p:
                 k = np.random.choice(2, 1, replace=False)[0] * 2 - 1
-                img = np.rot90(img, k=-k, axes=(-2, -1))
+                img = torch.rot90(img, k=-k, dims=[1, 2])
                 if self.conf.read_depth:
-                    depth = np.rot90(depth, k=-k, axes=(-2, -1)).copy()
+                    depth = torch.rot90(depth, k=-k, dims=[1, 2]).clone()
                 K = rotate_intrinsics(K, img.shape, k + 2)
                 T = rotate_pose_inplane(T, k + 2)
 
@@ -311,8 +311,8 @@ class _PairDataset(torch.utils.data.Dataset):
             features = self.feature_loader({k: [v] for k, v in data.items()})
             if do_rotate and k != 0:
                 # ang = np.deg2rad(k * 90.)
-                kpts = features["keypoints"].copy()
-                x, y = kpts[:, 0].copy(), kpts[:, 1].copy()
+                kpts = features["keypoints"].clone()
+                x, y = kpts[:, 0].clone(), kpts[:, 1].clone()
                 w, h = data["image_size"]
                 if k == 1:
                     kpts[:, 0] = w - y
