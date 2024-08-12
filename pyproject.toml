@@ -32,6 +32,7 @@ dependencies = [
     "seaborn",
     "joblib",
     "lightglue @ git+https://github.com/cvg/LightGlue.git",
+    "pytlsd"
 ]
 urls = {Repository = "https://github.com/cvg/glue-factory"}
 

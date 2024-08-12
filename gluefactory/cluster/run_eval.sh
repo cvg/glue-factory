@@ -15,10 +15,10 @@ module add cuda/12.1 # add cuda 12.1 as this is what pytorch is compiled with fo
 # SET OUTPUT FOLDER CORRECTLY (EVAL_PATH, TRAIN_PATH in glue factory)
 
 # ADAPT TO YOUR REPO AND VENV
-source /home/fmoeller/3dv_venv/bin/activate
-cd /home/fmoeller/glue-factory
+source /home/fmoeller/merged_3dv_venv/bin/activate
+cd /home/fmoeller/merged_gluefactory
 
 # !! if copying this script as a template, change experiment name and path to config(create new config) !!
 # Run script (adapt distributed and restore if needed)
-python -m gluefactory.eval.hpatches_lines --conf=jpldd+LM --overwrite
-echo "Finished training!"
+python -m gluefactory.eval.megadepth1500_extended --conf=jpldd+NN --overwrite
+echo "Finished eval!"

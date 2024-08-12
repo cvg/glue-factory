@@ -95,6 +95,8 @@ def export_predictions(
                     pred[k] = pred[k] * scales[None]
                 else:
                     pred[k] = (
+                        #For JPLDD Line detection
+                        #(pred[f"keypoints{idx}"][0][pred[k][0][:,2].to(torch.int32)].reshape(1, -1, 2))
                         (pred[f"keypoints{idx}"][0][pred[k]].reshape(1, -1, 2))
                         .reshape(-1, 2, 2)
                         .unsqueeze(0)

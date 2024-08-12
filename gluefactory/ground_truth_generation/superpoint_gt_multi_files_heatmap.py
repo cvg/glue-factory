@@ -1,5 +1,5 @@
 """
-Run the homography adaptation with Superpoint for all images in the minidepth dataset.
+Run the homography adaptation with Superpoint for all images in the minidepth or oxford paris mini dataset.
 Goal: create groundtruth with superpoint. Format: stores groundtruth for every image in a separate file.
 """
 
@@ -70,19 +70,21 @@ homography_params = {
 }
 
 
-def get_dataset_and_loader(num_workers):  # folder where dataset images are placed
+def get_dataset_and_loader(num_workers: int, dataset: str):  # folder where dataset images are placed
+    print("Loading Dataset {}...".format(dataset))
     config = {
-        "name": "minidepth",  # name of dataset class in gluefactory > datasets
+        "name": dataset,  # name of dataset class in gluefactory > datasets
         "grayscale": True,  # commented out things -> dataset must also have these keys but has not
         "preprocessing": {"resize": [800, 800]},
         "train_batch_size": 1,  # prefix must match split mode
         "val_batch_size": 1,  # prefix must match split mode
+        "all_batch_size": 1,
         "num_workers": num_workers,
-        "split": "val",  # if implemented by dataset class gives different splits
+        "split": "all" if dataset == "minidepth" else "train",  # if implemented by dataset class gives different splits
     }
     omega_conf = OmegaConf.create(config)
     dataset = get_dataset(omega_conf.name)(omega_conf)
-    loader = dataset.get_data_loader(omega_conf.get("split", "val"))
+    loader = dataset.get_data_loader(omega_conf.get("split", "all"))
     return loader
 
 
@@ -108,8 +110,6 @@ def ha_forward(img, num=100):
         and the angle to the closest line.
     """
     h, w = img.shape[:2]
-
-    aggregated_heatmap = np.zeros((w, h, num), dtype=np.float32)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -242,6 +242,7 @@ def export_ha(data_loader, output_folder_path, num_H, n_jobs):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("dataset", choices=["minidepth", "oxford_paris_mini"])
     parser.add_argument(
         "--output_folder", type=str, help="Output folder.", default="superpoint_gt"
     )
@@ -265,11 +266,12 @@ if __name__ == "__main__":
     out_folder_path = EVAL_PATH / args.output_folder
     out_folder_path.mkdir(exist_ok=True, parents=True)
 
+    print("DATASET: ", args.dataset)
     print("OUTPUT PATH: ", out_folder_path)
     print("NUMBER OF HOMOGRAPHIES: ", args.num_H)
     print("N JOBS: ", args.n_jobs)
     print("N DATALOADER JOBS: ", args.n_jobs_dataloader)
 
-    dataloader = get_dataset_and_loader(args.n_jobs_dataloader)
+    dataloader = get_dataset_and_loader(args.n_jobs_dataloader, args.dataset)
     export_ha(dataloader, out_folder_path, args.num_H, args.n_jobs)
     print("Done !")

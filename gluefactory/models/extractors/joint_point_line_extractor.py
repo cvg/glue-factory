@@ -21,6 +21,7 @@ from gluefactory.models.utils.metrics_points import (
     compute_repeatability,
 )
 from gluefactory.utils.misc import change_dict_key, sync_and_time
+from gluefactory.models.lines.pold2_extractor import LineExtractor
 
 default_H_params = {
     "translation": True,
@@ -137,6 +138,9 @@ class JointPointLineDetectorDescriptor(BaseModel):
             nn.BatchNorm2d(conf.line_af_decoder_channels),
             nn.Conv2d(conf.line_af_decoder_channels, 1, kernel_size=1),
             nn.Sigmoid(),
+        )
+        self.line_extractor = LineExtractor(
+            8, 150, "cuda" if torch.cuda.is_available() else "cpu"
         )
 
         if conf.timeit:
@@ -321,15 +325,29 @@ class JointPointLineDetectorDescriptor(BaseModel):
             if self.conf.timeit:
                 start_lines = sync_and_time()
             lines = []
+            valid_lines = []
             np_df = output["line_distancefield"]  # .cpu().numpy()
             np_al = output["line_anglefield"]  # .cpu().numpy()
             np_kp = output["keypoints"]
-            for df, af, kp in zip(np_df, np_al, np_kp):
-                img_lines = detect_jpldd_lines(
-                    df, af, kp, (h, w), merge=self.conf.line_detection.merge
+            for df, af, kp,img in zip(np_df, np_al, np_kp,image):
+                # img_lines = detect_jpldd_lines(
+                #     df, af, kp, (h, w), merge=self.conf.line_detection.merge
+                # )
+                img_lines = self.line_extractor.post_processing_step(
+                    kp,img,df,af
                 )
+                if len(img_lines) == 0:
+                    print("NO LINES DETECTED")
+                    img_lines = (
+                        torch.arange(30).reshape(-1, 2).to(np_df[-1].device)
+                    )
+
                 lines.append(img_lines)
+                valid_lines.append(
+                    torch.ones(len(lines[-1])).to(np_df[-1].device)
+                )
             output["lines"] = lines
+            output["valid_lines"] = valid_lines
             # Use aliked points sampled from inbetween Line endpoints?
             line_descriptors = None
             output["line_descriptors"] = line_descriptors

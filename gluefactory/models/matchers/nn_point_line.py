@@ -233,6 +233,11 @@ class NearestNeighborPointLineMatcher(BaseModel):
             lms0 = np.array([])
             lms1 = np.array([])
             desc1 = torch.stack(
+                #For JPLDD line detection
+                # [
+                #     data["descriptors0"][batch_idx][data["lines0"][batch_idx][:,2, 0].int()],
+                #     data["descriptors0"][batch_idx][data["lines0"][batch_idx][:,2, 1].int()],
+                # ],
                 [
                     data["descriptors0"][batch_idx][data["lines0"][batch_idx][:, 0]],
                     data["descriptors0"][batch_idx][data["lines0"][batch_idx][:, 1]],
@@ -241,6 +246,11 @@ class NearestNeighborPointLineMatcher(BaseModel):
             )
 
             desc2 = torch.stack(
+                #For JPLDD line detection
+                # [
+                #     data["descriptors1"][batch_idx][data["lines1"][batch_idx][:,2, 0].int()],
+                #     data["descriptors1"][batch_idx][data["lines1"][batch_idx][:,2, 1].int()],
+                # ],
                 [
                     data["descriptors1"][batch_idx][data["lines1"][batch_idx][:, 0]],
                     data["descriptors1"][batch_idx][data["lines1"][batch_idx][:, 1]],

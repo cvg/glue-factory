@@ -1,22 +1,24 @@
 import logging
 import shutil
-import zipfile
+import tarfile
 from pathlib import Path
 
 import h5py
 import numpy as np
 import torch
+from tqdm import tqdm
+import os
 
 from gluefactory.datasets import BaseDataset
-from gluefactory.settings import DATA_PATH
+from gluefactory.settings import DATA_PATH, root
 from gluefactory.utils.image import ImagePreprocessor, load_image
 
 logger = logging.getLogger(__name__)
 
 
-class MiniDepthDataset(BaseDataset):
+class OxfordParisMini(BaseDataset):
     """
-    Assumes minidepth dataset in folder as jpg images.
+    Subset of the Oxford Paris dataset as defined here: https://cmp.felk.cvut.cz/revisitop/
     Supports loading groundtruth and only serves images for that gt exists.
     Dataset only deals with loading one element. Batching is done by Dataloader!
 
@@ -24,7 +26,7 @@ class MiniDepthDataset(BaseDataset):
     """
 
     default_conf = {
-        "data_dir": "minidepth/images",  # as subdirectory of DATA_PATH(defined in settings.py)
+        "data_dir": "oxford_paris_mini/images",  # as subdirectory of DATA_PATH(defined in settings.py)
         "grayscale": False,
         "train_batch_size": 2,  # prefix must match split
         "test_batch_size": 1,
@@ -42,44 +44,77 @@ class MiniDepthDataset(BaseDataset):
             "check_nan": False,
             "device": None,  # choose device to move groundtruthdata to if None is given, just read, skip move to device
             "point_gt": {
-                "path": "outputs/results/superpoint_gt/minidepth",
+                "path": "outputs/results/superpoint_gt/oxford_paris_mini",
                 "data_keys": ["superpoint_heatmap"],
             },
             "line_gt": {
-                "path": "outputs/results/deeplsd_gt/minidepth",
+                "path": "outputs/results/deeplsd_gt/oxford_paris_mini",
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
             },
         },
+        "img_list": "gluefactory/datasets/oxford_paris_images.txt",  # path to image list containing images we want to use for this dataset to be consitent (given from repo root)
+        "rand_shuffle_seed": None,  # seed to randomly shuffle before split in train and val
+        "val_size": 10,  # size of validation set given TODO: isn't it better to just give a percentage??
+        "train_size": 100000,
     }
 
     def _init(self, conf):
+        with open(root / self.conf.img_list, "r") as f:
+            self.img_list = [file_name.strip("\n") for file_name in f.readlines()]
         # Auto-download the dataset if not existing
         if not (DATA_PATH / conf.data_dir).exists():
-            logger.info("Downloading the minidepth dataset...")
-            self.download_minidepth()
+            self.download_oxford_paris_mini()
+        # load image names
+        images = self.img_list
+        if self.conf.rand_shuffle_seed is not None:
+            np.random.RandomState(conf.shuffle_seed).shuffle(images)
+        train_images = images[: conf.train_size]
+        val_images = images[conf.train_size: conf.train_size + conf.val_size]
+        self.images = {"train": train_images, "val": val_images, "test": images, "all": images}
 
-    def download_minidepth(self):
-        logger.info("Downloading the MiniDepth dataset...")
+
+    def download_oxford_paris_mini(self):
+        logger.info("Downloading the OxfordParis Mini dataset...")
         data_dir = DATA_PATH / self.conf.data_dir
-        tmp_dir = data_dir.parent / "minidepth_tmp"
+        tmp_dir = data_dir.parent / "oxpa_tmp"
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir)
         tmp_dir.mkdir(exist_ok=True, parents=True)
-        url_base = "https://filedn.com/lt6zb4ORSwapNyVniJf1Pqh/"
-        zip_name = "minidepth.zip"
-        zip_path = tmp_dir / zip_name
-        torch.hub.download_url_to_file(url_base + zip_name, zip_path)
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(tmp_dir)
-        shutil.move(tmp_dir / zip_name.split(".")[0], data_dir)
+        url_base = "http://ptak.felk.cvut.cz/revisitop/revisitop1m/"
+        num_parts = 100
+        # go through dataset parts, one by one and only keep wanted images in img_list
+        for i in tqdm(range(num_parts), position=1):
+            tar_name = f"revisitop1m.{i+1}.tar.gz"
+            tar_url = url_base + "jpg/" + tar_name
+            tmp_tar_path = tmp_dir / tar_name
+            torch.hub.download_url_to_file(tar_url, tmp_tar_path)
+            with tarfile.open(tmp_tar_path) as tar:
+                tar.extractall(path=data_dir)
+            tmp_tar_path.unlink()
+            # Delete unwanted files
+            existing_files = set([str(i.relative_to(data_dir)) for i in data_dir.glob("**/*.jpg")])
+            to_del = existing_files - set(self.img_list)
+            for d in to_del:
+                Path(data_dir / d).unlink()
+
+        shutil.rmtree(tmp_dir)
+
+        #remove empty directories
+        for file in os.listdir(data_dir):
+            cur_file: Path = data_dir / file
+            if cur_file.is_file():
+                continue
+            if len(os.listdir(cur_file)) == 0:
+                shutil.rmtree(cur_file)
 
     def get_dataset(self, split):
         assert split in ["train", "val", "test", "all"]
-        return _Dataset(self.conf, split)
+        return _Dataset(self.conf, self.images[split], split)
 
 
 class _Dataset(torch.utils.data.Dataset):
-    def __init__(self, conf, split):
+    def __init__(self, conf, image_paths: list[str], split):
+        self.split = split
         self.conf = conf
         self.grayscale = bool(conf.grayscale)
         # self.conf is set in superclass
@@ -88,32 +123,11 @@ class _Dataset(torch.utils.data.Dataset):
 
         # select split scenes
         self.img_dir = DATA_PATH / conf.data_dir
-        scene_file_path = self.img_dir.parent
-        # Extract the scenes corresponding to the right split
-        scenes_file = None
-        if split == "train":
-            scenes_file = scene_file_path / "minidepth_train_scenes.txt"
-        elif split == "val":
-            scenes_file = scene_file_path / "minidepth_val_scenes.txt"
-        else:
-            # select all images if 'all' or 'test' given
-            scenes_file = None
 
         # Extract image paths
-        self.image_paths = []
-        if scenes_file is not None:
-            with open(scenes_file, "r") as f:
-                self.scenes = [line.strip("\n") for line in f.readlines()]
-            for s in self.scenes:
-                scene_folder = self.img_dir / s
-                self.image_paths += list(Path(scene_folder).glob("**/*.jpg"))
-        else:
-            self.image_paths += list(Path(self.img_dir).glob("**/*.jpg"))
+        self.image_paths = [Path(i) for i in image_paths]
 
         # making them relative for system independent names in export files (path used as name in export)
-        self.image_paths = [
-            i.relative_to(self.img_dir) for i in self.image_paths.copy()
-        ]
         if len(self.image_paths) == 0:
             raise ValueError(f"Could not find any image in folder: {self.img_dir}.")
         logger.info(f"NUMBER OF IMAGES: {len(self.image_paths)}")
@@ -147,9 +161,6 @@ class _Dataset(torch.utils.data.Dataset):
                     new_img_path_list.append(img_path)
             self.image_paths = new_img_path_list
             logger.info(f"NUMBER OF IMAGES WITH GT: {len(self.image_paths)}")
-
-    def get_dataset(self, split):
-        return self
 
     def _read_image(self, path, enforce_batch_dim=False):
         """
