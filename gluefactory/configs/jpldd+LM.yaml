@@ -7,7 +7,7 @@ model:
     max_num_keypoints: 512
     line_detection:
       merge: False
-    #checkpoint: rk_jpldd_11/checkpoint_best.tar
+    checkpoint: jp/checkpoint_best.tar
   matcher:
     name: matchers.line_matcher
     line_dist: struct

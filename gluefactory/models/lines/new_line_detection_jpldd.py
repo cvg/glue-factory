@@ -5,15 +5,20 @@ from gluefactory.models.lines.line_refinement import merge_lines
 
 
 def create_line_candidates(keypoints: torch.Tensor) -> torch.Tensor:
+    # Returns nx3x2 tensor
     junctions = torch.zeros_like(keypoints).to(keypoints.device)
     junctions[:, 0], junctions[:, 1] = keypoints[:, 1].clone(), keypoints[:, 0].clone()
-    lines = torch.hstack(
+    line_indices = torch.arange(len(keypoints)).to(junctions.device)
+    line_indices_cart = torch.cartesian_prod(line_indices,line_indices)
+    lines_and_inds = torch.stack(
         [
             torch.cartesian_prod(junctions[:, 0], junctions[:, 0]),
             torch.cartesian_prod(junctions[:, 1], junctions[:, 1]),
-        ]
-    ).reshape((-1, 2, 2))
-    return lines
+            line_indices_cart
+        ],
+        axis=1
+    )
+    return lines_and_inds
 
 
 def fine_line_filter(
@@ -70,15 +75,17 @@ def fine_line_filter(
             new_lines, thresh=merge_thresh, overlap_thresh=0.0
         ).float()
         lines = merged_lines.mT
-    start_x = lines[:, 1, 0]
-    start_y = lines[:, 0, 0]
-    end_x = lines[:, 1, 1]
-    end_y = lines[:, 0, 1]
+    # start_x = lines[:, 1, 0]
+    # start_y = lines[:, 0, 0]
+    # start_idx = lines[:,2,0]
+    # end_x = lines[:, 1, 1]
+    # end_y = lines[:, 0, 1]
+    # end_idx = lines[:,2,1]
 
-    lines = torch.stack(
-        [torch.stack([start_x, start_y], dim=1), torch.stack([end_x, end_y], dim=1)],
-        dim=1,
-    )
+    # lines = torch.stack(
+    #     [torch.stack([start_x, start_y], dim=1), torch.stack([end_x, end_y], dim=1)],
+    #     dim=1,
+    # )
     return lines
 
 

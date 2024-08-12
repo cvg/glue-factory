@@ -20,5 +20,5 @@ cd /home/fmoeller/merged_gluefactory
 
 # !! if copying this script as a template, change experiment name and path to config(create new config) !!
 # Run script (adapt distributed and restore if needed)
-python -m gluefactory.train rk_jpldd_test --conf=gluefactory/configs/rk_jpldd_test.yaml --distributed --restore
+python -m gluefactory.train jpldd_oxparis --conf=gluefactory/configs/jpldd_oxparis.yaml --distributed
 echo "Finished training!"

@@ -11,7 +11,6 @@ import glob
 import argparse
 from functools import cmp_to_key
 import shutil
-from gluefactory.visualization.viz2d import plot_images, plot_keypoints, save_plot, plot_lines
 from gluefactory.settings import root
 
 LINE_THRESH = 0.9
