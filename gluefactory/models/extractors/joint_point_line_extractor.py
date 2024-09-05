@@ -61,12 +61,20 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 "do": True,  # if train is True, initialize ALIKED Light model form OTF Descriptor GT
                 "gt_aliked_model": "aliked-n32",
             },  # if train is True, initialize ALIKED Light model form OTF Descriptor GT
-            "lambda_weighted_bce": 200,
-            "loss_weights": {
-                "line_af_weight": 10,
-                "line_df_weight": 10,
-                "keypoint_weight": 1,
-                "descriptor_weight": 1,
+            "loss": {
+                "kp_loss_name": 'weighted_bce',  # other options: bce or focal loss
+                "kp_loss_parameters": {
+                    "lambda_weighted_bce": 200,  # weighted bce parameter factor how to boost keypoint loss in map
+                    "focal_gamma": 5,
+                    # focal loss parameter controlling how strong to focus on hard examples (typical range 1-5)
+                    "focal_alpha": 0.8,  # focal loss parameter to mitigate class imbalances
+                },
+                "loss_weights": {
+                    "line_af_weight": 10,
+                    "line_df_weight": 10,
+                    "keypoint_weight": 1,
+                    "descriptor_weight": 1,
+                },
             },
         },
         "line_detection": {"do": True, "merge": False},
@@ -84,13 +92,19 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
     def _init(self, conf):
         logger.debug(f"final config dict(type={type(conf)}): {conf}")
+        # set loss fn
+        assert self.conf.training.loss.kp_loss_name in ["weighted_bce", "focal_loss"]
+        if self.conf.training.loss.kp_loss_name == "weighted_bce":
+            self.loss_fn = self.weighted_bce_loss
+        else:
+            self.loss_fn = self.focal_loss
         # c1-c4 -> output dimensions of encoder blocks, dim -> dimension of hidden feature map
         # K=Kernel-Size, M=num sampling pos
         aliked_model_cfg = aliked_cfgs[conf.aliked_model_name]
         dim = aliked_model_cfg["dim"]
         K = aliked_model_cfg["K"]
         M = aliked_model_cfg["M"]
-        self.lambda_valid_kp = conf.training.lambda_weighted_bce
+        self.lambda_valid_kp = conf.training.loss.kp_loss_parameters.lambda_weighted_bce
         # Load Network Components
         self.encoder_backbone = AlikedEncoder(aliked_model_cfg)
         self.keypoint_and_junction_branch = SMH(dim)  # using SMH from ALIKE here
@@ -358,6 +372,25 @@ class JointPointLineDetectorDescriptor(BaseModel):
             self.timings["total-makespan"].append(sync_and_time() - total_start)
         return output
 
+    def weighted_bce_loss(self, prediction, target):
+        return -self.lambda_valid_kp * target * torch.log(prediction) - (
+                1 - target
+        ) * torch.log(1 - prediction)
+
+    def focal_loss(self, prediction, target):
+        alpha = self.conf.training.loss.kp_loss_parameters.focal_alpha
+        gamma = self.conf.training.loss.kp_loss_parameters.focal_gamma
+        epsilon = 1e-6  # Small value to avoid log(0)
+
+        # Compute the positive and negative parts of the focal loss
+        pos_part = -alpha * torch.pow(1 - prediction, gamma) * torch.log(prediction + epsilon)
+        neg_part = -(1 - alpha) * torch.pow(prediction, gamma) * torch.log(1 - prediction + epsilon)
+
+        # Combine the parts to get the total loss
+        loss = target * pos_part + (1 - target) * neg_part
+
+        return loss
+
     def loss(self, pred, data):
         """
         format of data: B x H x W
@@ -367,11 +400,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
         3. On Line-Angle Field:         use angle loss from deepLSD paper
         4. On Line-Distance Field:      use L1 loss on normalized versions of Distance field (as in deepLSD paper)
         """
-
-        def weighted_bce_loss(pred, target):
-            return -self.lambda_valid_kp * target * torch.log(pred) - (
-                1 - target
-            ) * torch.log(1 - pred)
 
         losses = {}
         metrics = {}
@@ -385,7 +413,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             and data["superpoint_heatmap"].max() <= 1
         )
         # Use Weighted BCE Loss for Point Heatmap
-        keypoint_scoremap_loss = weighted_bce_loss(
+        keypoint_scoremap_loss = self.loss_fn(
             pred["keypoint_and_junction_score_map"], data["superpoint_heatmap"]
         ).mean(dim=(1, 2))
 
@@ -422,14 +450,14 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
         # Compute overall loss
         overall_loss = (
-            self.conf.training.loss_weights.keypoint_weight * keypoint_scoremap_loss
-            + self.conf.training.loss_weights.line_af_weight * line_af_loss
-            + self.conf.training.loss_weights.line_df_weight * line_df_loss
+                self.conf.training.loss.loss_weights.keypoint_weight * keypoint_scoremap_loss
+                + self.conf.training.loss.loss_weights.line_af_weight * line_af_loss
+                + self.conf.training.loss.loss_weights.line_df_weight * line_df_loss
         )
         if self.conf.training.train_descriptors.do:
             overall_loss += (
-                self.conf.training.loss_weights.descriptor_weight
-                * keypoint_descriptor_loss
+                    self.conf.training.loss.loss_weights.descriptor_weight
+                    * keypoint_descriptor_loss
             )
         losses["total"] = overall_loss
 
