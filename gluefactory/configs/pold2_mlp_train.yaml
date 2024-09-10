@@ -1,0 +1,52 @@
+data:
+    name: gluefactory.datasets.pold2_mlp_dataset
+    data_dir: "pold2_mlp_dataset"
+
+    train_size: 100
+    val_size: 100
+    shuffle_seed: 0
+    reseed: False
+
+    generate:
+        use_df: True
+        use_af: True
+        num_images: 10
+        num_negative_per_image: 10  
+        num_positive_per_image: 10
+        num_line_samples: 150
+        deeplsd_config: 
+            detect_lines: True
+            line_detection_params:
+                merge: False
+                filtering: True
+                grad_thresh: 3
+                grad_nfa: True
+
+        weights: "DeepLSD/weights/deeplsd_md.tar"
+        glob: "revisitop1m_POLD2/jpg/**/base_image.jpg"
+    
+    batch_size: 16
+    num_workers: 1
+    prefetch_factor: 2
+    seed: 0
+
+model:
+    name: gluefactory.models.lines.pold2_mlp
+    has_angle_field: True
+    has_distance_field: True
+    num_line_samples: 150
+    mlp_hidden_dims: [256, 128, 128, 64, 32]
+    pred_threshold: 0.9
+    weights: null
+
+train:
+    epochs: 300
+    lr: 0.001
+    scheduler: 'ReduceLROnPlateau'
+    patience: 10
+    log_every_iter: 500
+    eval_every_iter: 1500
+    save_every_iter: 3000
+    keep_last_checkpoints: 3
+    seed: 0
+    submodules: []
