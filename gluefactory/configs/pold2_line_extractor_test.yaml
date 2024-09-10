@@ -1,0 +1,16 @@
+num_sample: 8
+num_sample_strong: 150
+max_point_size: 1500
+distance_map_threshold: 0.5
+
+mlp_conf:
+    name: gluefactory.models.lines.pold2_mlp
+    has_angle_field: True
+    has_distance_field: True
+    num_line_samples: 150
+    mlp_hidden_dims: [256, 128, 128, 64, 32]
+    pred_threshold: 0.9
+    weights: outputs/training/pold2_mlp_test/checkpoint_best.tar
+    # weights: gluefactory/models/mlp/mlp.pth
+
+device: cpu
