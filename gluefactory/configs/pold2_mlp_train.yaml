@@ -2,17 +2,17 @@ data:
     name: gluefactory.datasets.pold2_mlp_dataset
     data_dir: "pold2_mlp_dataset"
 
-    train_size: 100
-    val_size: 100
+    train_size: 32000
+    val_size: 8000
     shuffle_seed: 0
     reseed: False
 
     generate:
         use_df: True
         use_af: True
-        num_images: 10
-        num_negative_per_image: 10  
-        num_positive_per_image: 10
+        num_images: 500
+        num_negative_per_image: 40  
+        num_positive_per_image: 40
         num_line_samples: 150
         deeplsd_config: 
             detect_lines: True
@@ -42,7 +42,11 @@ model:
 train:
     epochs: 300
     lr: 0.001
-    scheduler: 'ReduceLROnPlateau'
+    lr_schedule: 
+        type: 'ReduceLROnPlateau'
+        on_epoch: True
+        options:
+            patience: 3
     patience: 10
     log_every_iter: 500
     eval_every_iter: 1500
