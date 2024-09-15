@@ -5,7 +5,7 @@ Usage:
 """
 
 import time
-import shutil
+import pickle
 import logging
 import numpy as np
 import cv2
@@ -187,6 +187,9 @@ class LineExtractor(BaseModel):
         distance_map = data['distance_map']
         angle_map = data['angle_map']
 
+        # Convert angle map (direction vector) to angle (radians from 0 to pi)
+        angle_map = torch.atan2(angle_map[1], angle_map[0]) % torch.pi
+
         # Get indices
         if len(points) > self.max_point_size:
             logger.warning(
@@ -199,7 +202,7 @@ class LineExtractor(BaseModel):
         
         df_max = self.conf.distance_map.max_value
         distance_map[distance_map > df_max] = df_max
-        
+
         distance_map = distance_map.float()
         distance_map /= df_max
 
@@ -235,9 +238,17 @@ def test_extractor(extractor, folder_path, device, show=False):
     angle_map = torch.from_numpy(
         np.array(Image.open(f'{folder_path}/angle.jpg'))).to(device)
 
-    angle_map = angle_map.float() / 255 * np.pi
-    angle_map = torch.cat((torch.cos(angle_map).unsqueeze(2), torch.sin(angle_map).unsqueeze(2)), dim=2)
+    # Prepare distance map
+    distance_map = distance_map.float() / 255
+    with open(f'{folder_path}/values.pkl', 'rb') as f:
+        values = pickle.load(f)
+        distance_map = distance_map * values['max_df']
 
+    # Normalize angle map
+    angle_map = angle_map.float() / 255 * np.pi
+    angle_map = torch.cat((torch.cos(angle_map).unsqueeze(2), torch.sin(angle_map).unsqueeze(2)), dim=2).permute(2, 0, 1)
+
+    # Load keypoints
     points_np = np.load(f'{folder_path}/keypoints.npy', allow_pickle=True)
     points = torch.from_numpy(points_np).to(device).int()
 
@@ -303,6 +314,8 @@ if __name__ == '__main__':
     extractor_conf = OmegaConf.load(args.conf) if args.conf is not None else LineExtractor.default_conf
     extractor = LineExtractor(extractor_conf)
 
+    if os.path.exists("tmp"):
+        os.system("rm -r tmp")
     os.makedirs("tmp", exist_ok=True)
 
     for val in glob.glob(str(DATA_PATH / "revisitop1m_POLD2/**/base_image.jpg"), recursive=True):
