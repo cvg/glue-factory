@@ -32,7 +32,7 @@ model:
             do: True # if train is True, initialize ALIKED Light model form OTF Descriptor GT
             gt_aliked_model: "aliked-n32"
         loss:
-            kp_loss_name: "weighted_bce"
+            kp_loss_name: "focal_loss"
             kp_loss_parameters:
                 lambda_weighted_bce: 200
                 focal_alpha: 0.25
