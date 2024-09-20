@@ -56,7 +56,7 @@ def plot_predictions(pred, data):
     kp_0 = data["view0"]["cache"]["keypoints"][0].cpu().numpy()
     df_0 = data["view0"]["cache"]["df"][0].cpu().numpy()
     angle_0 = data["view0"]["cache"]["line_level"][0].cpu().numpy()
-    angle_0 = np.arctan2(angle_0[1, :], angle_0[0, :])
+    angle_0 = np.arctan2(angle_0[1], angle_0[0])
     flow_0 = get_flow_vis(df_0, angle_0)
     img_0 = data["view0"]["image"][0].permute(1, 2, 0).cpu().numpy()
 

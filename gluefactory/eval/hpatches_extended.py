@@ -272,14 +272,10 @@ class HPatchesPipeline(EvalPipeline):
                 )
 
                 match_score = compute_matching_score(
-                    np.concatenate(
-                        [kp0, pred["keypoint_scores0"][m0].reshape(-1, 1)], axis=-1
-                    ),
-                    np.concatenate(
-                        [kp1, pred["keypoint_scores1"][m1].reshape(-1, 1)], axis=-1
-                    ),
-                    desc0,
-                    desc1,
+                    pred["keypoints0"],
+                    pred["keypoints1"],
+                    m0,
+                    m1,
                     data["H_0to1"].numpy(),
                     IMAGE_SHAPE,
                     keep_k_points=500,

@@ -1,0 +1,24 @@
+data_dir: "pold2_mlp_dataset"
+
+train_size: 100
+val_size: 10
+shuffle_seed: 0
+reseed: False
+
+generate: 
+    use_df: True
+    use_af: True
+    num_images: 10
+    num_negative_per_image: 10  
+    num_positive_per_image: 10
+    num_line_samples: 150
+    deeplsd_config: 
+        detect_lines: True
+        line_detection_params:
+            merge: False
+            filtering: True
+            grad_thresh: 3
+            grad_nfa: True
+
+    weights: "DeepLSD/weights/deeplsd_md.tar"
+    glob: "revisitop1m_POLD2/jpg/**/base_image.jpg"

@@ -40,21 +40,13 @@ def keep_shared_points(kp, desc, H, img_shape, keep_k_points=1000):
 
 
 def compute_matching_score(
-    kp0, kp1, desc0, desc1, H, img_shape, keep_k_points=1000, thresh=[1, 3, 5]
+    kp0, kp1, m0, m1, H, img_shape, keep_k_points=1000, thresh=[1, 3, 5]
 ):
     """Compute the matching score between two sets
     of keypoints with associated descriptors."""
-    # Select the top common points
-    kp0_corr, desc0_corr = select_k_best(kp0, desc0, keep_k_points)
-    kp1_corr, desc1_corr = select_k_best(kp1, desc1, keep_k_points)
-
-    # Nearest neighbor matching
-    match_dist = np.linalg.norm(desc0_corr[:, None] - desc1_corr[None], axis=2)
-    nearest0 = np.argmin(match_dist, axis=1)
-    nearest1 = np.argmin(match_dist, axis=0)
-    mutual = nearest1[nearest0] == np.arange(len(kp0_corr))
-    m_kp0 = kp0_corr[mutual]
-    m_kp1 = kp1_corr[nearest0[mutual]]
+    # Get matching keypoints
+    m_kp0 = kp0[m0]
+    m_kp1 = kp1[m1]
 
     # Matching score computation
     warped_m_kp1 = warp_points(m_kp1[:, [1, 0]], np.linalg.inv(H))[:, [1, 0]]
