@@ -55,6 +55,7 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         "rand_shuffle_seed": None,  # seed to randomly shuffle before split in train and val
         "val_size": 10,  # size of validation set given
         "train_size": 100000,
+        "debug": False  # if True also gives back original keypoint gt locations 
     }
 
     def _init(self, conf):
@@ -200,6 +201,10 @@ class _Dataset(torch.utils.data.Dataset):
        
         if self.conf.reshape is not None:
             heatmap = self.preprocessor(heatmap)['image']
+            
+        if self.conf.debug:
+            non_zero_coord = torch.nonzero(heatmap)
+            features["orig_points"] = non_zero_coord[:][:, torch.tensor([1,0])]
        
         features[self.conf.load_features.point_gt.data_keys[0]] = heatmap
         
