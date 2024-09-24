@@ -13,7 +13,7 @@ data:
         check_exists: True
         point_gt:
             data_keys: [ "superpoint_heatmap" ]
-            use_score_heatmap: True
+            use_score_heatmap: False
         line_gt:
             data_keys: [ "deeplsd_distance_field", "deeplsd_angle_field" ]
     val_size: 500
