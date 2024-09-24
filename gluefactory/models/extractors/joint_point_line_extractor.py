@@ -14,7 +14,6 @@ from gluefactory.models import get_model
 from gluefactory.models.backbones.backbone_encoder import AlikedEncoder, aliked_cfgs
 from gluefactory.models.base_model import BaseModel
 from gluefactory.models.extractors.aliked import SDDH, SMH, DKDLight, InputPadder
-from gluefactory.models.lines.new_line_detection_jpldd import detect_jpldd_lines
 from gluefactory.models.utils.metrics_points import (
     compute_loc_error,
     compute_pr,
@@ -77,7 +76,10 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 },
             },
         },
-        "line_detection": {"do": True, "merge": False},
+        "line_detection": { # by default we use the POLD2 Line Extractor (MLP with Angle Field)
+            "do": True,
+            "conf": LineExtractor.default_conf
+        },
         "checkpoint": str(
             jpldd_checkpoint_url
         ),  # if given and non-null, load model checkpoint if local path load locally if standard url download it.
@@ -154,7 +156,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             nn.Sigmoid(),
         )
         self.line_extractor = LineExtractor(
-            8, 150, "cuda" if torch.cuda.is_available() else "cpu"
+            self.conf.line_detection.conf,
         )
 
         if conf.timeit:

@@ -12,7 +12,7 @@ model:
     #checkpoint: /local/home/rkreft/shared_team_folder/outputs/training/rk_pold2gt_oxparis_focal/checkpoint_best.tar 
     checkpoint: /local/home/rkreft/shared_team_folder/outputs/training/rk_pold2gt_oxparis_base/checkpoint_best.tar  # if given load model weights from this checkpoint
     timeit: False  # override timeit: False from BaseModel
-    line_detection:
+    line_detection: # default conf is the one from POLD 2 Line Detector
       do: True
   matcher:
     name: matchers.nn_point_line
