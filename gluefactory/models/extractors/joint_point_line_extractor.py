@@ -6,7 +6,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from kornia.geometry.transform import warp_perspective
-from omegaconf import OmegaConf
 
 import gluefactory.models.utils.metrics_lines as LineMetrics
 from gluefactory.datasets.homographies_deeplsd import sample_homography
@@ -35,11 +34,7 @@ default_H_params = {
     "allow_artifacts": True,
 }
 
-to_ctr = OmegaConf.to_container  # convert DictConfig to dict
 aliked_checkpoint_url = "https://github.com/Shiaoming/ALIKED/raw/main/models/{}.pth"  # used for training based on ALIKED weights
-jpldd_checkpoint_url = (
-    "https://filedn.com/lt6zb4ORSwapNyVniJf1Pqh/checkpoint_jpldd_10.tar"
-)
 logger = logging.getLogger(__file__)
 
 
@@ -80,9 +75,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             "do": True,
             "conf": LineExtractor.default_conf
         },
-        "checkpoint": str(
-            jpldd_checkpoint_url
-        ),  # if given and non-null, load model checkpoint if local path load locally if standard url download it.
+        "checkpoint": None,  # if given and non-null, load model checkpoint if local path load locally if standard url download it.
         "nms_radius": 3,
         "line_neighborhood": 5,  # used to normalize / denormalize line distance field
         "timeit": True,  # override timeit: False from BaseModel
@@ -198,12 +191,12 @@ class JointPointLineDetectorDescriptor(BaseModel):
         if conf.checkpoint is not None and Path(conf.checkpoint).exists():
             logger.warning(f"Load model parameters from checkpoint {conf.checkpoint}")
             chkpt = torch.load(conf.checkpoint, map_location=torch.device("cpu"))
-            self.load_state_dict(chkpt["model"], strict=True)
+            self.load_state_dict(chkpt["model"], strict=False) # set to false as otherwise error raised for missing mlp weights
         elif conf.checkpoint is not None:
             chkpt = torch.hub.load_state_dict_from_url(
                 conf.checkpoint, map_location=torch.device("cpu")
             )
-            self.load_state_dict(chkpt["model"], strict=True)
+            self.load_state_dict(chkpt["model"], strict=False)
 
     # Utility methods for line df and af with deepLSD
     def normalize_df(self, df):
@@ -343,21 +336,25 @@ class JointPointLineDetectorDescriptor(BaseModel):
             lines = []
             valid_lines = []
             np_df = output["line_distancefield"]  # .cpu().numpy()
-            np_al = output["line_anglefield"]  # .cpu().numpy()
+            np_af = output["line_anglefield"]  # .cpu().numpy()
             np_kp = output["keypoints"]
-            for df, af, kp,img in zip(np_df, np_al, np_kp,image):
-                # img_lines = detect_jpldd_lines(
-                #     df, af, kp, (h, w), merge=self.conf.line_detection.merge
-                # )
-                img_lines = self.line_extractor.post_processing_step(
-                    kp,img,df,af
+            for df, af, kp, img in zip(np_df, np_af, np_kp, image):
+                line_data = {
+                    "points": kp,
+                    "distance_map": df,
+                    "angle_map": af
+                }
+                img_line_indices = self.line_extractor(
+                    line_data
                 )
+                # Line matchers expect the lines to be stored as line endpoints where line endpoint = idx of respective keypoint
+                img_lines = img_line_indices
                 if len(img_lines) == 0:
                     print("NO LINES DETECTED")
                     img_lines = (
                         torch.arange(30).reshape(-1, 2).to(np_df[-1].device)
                     )
-
+                #print(img_lines.shape)
                 lines.append(img_lines)
                 valid_lines.append(
                     torch.ones(len(lines[-1])).to(np_df[-1].device)
@@ -365,8 +362,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
             output["lines"] = lines
             output["valid_lines"] = valid_lines
             # Use aliked points sampled from inbetween Line endpoints?
-            line_descriptors = None
-            output["line_descriptors"] = line_descriptors
             if self.conf.timeit:
                 self.timings["line-detection"].append(sync_and_time() - start_lines)
 
@@ -490,7 +485,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             aliked_state_url, map_location="cpu"
         )
         # change keys
-        for k, v in list(aliked_state_dict.items()):
+        for k, _ in list(aliked_state_dict.items()):
             if k.startswith("block") or k.startswith("conv"):
                 change_dict_key(aliked_state_dict, k, f"encoder_backbone.{k}")
             elif k.startswith("score_head"):
@@ -510,12 +505,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
     def count_trainable_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
-
-    def check_loss_keys_in_dict(self, data_keys):
-        for required_loss_key in self.conf.required_loss_keys:
-            if required_loss_key not in data_keys:
-                return False
-        return True
 
     def state_dict(self, *args, **kwargs):
         """

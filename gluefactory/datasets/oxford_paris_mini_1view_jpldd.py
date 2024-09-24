@@ -12,12 +12,11 @@ import os
 from gluefactory.datasets import BaseDataset
 from gluefactory.settings import DATA_PATH, root
 from gluefactory.utils.image import ImagePreprocessor, load_image, read_image
-from gluefactory.utils.tensor import batch_to_device
 
 logger = logging.getLogger(__name__)
 
 
-class OxfordParisMini2(BaseDataset):
+class OxfordParisMiniOneViewJPLDD(BaseDataset):
     """
     Subset of the Oxford Paris dataset as defined here: https://cmp.felk.cvut.cz/revisitop/
     Supports loading groundtruth and only serves images for that gt exists.
@@ -115,14 +114,18 @@ class OxfordParisMini2(BaseDataset):
 
 class _Dataset(torch.utils.data.Dataset):
     def __init__(self, conf, image_sub_paths: list[str], split):
+        super().__init__()
         self.split = split
         self.conf = conf
         self.grayscale = bool(conf.grayscale)
         # self.conf is set in superclass
         # set img preprocessor
+        self.preprocessor = None
         if self.conf.reshape is not None:
             reshape_preprocessing = {"resize": self.conf.reshape}
             self.preprocessor = ImagePreprocessor(reshape_preprocessing)
+        else:
+            self.preprocessor = ImagePreprocessor({})
 
         self.img_dir = DATA_PATH / conf.data_dir
 
@@ -141,7 +144,7 @@ class _Dataset(torch.utils.data.Dataset):
                 if not self.conf.load_features.check_exists:
                     new_img_path_list.append(img_path)
                     continue
-                # perform checks TODO: Add offsets etc?
+                # perform checks
                 full_artificial_img_path = Path(self.img_dir / img_path) 
                 img_folder = full_artificial_img_path.parent / full_artificial_img_path.stem
                 keypoint_file = img_folder / "keypoint_scores.npy"
@@ -187,16 +190,12 @@ class _Dataset(torch.utils.data.Dataset):
 
         kps = torch.from_numpy(np.load(kps_file)).to(dtype=torch.float32)
        
-        # TODO: Do we need keypoints/scores?
-        #features["keypoints"] = orig_kp
-        #features["keypoint_scores"] = kps
-
-        heatmap = np.zeros((w, h))
-        coordinates = np.transpose(integer_kp)
+        heatmap = np.zeros((h, w))
+        coordinates = integer_kp
         if self.conf.load_features.point_gt.use_score_heatmap:
-            heatmap[coordinates[0], coordinates[1]] = kps
+            heatmap[coordinates[:, 1], coordinates[:, 0]] = kps
         else:
-            heatmap[coordinates[0], coordinates[1]] = 1.
+            heatmap[coordinates[:, 1], coordinates[:, 0]] = 1.
         heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
        
         if self.conf.reshape is not None:
@@ -204,9 +203,6 @@ class _Dataset(torch.utils.data.Dataset):
        
         features[self.conf.load_features.point_gt.data_keys[0]] = heatmap
         
-        #features = batch_to_device(features, self.conf.device)
-
-
         # Load pickle file for DF max and min values
         with open(image_folder_path / "values.pkl", "rb") as f:
             values = pickle.load(f)
@@ -221,16 +217,6 @@ class _Dataset(torch.utils.data.Dataset):
         af_img = af_img.astype(np.float32) / 255.0
         af_img *= np.pi
 
-        # Get closest point to line for each pixel
-        # offset = self.df_and_angle_to_offset(df_img, af_img)
-        #ofx_img = read_image(image_folder_path / "offset_x.jpg", True)
-        #ofx_img = ofx_img.astype(np.float32) / 255.0
-        #ofy_img = read_image(image_folder_path / "offset_y.jpg", True)
-        #ofy_img = ofy_img.astype(np.float32) / 255.0
-        #offset = np.stack((ofx_img, ofy_img), axis=-1)
-        #offset = offset * values["max_offset"]
-        #offset = offset + values["min_offset"]
-
         df = torch.from_numpy(df_img).to(dtype=torch.float32)
         if self.conf.reshape is not None:
             df = self.preprocessor(df)['image']
@@ -239,13 +225,6 @@ class _Dataset(torch.utils.data.Dataset):
         if self.conf.reshape is not None:
             af = self.preprocessor(af)['image']
         features[self.conf.load_features.line_gt.data_keys[1]] = af
-
-        #offset = torch.from_numpy(offset).to(dtype=torch.float32)
-        #if self.conf.reshape is not None:
-        #    offset = self.preprocessor(offset)['image']
-        #features["offset"] = offset
-
-        #features = batch_to_device(features, self.conf.device)
 
         return features
 

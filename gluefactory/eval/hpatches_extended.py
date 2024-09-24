@@ -42,7 +42,6 @@ from .utils import (
     eval_homography_robust,
     eval_matches_homography,
     eval_poses,
-    get_matches_scores,
 )
 
 # from .ls_evaluation import
@@ -245,7 +244,6 @@ class HPatchesPipeline(EvalPipeline):
                 kp1 = pred["keypoints1"][m1]
                 desc0 = pred["descriptors0"][m0]
                 desc1 = pred["descriptors1"][m1]
-                scores = pred["matching_scores0"][m0]
 
                 rep, loc = compute_rep_loc_H(
                     np.concatenate(
@@ -272,8 +270,8 @@ class HPatchesPipeline(EvalPipeline):
                 )
 
                 match_score = compute_matching_score(
-                    pred["keypoints0"],
-                    pred["keypoints1"],
+                    pred["keypoints0"].numpy(),
+                    pred["keypoints1"].numpy(),
                     m0,
                     m1,
                     data["H_0to1"].numpy(),
