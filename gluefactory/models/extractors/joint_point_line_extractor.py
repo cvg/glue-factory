@@ -88,11 +88,13 @@ class JointPointLineDetectorDescriptor(BaseModel):
     def _init(self, conf):
         logger.debug(f"final config dict(type={type(conf)}): {conf}")
         # set loss fn
-        assert self.conf.training.loss.kp_loss_name in ["weighted_bce", "focal_loss"]
+        assert self.conf.training.loss.kp_loss_name in ["weighted_bce", "focal_loss", "bce"]
         if self.conf.training.loss.kp_loss_name == "weighted_bce":
             self.loss_fn = self.weighted_bce_loss
-        else:
+        elif self.conf.training.loss.kp_loss_name == "focal_loss":
             self.loss_fn = self.focal_loss
+        else:
+            self.loss_fn = nn.BCELoss(reduction='none')
         # c1-c4 -> output dimensions of encoder blocks, dim -> dimension of hidden feature map
         # K=Kernel-Size, M=num sampling pos
         aliked_model_cfg = aliked_cfgs[conf.aliked_model_name]
@@ -208,6 +210,10 @@ class JointPointLineDetectorDescriptor(BaseModel):
     def _forward(self, data):
         """
         Perform a forward pass. Certain things are only executed NOT in training mode.
+        Returned:
+            - Probabilistic Keypoint Heatmap
+            - DeepLSD like Distance field (denormalized)
+            - DeepLSD like Angle Field (between -Pi and Pi as radians)
         """
         if self.conf.timeit:
             total_start = sync_and_time()
@@ -338,7 +344,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             np_df = output["line_distancefield"]  # .cpu().numpy()
             np_af = output["line_anglefield"]  # .cpu().numpy()
             np_kp = output["keypoints"]
-            for df, af, kp, img in zip(np_df, np_af, np_kp, image):
+            for df, af, kp in zip(np_df, np_af, np_kp):
                 line_data = {
                     "points": kp,
                     "distance_map": df,
@@ -392,7 +398,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         """
         format of data: B x H x W
         perform loss calculation based on prediction and data(=groundtruth) for a batch
-        1. On Keypoint-ScoreMap:        weighted BCE Loss
+        1. On Keypoint-ScoreMap:        weighted BCE Loss / BCE Loss / Focal Loss
         2. On Keypoint-Descriptors:     L1 loss
         3. On Line-Angle Field:         use angle loss from deepLSD paper
         4. On Line-Distance Field:      use L1 loss on normalized versions of Distance field (as in deepLSD paper)
