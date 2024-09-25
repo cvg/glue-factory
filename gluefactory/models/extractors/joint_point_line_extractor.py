@@ -341,14 +341,12 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 start_lines = sync_and_time()
             lines = []
             valid_lines = []
-            np_df = output["line_distancefield"]  # .cpu().numpy()
-            np_af = output["line_anglefield"]  # .cpu().numpy()
-            np_kp = output["keypoints"]
-            for df, af, kp in zip(np_df, np_af, np_kp):
+
+            for df, af, kp in zip(line_distance_field, line_angle_field, keypoints):
                 line_data = {
-                    "points": kp,
-                    "distance_map": df,
-                    "angle_map": af
+                    "points": torch.clone(kp),
+                    "distance_map": torch.clone(df),
+                    "angle_map": torch.clone(af)
                 }
                 img_line_indices = self.line_extractor(
                     line_data
@@ -358,12 +356,12 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 if len(img_lines) == 0:
                     print("NO LINES DETECTED")
                     img_lines = (
-                        torch.arange(30).reshape(-1, 2).to(np_df[-1].device)
+                        torch.arange(30).reshape(-1, 2).to(line_distance_field[-1].device)
                     )
-                #print(img_lines.shape)
+
                 lines.append(img_lines)
                 valid_lines.append(
-                    torch.ones(len(lines[-1])).to(np_df[-1].device)
+                    torch.ones(len(lines[-1])).to(line_distance_field[-1].device)
                 )
             output["lines"] = lines
             output["valid_lines"] = valid_lines
