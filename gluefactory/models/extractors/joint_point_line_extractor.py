@@ -531,7 +531,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         """
         results = {}
         for k, v in self.timings.items():
-            results[k] = np.mean(v)
+            results[k] = np.median(v)
             if reset:
                 self.timings[k] = []
         return results
