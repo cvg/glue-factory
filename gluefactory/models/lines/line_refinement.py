@@ -59,16 +59,22 @@ def merge_line_cluster(lines):
     return new_line
 
 
-def merge_line_cluster_torch(lines):
+def merge_line_cluster_torch(lines, return_indices=False):
     """Merge a cluster of line segments.
     First compute the principal direction of the lines, compute the
     endpoints barycenter, project the endpoints onto the middle line,
     keep the two extreme projections.
     Args:
-        lines: a (n, 2, 2) torch tensor containing n lines.
+        lines: a (n, 2, 3) torch tensor containing n lines (with keypoint indices).
     Returns:
         The merged (2, 2) torch tensor line segment.
     """
+    orig_lines = lines
+    lines = orig_lines[:, :, :2]
+
+    if return_indices:
+        indices = orig_lines[:, :, 2].reshape(-1)
+
     # Get the principal direction of the endpoints
     points = lines.reshape(-1, 2)
     weights = torch.norm((lines[:, 0] - lines[:, 1]).float(), dim=1)
@@ -96,10 +102,17 @@ def merge_line_cluster_torch(lines):
     avg_line_seg = torch.stack([cross, cross + u], dim=0)
     proj = project_point_to_line_torch(avg_line_seg[None], points)[0]
 
-    # Take the two extremal projected endpoints
-    new_line = torch.stack(
-        [cross + torch.amin(proj) * u, cross + torch.amax(proj) * u], dim=0
-    )
+    if not return_indices:
+        # Take the two extremal projected endpoints
+        new_line = torch.stack(
+            [cross + torch.amin(proj) * u, cross + torch.amax(proj) * u], dim=0
+        )
+    else:
+        # Return the keypoints indices of the two extremal projected endpoints
+        new_line = torch.stack(
+            [indices[torch.argmin(proj)], indices[torch.argmax(proj)]], dim=0
+        )
+
     return new_line
 
 
@@ -147,7 +160,7 @@ def merge_lines(lines, thresh=5.0, overlap_thresh=0.0):
     return torch.stack(new_lines, dim=0)
 
 
-def merge_lines_torch(lines, thresh=5.0, overlap_thresh=0.0):
+def merge_lines_torch(lines, thresh=5.0, overlap_thresh=0.0, return_indices=False):
     """Given a set of lines, merge close-by lines together.
     Two lines are merged when their orthogonal distance is smaller
     than a threshold and they have a positive overlap.
@@ -161,6 +174,9 @@ def merge_lines_torch(lines, thresh=5.0, overlap_thresh=0.0):
     """
     if len(lines) == 0:
         return lines
+    
+    orig_lines = lines
+    lines = lines[:, :, :2]
 
     # Compute the pairwise orthogonal distances and overlap
     orth_dist, overlaps = get_orth_line_dist_torch(lines, lines, return_overlap=True)
@@ -185,8 +201,14 @@ def merge_lines_torch(lines, thresh=5.0, overlap_thresh=0.0):
     # For each cluster, merge all lines into a single one
     new_lines = []
     for i in range(n_comp):
-        cluster = lines[components == i]
-        new_lines.append(merge_line_cluster_torch(cluster))
+        cluster = orig_lines[components == i]
+        if len(cluster) == 1:
+            if return_indices:
+                new_lines.append(cluster[0, :, 2])
+            else:
+                new_lines.append(cluster[0, :, :2])
+        else:
+            new_lines.append(merge_line_cluster_torch(cluster, return_indices))
 
     return torch.stack(new_lines, dim=0)
 
