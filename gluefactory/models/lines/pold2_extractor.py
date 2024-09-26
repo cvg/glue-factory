@@ -18,11 +18,13 @@ import argparse
 from functools import cmp_to_key
 import matplotlib.pyplot as plt
 from omegaconf import OmegaConf
+from tqdm import tqdm
 
 from gluefactory.settings import root
 from gluefactory.models.lines.pold2_mlp import POLD2_MLP
 from gluefactory.models.base_model import BaseModel
 from gluefactory.settings import DATA_PATH
+from gluefactory.models.lines.line_refinement import merge_lines_torch
 
 logger = logging.getLogger(__name__)
 
@@ -276,13 +278,6 @@ def test_extractor(extractor, folder_path, device, show=False):
     # Samples lines from indices
     lines = points[indices_image]
 
-    # Append indices to lines - (N,2,3)
-    lines = np.concatenate([lines.reshape(-1,2), indices_image.reshape(-1,1)], axis=-1).reshape(-1, 2, 3)
-
-    # Merge lines
-    indices_nms = merge_lines_torch(torch.tensor(lines), return_indices=True).int().cpu().numpy()
-    n_lines = points[indices_nms]
-
     # Show lines and points
     o_img = show_lines(image, lines[:, :, :2])
     o_img = show_points(o_img, points)
@@ -300,6 +295,11 @@ def test_extractor(extractor, folder_path, device, show=False):
     plt.savefig(f'tmp/{folder_path}_orig.jpg', dpi=300,bbox_inches='tight', pad_inches=0)
     plt.close()
 
+    # Merge lines
+    # Append indices to lines - (N,2,3)
+    lines = np.concatenate([lines.reshape(-1,2), indices_image.reshape(-1,1)], axis=-1).reshape(-1, 2, 3)
+    indices_nms = merge_lines_torch(torch.tensor(lines), return_indices=True).int().cpu().numpy()
+    n_lines = points[indices_nms]
     n_img = show_lines(image, n_lines)
     n_img = show_points(n_img, points)
 
@@ -338,3 +338,4 @@ if __name__ == '__main__':
     os.makedirs("tmp", exist_ok=True)
 
     for val in tqdm(glob.glob(str(DATA_PATH / "revisitop1m_POLD2/**/base_image.jpg"), recursive=True)):
+        test_extractor(extractor, os.path.split(val)[0], extractor_conf.device, args.show)
