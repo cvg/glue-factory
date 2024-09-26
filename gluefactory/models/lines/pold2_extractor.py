@@ -269,39 +269,58 @@ def test_extractor(extractor, folder_path, device, show=False):
     # End counter
     end_time = time.perf_counter()
 
-    measure = False
-    if measure:
-        print(f"{1000*(end_time - start_time)}")
-    else:
-        plt.figure()
+    image = image.cpu().detach().numpy()
+    points = points.cpu().numpy()
+    indices_image = indices_image.cpu().numpy()
 
-        image = image.cpu().detach().numpy()
-        points = points.cpu().numpy()
-        indices_image = indices_image.cpu().numpy()
+    # Samples lines from indices
+    lines = points[indices_image]
 
-        # Samples lines from indices
-        lines = points[indices_image]
+    # Append indices to lines - (N,2,3)
+    lines = np.concatenate([lines.reshape(-1,2), indices_image.reshape(-1,1)], axis=-1).reshape(-1, 2, 3)
 
-        # Apply non-max suppresion on lines - GPU implementation from deeplsd
-        # https://github.com/cvg/DeepLSD/blob/52212738362711254f040c673276905c73b86ca5/deeplsd/geometry/line_utils.py#L431
-        # TODO: Make it parametrizable
-        # lines = merge_lines_torch(torch.tensor(lines)).int().cpu().numpy()
+    # Merge lines
+    indices_nms = merge_lines_torch(torch.tensor(lines), return_indices=True).int().cpu().numpy()
+    n_lines = points[indices_nms]
 
-        # Show lines and points
-        image = show_lines(image, lines)
-        image = show_points(image, points)
+    # Show lines and points
+    o_img = show_lines(image, lines[:, :, :2])
+    o_img = show_points(o_img, points)
 
-        folder_path = folder_path.split('/')[-1]
+    folder_path = folder_path.split('/')[-1]
 
-        print(f"Elapsed time for {folder_path} is : {end_time - start_time}")
+    # logger.info(f"Elapsed time for {folder_path} is : {end_time - start_time}")
 
-        plt.imshow(image)
-        if show:
-            plt.show()
+    plt.imshow(o_img)
+    if show:
+        plt.show()
 
-        plt.axis('off')
-        plt.savefig(f'tmp/{folder_path}.jpg', dpi=300,bbox_inches='tight', pad_inches=0)
-        plt.close()
+    plt.title("Before NMS")
+    plt.axis('off')
+    plt.savefig(f'tmp/{folder_path}_orig.jpg', dpi=300,bbox_inches='tight', pad_inches=0)
+    plt.close()
+
+    n_img = show_lines(image, n_lines)
+    n_img = show_points(n_img, points)
+
+    plt.imshow(n_img)
+    plt.title("After NMS")
+    plt.axis('off')
+    plt.savefig(f'tmp/{folder_path}_nms.jpg', dpi=300,bbox_inches='tight', pad_inches=0)
+    plt.close()
+
+    # Merge lines without indices
+    onms_lines = merge_lines_torch(torch.tensor(lines[:,:,:2]), return_indices=False).int().cpu().numpy()
+    print(f"Number of lines after orig NMS: {len(onms_lines)}")
+
+    onms_img = show_lines(image, onms_lines)
+    onms_img = show_points(onms_img, points)
+
+    plt.imshow(onms_img)
+    plt.title("After orig NMS")
+    plt.axis('off')
+    plt.savefig(f'tmp/{folder_path}_orig_nms.jpg', dpi=300,bbox_inches='tight', pad_inches=0)
+    plt.close()
 
 if __name__ == '__main__':
     from ... import logger
@@ -318,6 +337,4 @@ if __name__ == '__main__':
         os.system("rm -r tmp")
     os.makedirs("tmp", exist_ok=True)
 
-    for val in glob.glob(str(DATA_PATH / "revisitop1m_POLD2/**/base_image.jpg"), recursive=True):
-        logger.info(f"Processing {val}")
-        test_extractor(extractor, os.path.split(val)[0], extractor_conf.device, args.show)
+    for val in tqdm(glob.glob(str(DATA_PATH / "revisitop1m_POLD2/**/base_image.jpg"), recursive=True)):
