@@ -165,7 +165,9 @@ def merge_lines_torch(lines, thresh=5.0, overlap_thresh=0.0, return_indices=Fals
     Two lines are merged when their orthogonal distance is smaller
     than a threshold and they have a positive overlap.
     Args:
-        lines: a (N, 2, 2) torch tensor.
+        lines: a (N, 2, 2) torch tensor if return_indices is False, otherwise
+                a (N, 2, 3) torch tensor. The first two channels are the line endpoints,
+                the third channel is the index of the keypoints.
         thresh: maximum orthogonal distance between two lines to be merged.
         overlap_thresh: maximum distance between 2 endpoints to merge
                         two aligned lines.
