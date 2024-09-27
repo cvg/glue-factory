@@ -65,7 +65,9 @@ def merge_line_cluster_torch(lines, return_indices=False):
     endpoints barycenter, project the endpoints onto the middle line,
     keep the two extreme projections.
     Args:
-        lines: a (n, 2, 3) torch tensor containing n lines (with keypoint indices).
+        lines: a (N, 2, 2) torch tensor if return_indices is False, otherwise
+                a (N, 2, 3) torch tensor where the first two channels are the line endpoints,
+                the third channel is the index of the keypoints.
     Returns:
         The merged (2, 2) torch tensor line segment.
     """
