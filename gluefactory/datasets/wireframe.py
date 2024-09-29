@@ -24,10 +24,13 @@ logger = logging.getLogger(__name__)
 
 def get_lines_gt( lines: np.ndarray, size, width=3):
 
-    img = Image.new(mode="1", size=(size[0], size[1]))
+    img = Image.new(mode="RGB", size=(size[0], size[1]))
     draw = ImageDraw.Draw(img)
     for line in lines.astype(np.int32):
-        draw.line(line.reshape(-1).tolist(), fill=128, width=width)
+        draw.line(line.reshape(-1).tolist(), fill=(256,256,256), width=width)
+
+    # img.save("test.png")
+    # exit()
 
     return np.array(img)
 
@@ -63,8 +66,9 @@ class Wireframe(BaseDataset, torch.utils.data.Dataset):
 
             # URL: https://github.com/huangkuns/wireframe
 
-            
-        self.items = sorted([x.name for x in self.root.iterdir()])
+
+        test_size = -1 # TODO: ADD TO CONFIG
+        self.items = sorted([x.name for x in self.root.iterdir()])[:test_size]
 
 
     def get_dataset(self, split):
@@ -78,21 +82,28 @@ class Wireframe(BaseDataset, torch.utils.data.Dataset):
     def __getitem__(self, idx):
         filename = self.items[idx]
 
+        file = {}
         with open(self.root / filename, 'rb') as f:
-            file = pickle.load(f)
+            fileread = pickle.load(f)
+            file['img'] = fileread['img']
+            file['lines'] = fileread['lines']
+            file['points'] = fileread['points']
+            file['imgname'] = fileread['imgname']
+            
+            del fileread
 
-        image = self.preprocessor(torch.from_numpy(file['img'].astype(np.float32)))
+        image = self.preprocessor(torch.from_numpy(file['img'].astype(np.float32)).permute(2,0,1))
         lines = get_lines(file["lines"], file["points"])
-        lines_gt = self.preprocessor(torch.from_numpy(get_lines_gt(lines, file['img'].shape)))
+        # lines_gt = self.preprocessor(torch.from_numpy(get_lines_gt(lines, file['img'].shape).astype(np.float32)))
 
         return {
             "view0": image,
             "view1": image, ## redundancy
             "name": file["imgname"],
-            "points": file["points"],
-            "lines": file["lines"],
-            "shape": file['img'].shape,
-            "lines_gt": lines_gt,
+            "points": torch.as_tensor(file["points"]),
+            "lines": torch.as_tensor(file["lines"]),
+            "shape": torch.as_tensor(file['img'].shape),
+            "line_ends": lines,
         }
 
     def __len__(self):
