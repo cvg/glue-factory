@@ -21,6 +21,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "Unknown option: $1"
+      echo "Usage: $0 -c|--conf <config_file> [-wl|--withlines]"
       exit 1
       ;;
   esac
@@ -29,6 +30,7 @@ done
 
 if [ $conf -eq 0 ]; then
     echo "Path to config is necessary!"
+    echo "Usage: $0 -c|--conf <config_file> [-wl|--withlines]"
     exit 1
 fi
 
@@ -38,7 +40,7 @@ run_benchmark() {
   out_file_name=$1_$2_$(date '+%Y_%m_%d').txt
 
   echo "Run benchmark $file_name, store output to: "
-  python -m gluefactory.eval."$file_name" --conf="$config_name" --overwrite > out_file_name
+  python -m gluefactory.eval."$file_name" --conf="$config_name" --overwrite > "$out_file_name"
 }
 
 
@@ -66,23 +68,23 @@ echo "Run common benchmarks..."
 for i in "${LIST_OF_COMMON_BM_FILES[@]}"
 do
    echo "$i"
-   run_benchmark "$i" conf
+   run_benchmark "$i" "$conf"
    # or do whatever with individual element of the array
 done
 
-if [ $use_extended_bw -eq 1 ]; then
+if [ $use_extended_bm -eq 1 ]; then
   echo "Run extended benchmarks... I hope the model returns lines, otherwise I will fail xD"
   for i in "${LIST_OF_EXTENDED_BM_FILES[@]}"
   do
      echo "$i"
-     run_benchmark "$i" conf
+     run_benchmark "$i" "$conf"
   done
  else
   echo "Run extended benchmarks... I hope the model returns lines, otherwise I will fail xD"
   for i in "${LIST_OF_NORMAL_BM_FILES[@]}"
   do
      echo "$i"
-     run_benchmark "$i" conf
+     run_benchmark "$i" "$conf"
   done
 fi
 
