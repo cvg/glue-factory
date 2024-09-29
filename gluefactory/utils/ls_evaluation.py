@@ -24,6 +24,23 @@ def get_structural_line_dist(warped_ref_line_seg, target_line_seg):
     dist = dist.diagonal()
     return dist.numpy()
 
+def get_structural_dist(warped_ref_line_seg, target_line_seg):
+    """Compute the distances between two sets of lines
+    using the structural distance."""
+    dist = (
+        ((warped_ref_line_seg[:, None, :, None] - target_line_seg[:, None]) ** 2).sum(
+            -1
+        )
+    ) ** 0.5
+    dist = (
+        np.minimum(
+            dist[:, :, 0, 0] + dist[:, :, 1, 1], dist[:, :, 0, 1] + dist[:, :, 1, 0]
+        )
+        / 2
+    )
+    
+    return dist.numpy()
+
 
 def angular_distance(segs1, segs2):
     """Compute the angular distance (via the cosine similarity)
@@ -163,6 +180,16 @@ def get_orth_line_dist(
     of lines and the average overlapping ratio of both lines.
     Enforce a high line distance for small overlaps.
     This is compatible for nD objects (e.g. both lines in 2D or 3D)."""
+    return get_orth_dist(line_seg1, line_seg2, min_overlap, return_overlap, mode).diagonal()
+
+
+def get_orth_dist(
+    line_seg1, line_seg2, min_overlap=0.5, return_overlap=False, mode="min"
+):
+    """Compute the symmetrical orthogonal line distance between two sets
+    of lines and the average overlapping ratio of both lines.
+    Enforce a high line distance for small overlaps.
+    This is compatible for nD objects (e.g. both lines in 2D or 3D)."""
     n_lines1, n_lines2 = len(line_seg1), len(line_seg2)
 
     # Compute the average orthogonal line distance
@@ -193,7 +220,7 @@ def get_orth_line_dist(
     else:
         low_overlaps = min_overlaps < min_overlap
     line_dists[low_overlaps] = np.amax(line_dists)
-    return line_dists.diagonal()
+    return line_dists
 
 
 def match_segments_to_distance(
