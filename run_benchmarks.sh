@@ -74,7 +74,7 @@ run_benchmark() {
   out_file_name=$1_$(date '+%Y_%m_%d').txt
 
   echo ">>> Run benchmark $file_name, store output to: $out_file_name"
-  #python -m gluefactory.eval."$file_name" --conf="$config_name" --overwrite > "$out_folder_path/$out_file_name"
+  python -m gluefactory.eval."$file_name" --conf="$config_name" --overwrite > "$out_folder_path/$out_file_name"
 }
 
 prompt_continue() {
