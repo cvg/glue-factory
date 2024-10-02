@@ -49,6 +49,7 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
             },
             "line_gt": {
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
+                "enforce_threshold": 5.0 # Enforce values in distance field to be no greater than this value
             },
         },
         "img_list": "gluefactory/datasets/oxford_paris_images.txt",
@@ -216,6 +217,9 @@ class _Dataset(torch.utils.data.Dataset):
         df_img = read_image(image_folder_path / "df.jpg", True)
         df_img = df_img.astype(np.float32) / 255.0
         df_img *= values["max_df"]
+        thres = self.conf.load_features.line_gt.enforce_threshold
+        if thres is not None:
+            df_img = np.where(df_img > thres, thres, df_img)
 
         # Load AF
         af_img = read_image(image_folder_path / "angle.jpg", True)
