@@ -1,4 +1,5 @@
 import logging
+import os
 import pickle
 import shutil
 import tarfile
@@ -7,7 +8,6 @@ from pathlib import Path
 import numpy as np
 import torch
 from tqdm import tqdm
-import os
 
 from gluefactory.datasets import BaseDataset
 from gluefactory.settings import DATA_PATH, root
@@ -49,7 +49,7 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
             },
             "line_gt": {
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
-                "enforce_threshold": 5.0 # Enforce values in distance field to be no greater than this value
+                "enforce_threshold": 5.0,  # Enforce values in distance field to be no greater than this value
             },
         },
         "img_list": "gluefactory/datasets/oxford_paris_images.txt",
@@ -57,7 +57,7 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         "rand_shuffle_seed": None,  # seed to randomly shuffle before split in train and val
         "val_size": 10,  # size of validation set given
         "train_size": 100000,
-        "debug": False  # if True also gives back original keypoint gt locations
+        "debug": False,  # if True also gives back original keypoint gt locations
     }
 
     def _init(self, conf):
@@ -71,10 +71,14 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         if self.conf.rand_shuffle_seed is not None:
             np.random.RandomState(conf.shuffle_seed).shuffle(images)
         train_images = images[: conf.train_size]
-        val_images = images[conf.train_size: conf.train_size + conf.val_size]
-        self.images = {"train": train_images, "val": val_images, "test": images, "all": images}
+        val_images = images[conf.train_size : conf.train_size + conf.val_size]
+        self.images = {
+            "train": train_images,
+            "val": val_images,
+            "test": images,
+            "all": images,
+        }
         print(f"DATASET OVERALL(NO-SPLIT) IMAGES: {len(images)}")
-
 
     def download_oxford_paris_mini(self):
         logger.info("Downloading the OxfordParis Mini dataset...")
@@ -95,7 +99,9 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
                 tar.extractall(path=data_dir)
             tmp_tar_path.unlink()
             # Delete unwanted files
-            existing_files = set([str(i.relative_to(data_dir)) for i in data_dir.glob("**/*.jpg")])
+            existing_files = set(
+                [str(i.relative_to(data_dir)) for i in data_dir.glob("**/*.jpg")]
+            )
             to_del = existing_files - set(self.img_list)
             for d in to_del:
                 Path(data_dir / d).unlink()
@@ -149,7 +155,9 @@ class _Dataset(torch.utils.data.Dataset):
                     continue
                 # perform checks
                 full_artificial_img_path = Path(self.img_dir / img_path)
-                img_folder = full_artificial_img_path.parent / full_artificial_img_path.stem
+                img_folder = (
+                    full_artificial_img_path.parent / full_artificial_img_path.stem
+                )
                 keypoint_file = img_folder / "keypoint_scores.npy"
                 af_file = img_folder / "angle.jpg"
                 df_file = img_folder / "df.jpg"
@@ -164,7 +172,7 @@ class _Dataset(torch.utils.data.Dataset):
         """
         Read image as tensor and puts it on device
         """
-        img_path = img_folder_path / 'base_image.jpg'
+        img_path = img_folder_path / "base_image.jpg"
         img = load_image(img_path, grayscale=self.grayscale)
         if enforce_batch_dim:
             if img.ndim < 4:
@@ -198,11 +206,11 @@ class _Dataset(torch.utils.data.Dataset):
         if self.conf.load_features.point_gt.use_score_heatmap:
             heatmap[coordinates[:, 1], coordinates[:, 0]] = kps
         else:
-            heatmap[coordinates[:, 1], coordinates[:, 0]] = 1.
+            heatmap[coordinates[:, 1], coordinates[:, 0]] = 1.0
         heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
 
         if self.conf.reshape is not None:
-            heatmap = self.preprocessor(heatmap)['image']
+            heatmap = self.preprocessor(heatmap)["image"]
 
         if self.conf.debug:
             non_zero_coord = torch.nonzero(heatmap)
@@ -229,11 +237,11 @@ class _Dataset(torch.utils.data.Dataset):
 
         df = torch.from_numpy(df_img).to(dtype=torch.float32)
         if self.conf.reshape is not None:
-            df = self.preprocessor(df)['image']
+            df = self.preprocessor(df)["image"]
         features[self.conf.load_features.line_gt.data_keys[0]] = df
         af = torch.from_numpy(af_img).to(dtype=torch.float32)
         if self.conf.reshape is not None:
-            af = self.preprocessor(af)['image']
+            af = self.preprocessor(af)["image"]
         features[self.conf.load_features.line_gt.data_keys[1]] = af
 
         return features
@@ -246,7 +254,7 @@ class _Dataset(torch.utils.data.Dataset):
         folder_path = full_artificial_img_path.parent / full_artificial_img_path.stem
         img = self._read_image(folder_path)
         data = {
-            "name": str(folder_path / 'base_image.jpg'),
+            "name": str(folder_path / "base_image.jpg"),
             **self.preprocessor(img),
         }  # keys: 'name', 'scales', 'image_size', 'transform', 'original_image_size', 'image'
         if self.conf.load_features.do:
@@ -254,7 +262,6 @@ class _Dataset(torch.utils.data.Dataset):
             data = {**data, **gt}
 
         return data
-
 
     def __len__(self):
         return len(self.image_sub_paths)

@@ -104,7 +104,6 @@ def export_ha(output_folder_path, num_H, image_name_list):
     export_ha_seq(data_loader, output_folder_path, num_H, device, image_name_list)
 
 
-
 def export_ha_seq(data_loader, output_folder_path, num_H, device, image_name_list: str):
     net = DeepLSD({}).to(device)
     with open(image_name_list, "r") as f:

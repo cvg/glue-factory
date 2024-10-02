@@ -4,14 +4,14 @@ Simply load images from a folder or nested folders (does not have any split).
 
 import argparse
 import logging
+import pickle
 import tarfile
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import pickle
-from PIL import Image, ImageDraw
 from omegaconf import OmegaConf
+from PIL import Image, ImageDraw
 
 from ..settings import DATA_PATH
 from ..utils.image import ImagePreprocessor, load_image
@@ -22,17 +22,18 @@ from .base_dataset import BaseDataset
 logger = logging.getLogger(__name__)
 
 
-def get_lines_gt( lines: np.ndarray, size, width=3):
+def get_lines_gt(lines: np.ndarray, size, width=3):
 
     img = Image.new(mode="RGB", size=(size[0], size[1]))
     draw = ImageDraw.Draw(img)
     for line in lines.astype(np.int32):
-        draw.line(line.reshape(-1).tolist(), fill=(256,256,256), width=width)
+        draw.line(line.reshape(-1).tolist(), fill=(256, 256, 256), width=width)
 
     # img.save("test.png")
     # exit()
 
     return np.array(img)
+
 
 def get_lines(lines: np.ndarray, points: np.ndarray):
 
@@ -41,8 +42,6 @@ def get_lines(lines: np.ndarray, points: np.ndarray):
         lines_xy.append([points[line[0]], points[line[1]]])
 
     return np.array(lines_xy)
-
-    
 
 
 class Wireframe(BaseDataset, torch.utils.data.Dataset):
@@ -62,14 +61,14 @@ class Wireframe(BaseDataset, torch.utils.data.Dataset):
         if not self.root.exists():
             logger.info("Wireframe Data Missing")
 
-            raise FileNotFoundError("Please Download The pointline.zip and extract into the data folder")
+            raise FileNotFoundError(
+                "Please Download The pointline.zip and extract into the data folder"
+            )
 
             # URL: https://github.com/huangkuns/wireframe
 
-
-        test_size = -1 # TODO: ADD TO CONFIG
+        test_size = -1  # TODO: ADD TO CONFIG
         self.items = sorted([x.name for x in self.root.iterdir()])[:test_size]
-
 
     def get_dataset(self, split):
         assert split in ["val", "test"]
@@ -83,31 +82,34 @@ class Wireframe(BaseDataset, torch.utils.data.Dataset):
         filename = self.items[idx]
 
         file = {}
-        with open(self.root / filename, 'rb') as f:
+        with open(self.root / filename, "rb") as f:
             fileread = pickle.load(f)
-            file['img'] = fileread['img']
-            file['lines'] = fileread['lines']
-            file['points'] = fileread['points']
-            file['imgname'] = fileread['imgname']
-            
+            file["img"] = fileread["img"]
+            file["lines"] = fileread["lines"]
+            file["points"] = fileread["points"]
+            file["imgname"] = fileread["imgname"]
+
             del fileread
 
-        image = self.preprocessor(torch.from_numpy(file['img'].astype(np.float32)).permute(2,0,1))
+        image = self.preprocessor(
+            torch.from_numpy(file["img"].astype(np.float32)).permute(2, 0, 1)
+        )
         lines = get_lines(file["lines"], file["points"])
         # lines_gt = self.preprocessor(torch.from_numpy(get_lines_gt(lines, file['img'].shape).astype(np.float32)))
 
         return {
             "view0": image,
-            "view1": image, ## redundancy
+            "view1": image,  ## redundancy
             "name": file["imgname"],
             "points": torch.as_tensor(file["points"]),
             "lines": torch.as_tensor(file["lines"]),
-            "shape": torch.as_tensor(file['img'].shape),
+            "shape": torch.as_tensor(file["img"].shape),
             "line_ends": lines,
         }
 
     def __len__(self):
         return len(self.items)
+
 
 def visualize(args):
     conf = {
@@ -123,9 +125,7 @@ def visualize(args):
     with fork_rng(seed=dataset.conf.seed):
         images = []
         for _, data in zip(range(args.num_items), loader):
-            images.append(
-                data["img"][0]
-            )
+            images.append(data["img"][0])
     plot_image_grid(images, dpi=args.dpi)
     plt.tight_layout()
     plt.show()
@@ -143,7 +143,9 @@ def dataset_test(args):
     for idx in range(args.num_items):
         data = dataset[idx]
         print(data["view0"].keys())
-        print(f'[{idx}] {data["name"]}: {data["view0"]["image"].shape} {data["view0"].keys()}')
+        print(
+            f'[{idx}] {data["name"]}: {data["view0"]["image"].shape} {data["view0"].keys()}'
+        )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import logging
+import os
 import shutil
 import tarfile
 from pathlib import Path
@@ -7,7 +8,6 @@ import h5py
 import numpy as np
 import torch
 from tqdm import tqdm
-import os
 
 from gluefactory.datasets import BaseDataset
 from gluefactory.settings import DATA_PATH, root
@@ -69,9 +69,13 @@ class OxfordParisMini(BaseDataset):
         if self.conf.rand_shuffle_seed is not None:
             np.random.RandomState(conf.shuffle_seed).shuffle(images)
         train_images = images[: conf.train_size]
-        val_images = images[conf.train_size: conf.train_size + conf.val_size]
-        self.images = {"train": train_images, "val": val_images, "test": images, "all": images}
-
+        val_images = images[conf.train_size : conf.train_size + conf.val_size]
+        self.images = {
+            "train": train_images,
+            "val": val_images,
+            "test": images,
+            "all": images,
+        }
 
     def download_oxford_paris_mini(self):
         logger.info("Downloading the OxfordParis Mini dataset...")
@@ -92,14 +96,16 @@ class OxfordParisMini(BaseDataset):
                 tar.extractall(path=data_dir)
             tmp_tar_path.unlink()
             # Delete unwanted files
-            existing_files = set([str(i.relative_to(data_dir)) for i in data_dir.glob("**/*.jpg")])
+            existing_files = set(
+                [str(i.relative_to(data_dir)) for i in data_dir.glob("**/*.jpg")]
+            )
             to_del = existing_files - set(self.img_list)
             for d in to_del:
                 Path(data_dir / d).unlink()
 
         shutil.rmtree(tmp_dir)
 
-        #remove empty directories
+        # remove empty directories
         for file in os.listdir(data_dir):
             cur_file: Path = data_dir / file
             if cur_file.is_file():

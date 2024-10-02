@@ -8,12 +8,32 @@ model:
     nms_radius: 3
     training:
       do: False
-    #checkpoint: /local/home/rkreft/shared_team_folder/outputs/training/rk_pold2gt_oxparis_focal_hard_gt/checkpoint_best.tar
+    checkpoint: /local/home/rkreft/shared_team_folder/outputs/training/rk_oxparis_focal_hard_gt/checkpoint_best.tar
     #checkpoint: /local/home/rkreft/shared_team_folder/outputs/training/rk_pold2gt_oxparis_focal/checkpoint_best.tar 
-    checkpoint: /local/home/rkreft/shared_team_folder/outputs/training/rk_pold2gt_oxparis_base/checkpoint_best.tar  # if given load model weights from this checkpoint
+    #checkpoint: /local/home/rkreft/shared_team_folder/outputs/training/rk_pold2gt_oxparis_base_hard_gt/checkpoint_best.tar  # if given load model weights from this checkpoint
     timeit: False  # override timeit: False from BaseModel
     line_detection: # default conf is the one from POLD 2 Line Detector
       do: True
+      conf:
+        num_sample: 8
+        num_sample_strong: 150
+        max_point_size: 1500
+        distance_map:
+          threshold: 2
+          avg_filter_size: 13
+          avg_filter_padding: 6
+          avg_filter_stride: 1
+          max_value: 2
+          inlier_ratio: 0.2
+          mean_value_ratio: 2
+        mlp_conf:
+          name: gluefactory.models.lines.pold2_mlp
+          has_angle_field: True
+          has_distance_field: True
+          num_line_samples: 150
+          mlp_hidden_dims: [256, 128, 128, 64, 32]
+          pred_threshold: 0.3
+          weights: /local/home/Point-Line/outputs/training/pold2_mlp_gen+train_run1/checkpoint_best.tar
   matcher:
     name: matchers.nn_point_line
 benchmarks:

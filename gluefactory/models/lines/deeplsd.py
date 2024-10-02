@@ -102,7 +102,7 @@ class DeepLSD(BaseModel):
             )
 
         return {"lines": lines, "line_scores": line_scores, "valid_lines": valid_lines}
-    
+
     def forward_ha(self, data):
         image = data["image"]
         if image.shape[1] == 3:

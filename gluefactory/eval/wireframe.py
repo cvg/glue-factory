@@ -31,6 +31,7 @@ from ..datasets import get_dataset
 from ..datasets.wireframe import get_lines, get_lines_gt
 from ..models.cache_loader import CacheLoader
 from ..settings import EVAL_PATH
+from ..utils.ls_evaluation import get_area_line_dist, get_orth_dist, get_structural_dist
 
 # from ..utils.export_predictions import export_predictions
 from ..utils.tensor import batch_to_device, map_tensor
@@ -45,15 +46,6 @@ from .utils import (
     eval_poses,
     get_matches_scores,
 )
-
-from gluefactory.visualization.viz2d import (
-    plot_images,
-    plot_keypoints,
-    plot_lines,
-    save_plot,
-)
-
-from ..utils.ls_evaluation import get_structural_dist, get_area_line_dist, get_orth_dist
 
 # from .ls_evaluation import
 
@@ -117,7 +109,7 @@ def export_predictions(
                 if pred[k].shape[1] >= 1:
                     pred[k] = pred[k] * scales[None]
                 else:
-                    pred[k] = torch.arange(16).reshape(1, 4,2,2)
+                    pred[k] = torch.arange(16).reshape(1, 4, 2, 2)
 
         pred = {k: v[0].cpu().numpy() for k, v in pred.items()}
 
@@ -159,7 +151,7 @@ class WireframePipeline(EvalPipeline):
             "estimator": "poselib",
             "ransac_th": -1.0,  # -1 runs a bunch of thresholds and selects the best
             "distance": "structural",
-            "distance_thresh": [1, 3, 5, 7, 100, 150, 200]
+            "distance_thresh": [1, 3, 5, 7, 100, 150, 200],
         },
     }
 
@@ -212,7 +204,6 @@ class WireframePipeline(EvalPipeline):
             scales = data[f"view0"]["scales"]
             lines_gt = lines_gt * scales[None]
 
-
             # Make Plot Directory
             if PLOT_IMG:
                 os.makedirs("./wireframe_plots", exist_ok=True)
@@ -226,15 +217,24 @@ class WireframePipeline(EvalPipeline):
             elif dist_name == "area":
                 line_dist = get_area_line_dist(lines_gt, lines_pred)
             else:
-                raise NotImplementedError(f"{dist_name} is not an implemented Distance Measure")
-            
+                raise NotImplementedError(
+                    f"{dist_name} is not an implemented Distance Measure"
+                )
 
             if PLOT_IMG:
-                plot_images([data['view0']['image'][0].permute(1,2,0)/data['view0']['image'].max(), data['view1']['image'][0].permute(1,2,0)/data['view1']['image'].max()], ['Pred', 'GT'])
-                plot_keypoints(kpts=[pred['keypoints0'], pred['keypoints1']])
-                if pred['lines0'].shape[1] > 0:
-                    plot_lines(lines= [pred['lines0'], lines_gt])
-                save_plot(os.path.join('./wireframe_plots/', f'{i}.jpg'))
+                plot_images(
+                    [
+                        data["view0"]["image"][0].permute(1, 2, 0)
+                        / data["view0"]["image"].max(),
+                        data["view1"]["image"][0].permute(1, 2, 0)
+                        / data["view1"]["image"].max(),
+                    ],
+                    ["Pred", "GT"],
+                )
+                plot_keypoints(kpts=[pred["keypoints0"], pred["keypoints1"]])
+                if pred["lines0"].shape[1] > 0:
+                    plot_lines(lines=[pred["lines0"], lines_gt])
+                save_plot(os.path.join("./wireframe_plots/", f"{i}.jpg"))
 
             # Get Closest Line Distances
             best_match = line_dist.min(axis=1)
@@ -244,8 +244,7 @@ class WireframePipeline(EvalPipeline):
                 TP = (best_match < thresh).sum().item()
                 results[f"TP_@{thresh}"].append(TP)
                 results[f"FN_@{thresh}"].append(len(best_match) - TP)
-                results[f"Recall_@{thresh}"].append(TP/len(best_match))
-
+                results[f"Recall_@{thresh}"].append(TP / len(best_match))
 
         # summarize results as a dict[str, float]
         # you can also add your custom evaluations here
@@ -256,7 +255,6 @@ class WireframePipeline(EvalPipeline):
                 continue
             summaries[f"m{k}"] = round(np.median(arr), 3)
             summaries[f"M{k}"] = round(np.mean(arr), 3)
-
 
         # figures = {
         #     "homography_recall": plot_cumulative(
