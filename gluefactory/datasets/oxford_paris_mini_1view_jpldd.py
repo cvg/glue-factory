@@ -39,7 +39,7 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         "seed": 0,
         "num_workers": 0,  # number of workers used by the Dataloader
         "prefetch_factor": None,
-        "reshape": None, # ex [800, 800]
+        "reshape": None,  # ex [800, 800]
         "load_features": {
             "do": False,
             "check_exists": True,
@@ -49,13 +49,15 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
             },
             "line_gt": {
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
+                "enforce_threshold": 5.0 # Enforce values in distance field to be no greater than this value
             },
         },
-        "img_list": "gluefactory/datasets/oxford_paris_images.txt",  # img list path from repo root -> use checked in file list, it is similar to pold2 file 
+        "img_list": "gluefactory/datasets/oxford_paris_images.txt",
+        # img list path from repo root -> use checked in file list, it is similar to pold2 file
         "rand_shuffle_seed": None,  # seed to randomly shuffle before split in train and val
         "val_size": 10,  # size of validation set given
         "train_size": 100000,
-        "debug": False  # if True also gives back original keypoint gt locations 
+        "debug": False  # if True also gives back original keypoint gt locations
     }
 
     def _init(self, conf):
@@ -85,7 +87,7 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         num_parts = 100
         # go through dataset parts, one by one and only keep wanted images in img_list
         for i in tqdm(range(num_parts), position=1):
-            tar_name = f"revisitop1m.{i+1}.tar.gz"
+            tar_name = f"revisitop1m.{i + 1}.tar.gz"
             tar_url = url_base + "jpg/" + tar_name
             tmp_tar_path = tmp_dir / tar_name
             torch.hub.download_url_to_file(tar_url, tmp_tar_path)
@@ -100,7 +102,7 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
 
         shutil.rmtree(tmp_dir)
 
-        #remove empty directories
+        # remove empty directories
         for file in os.listdir(data_dir):
             cur_file: Path = data_dir / file
             if cur_file.is_file():
@@ -131,7 +133,7 @@ class _Dataset(torch.utils.data.Dataset):
         self.img_dir = DATA_PATH / conf.data_dir
 
         # Extract image paths
-        self.image_sub_paths = image_sub_paths #[Path(i) for i in image_sub_paths]
+        self.image_sub_paths = image_sub_paths  # [Path(i) for i in image_sub_paths]
 
         # making them relative for system independent names in export files (path used as name in export)
         if len(self.image_sub_paths) == 0:
@@ -146,7 +148,7 @@ class _Dataset(torch.utils.data.Dataset):
                     new_img_path_list.append(img_path)
                     continue
                 # perform checks
-                full_artificial_img_path = Path(self.img_dir / img_path) 
+                full_artificial_img_path = Path(self.img_dir / img_path)
                 img_folder = full_artificial_img_path.parent / full_artificial_img_path.stem
                 keypoint_file = img_folder / "keypoint_scores.npy"
                 af_file = img_folder / "angle.jpg"
@@ -190,7 +192,7 @@ class _Dataset(torch.utils.data.Dataset):
         integer_kp = torch.round(orig_kp).to(dtype=torch.int)
 
         kps = torch.from_numpy(np.load(kps_file)).to(dtype=torch.float32)
-       
+
         heatmap = np.zeros((h, w))
         coordinates = integer_kp
         if self.conf.load_features.point_gt.use_score_heatmap:
@@ -198,16 +200,16 @@ class _Dataset(torch.utils.data.Dataset):
         else:
             heatmap[coordinates[:, 1], coordinates[:, 0]] = 1.
         heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
-       
+
         if self.conf.reshape is not None:
             heatmap = self.preprocessor(heatmap)['image']
-            
+
         if self.conf.debug:
             non_zero_coord = torch.nonzero(heatmap)
-            features["orig_points"] = non_zero_coord[:][:, torch.tensor([1,0])]
-       
+            features["orig_points"] = non_zero_coord[:][:, torch.tensor([1, 0])]
+
         features[self.conf.load_features.point_gt.data_keys[0]] = heatmap
-        
+
         # Load pickle file for DF max and min values
         with open(image_folder_path / "values.pkl", "rb") as f:
             values = pickle.load(f)
@@ -216,6 +218,9 @@ class _Dataset(torch.utils.data.Dataset):
         df_img = read_image(image_folder_path / "df.jpg", True)
         df_img = df_img.astype(np.float32) / 255.0
         df_img *= values["max_df"]
+        thres = self.conf.load_features.line_gt.enforce_threshold
+        if thres is not None:
+            df_img = np.where(df_img > thres, thres, df_img)
 
         # Load AF
         af_img = read_image(image_folder_path / "angle.jpg", True)

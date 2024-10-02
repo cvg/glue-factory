@@ -171,7 +171,7 @@ class LineExtractor(BaseModel):
         return indices_image[mlp_output]
 
     # Post processing step
-    def three_stage_filter(self, points, binary_distance_map, distance_map, angle_map, indices_image):
+    def two_stage_filter(self, points, binary_distance_map, distance_map, angle_map, indices_image):
 
         # First pass - weak filter - Handcrafted heuristic
         indices_image = self.filter_with_distance_field(
@@ -212,7 +212,7 @@ class LineExtractor(BaseModel):
         binary_distance_map = self.process_distance_map(distance_map)
 
         # Apply two stage filter
-        return self.three_stage_filter(points, binary_distance_map, distance_map, angle_map, indices_image)
+        return self.two_stage_filter(points, binary_distance_map, distance_map, angle_map, indices_image)
 
     def loss(self, pred, data):
         raise NotImplementedError
