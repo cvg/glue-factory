@@ -36,12 +36,13 @@ class POLD2_MLP_Dataset(BaseDataset):
         "reseed": False,
         # data generation (None to skip)
         "generate": {
+            "regenerate": False,
             "use_df": True,
             "use_af": True,
             "num_images": 100,
             "num_negative_per_image": 10,
             "num_positive_per_image": 10,  # -1 to use all
-            "num_line_samples": 150,  # number of sampled points between line endpoints
+            "num_line_samples": 30,  # number of sampled points between line endpoints
             "deeplsd_config": {
                 "detect_lines": True,
                 "line_detection_params": {
@@ -147,8 +148,12 @@ class POLD2_MLP_Dataset(BaseDataset):
                 return np.hstack([df_val, af_val])
 
         if data_dir.exists():
-            logger.warning("Data directory already exists. Overwriting.")
-            shutil.rmtree(data_dir)
+            if conf.generate.regenerate:
+                logger.warning("Data directory already exists. Overwriting.")
+                shutil.rmtree(data_dir)
+            else:
+                logger.info("Found existing data. Not regenerating")
+                return
 
         data_dir.mkdir(parents=True, exist_ok=True)
 

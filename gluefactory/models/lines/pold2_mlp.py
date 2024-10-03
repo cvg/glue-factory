@@ -1,9 +1,13 @@
 """
 MLP classifier for candidate line endpoints using DF and AF values sampled along the line.
-Usage (plot the confusion matrix):
+Use the following command to train the MLP:
+    python -m gluefactory.train pold2_mlp_test --conf gluefactory/configs/pold2_mlp_train.yaml
+Use the following command to plot the confusion matrix):
     python -m gluefactory.models.lines.pold2_mlp \
         --conf gluefactory/configs/pold2_mlp_train.yaml \
         --weights outputs/training/pold2_mlp_test/checkpoint_best.tar
+Use the following command to test the dataloader:
+    python -m gluefactory.datasets.pold2_mlp_dataset --conf gluefactory/configs/pold2_mlp_dataloader_test.yaml
 """
 
 import argparse

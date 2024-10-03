@@ -8,12 +8,13 @@ data:
     reseed: False
 
     generate:
+        regenerate: False
         use_df: True
         use_af: True
         num_images: 1000
         num_negative_per_image: 40  
         num_positive_per_image: 40
-        num_line_samples: 150
+        num_line_samples: 30
         deeplsd_config: 
             detect_lines: True
             line_detection_params:
@@ -34,7 +35,8 @@ model:
     name: gluefactory.models.lines.pold2_mlp
     has_angle_field: True
     has_distance_field: True
-    num_line_samples: 150
+    num_line_samples: 30
+    use_bands: False
     mlp_hidden_dims: [256, 128, 128, 64, 32]
     pred_threshold: 0.9
     weights: null
