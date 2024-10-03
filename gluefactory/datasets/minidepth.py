@@ -8,7 +8,7 @@ import numpy as np
 import torch
 
 from gluefactory.datasets import BaseDataset
-from gluefactory.settings import DATA_PATH
+from gluefactory.settings import DATA_PATH, root
 from gluefactory.utils.image import ImagePreprocessor, load_image
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,8 @@ class MiniDepthDataset(BaseDataset):
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
             },
         },
+        "train_scenes_file_path": "gluefactory/datasets/minidepth_train_scenes.txt",  # path to training scenes file where train scenes from megadepth1500 are excluded, based on repo root
+        "val_scenes_file_path": "gluefactory/datasets/minidepth_val_scenes.txt",
     }
 
     def _init(self, conf):
@@ -92,9 +94,9 @@ class _Dataset(torch.utils.data.Dataset):
         # Extract the scenes corresponding to the right split
         scenes_file = None
         if split == "train":
-            scenes_file = scene_file_path / "minidepth_train_scenes.txt"
+            scenes_file = root / conf.train_scenes_file_path
         elif split == "val":
-            scenes_file = scene_file_path / "minidepth_val_scenes.txt"
+            scenes_file = root / conf.val_scenes_file_path
         else:
             # select all images if 'all' or 'test' given
             scenes_file = None

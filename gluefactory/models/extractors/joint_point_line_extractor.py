@@ -6,7 +6,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from kornia.geometry.transform import warp_perspective
-from omegaconf import OmegaConf
 
 import gluefactory.models.utils.metrics_lines as LineMetrics
 from gluefactory.datasets.homographies_deeplsd import sample_homography
@@ -14,14 +13,13 @@ from gluefactory.models import get_model
 from gluefactory.models.backbones.backbone_encoder import AlikedEncoder, aliked_cfgs
 from gluefactory.models.base_model import BaseModel
 from gluefactory.models.extractors.aliked import SDDH, SMH, DKDLight, InputPadder
-from gluefactory.models.lines.new_line_detection_jpldd import detect_jpldd_lines
+from gluefactory.models.lines.pold2_extractor import LineExtractor
 from gluefactory.models.utils.metrics_points import (
     compute_loc_error,
     compute_pr,
     compute_repeatability,
 )
 from gluefactory.utils.misc import change_dict_key, sync_and_time
-from gluefactory.models.lines.pold2_extractor import LineExtractor
 
 default_H_params = {
     "translation": True,
@@ -36,11 +34,7 @@ default_H_params = {
     "allow_artifacts": True,
 }
 
-to_ctr = OmegaConf.to_container  # convert DictConfig to dict
 aliked_checkpoint_url = "https://github.com/Shiaoming/ALIKED/raw/main/models/{}.pth"  # used for training based on ALIKED weights
-jpldd_checkpoint_url = (
-    "https://filedn.com/lt6zb4ORSwapNyVniJf1Pqh/checkpoint_jpldd_10.tar"
-)
 logger = logging.getLogger(__file__)
 
 
@@ -61,18 +55,27 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 "do": True,  # if train is True, initialize ALIKED Light model form OTF Descriptor GT
                 "gt_aliked_model": "aliked-n32",
             },  # if train is True, initialize ALIKED Light model form OTF Descriptor GT
-            "lambda_weighted_bce": 200,
-            "loss_weights": {
-                "line_af_weight": 10,
-                "line_df_weight": 10,
-                "keypoint_weight": 1,
-                "descriptor_weight": 1,
+            "loss": {
+                "kp_loss_name": "weighted_bce",  # other options: bce or focal loss
+                "kp_loss_parameters": {
+                    "lambda_weighted_bce": 200,  # weighted bce parameter factor how to boost keypoint loss in map
+                    "focal_gamma": 5,
+                    # focal loss parameter controlling how strong to focus on hard examples (typical range 1-5)
+                    "focal_alpha": 0.8,  # focal loss parameter to mitigate class imbalances
+                },
+                "loss_weights": {
+                    "line_af_weight": 10,
+                    "line_df_weight": 10,
+                    "keypoint_weight": 1,
+                    "descriptor_weight": 1,
+                },
             },
         },
-        "line_detection": {"do": True, "merge": False},
-        "checkpoint": str(
-            jpldd_checkpoint_url
-        ),  # if given and non-null, load model checkpoint if local path load locally if standard url download it.
+        "line_detection": {  # by default we use the POLD2 Line Extractor (MLP with Angle Field)
+            "do": True,
+            "conf": LineExtractor.default_conf,
+        },
+        "checkpoint": None,  # if given and non-null, load model checkpoint if local path load locally if standard url download it.
         "nms_radius": 3,
         "line_neighborhood": 5,  # used to normalize / denormalize line distance field
         "timeit": True,  # override timeit: False from BaseModel
@@ -84,13 +87,25 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
     def _init(self, conf):
         logger.debug(f"final config dict(type={type(conf)}): {conf}")
+        # set loss fn
+        assert self.conf.training.loss.kp_loss_name in [
+            "weighted_bce",
+            "focal_loss",
+            "bce",
+        ]
+        if self.conf.training.loss.kp_loss_name == "weighted_bce":
+            self.loss_fn = self.weighted_bce_loss
+        elif self.conf.training.loss.kp_loss_name == "focal_loss":
+            self.loss_fn = self.focal_loss
+        else:
+            self.loss_fn = nn.BCELoss(reduction="none")
         # c1-c4 -> output dimensions of encoder blocks, dim -> dimension of hidden feature map
         # K=Kernel-Size, M=num sampling pos
         aliked_model_cfg = aliked_cfgs[conf.aliked_model_name]
         dim = aliked_model_cfg["dim"]
         K = aliked_model_cfg["K"]
         M = aliked_model_cfg["M"]
-        self.lambda_valid_kp = conf.training.lambda_weighted_bce
+        self.lambda_valid_kp = conf.training.loss.kp_loss_parameters.lambda_weighted_bce
         # Load Network Components
         self.encoder_backbone = AlikedEncoder(aliked_model_cfg)
         self.keypoint_and_junction_branch = SMH(dim)  # using SMH from ALIKE here
@@ -140,7 +155,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             nn.Sigmoid(),
         )
         self.line_extractor = LineExtractor(
-            8, 150, "cuda" if torch.cuda.is_available() else "cpu"
+            self.conf.line_detection.conf,
         )
 
         if conf.timeit:
@@ -182,12 +197,14 @@ class JointPointLineDetectorDescriptor(BaseModel):
         if conf.checkpoint is not None and Path(conf.checkpoint).exists():
             logger.warning(f"Load model parameters from checkpoint {conf.checkpoint}")
             chkpt = torch.load(conf.checkpoint, map_location=torch.device("cpu"))
-            self.load_state_dict(chkpt["model"], strict=True)
+            self.load_state_dict(
+                chkpt["model"], strict=False
+            )  # set to false as otherwise error raised for missing mlp weights
         elif conf.checkpoint is not None:
             chkpt = torch.hub.load_state_dict_from_url(
                 conf.checkpoint, map_location=torch.device("cpu")
             )
-            self.load_state_dict(chkpt["model"], strict=True)
+            self.load_state_dict(chkpt["model"], strict=False)
 
     # Utility methods for line df and af with deepLSD
     def normalize_df(self, df):
@@ -199,6 +216,10 @@ class JointPointLineDetectorDescriptor(BaseModel):
     def _forward(self, data):
         """
         Perform a forward pass. Certain things are only executed NOT in training mode.
+        Returned:
+            - Probabilistic Keypoint Heatmap
+            - DeepLSD like Distance field (denormalized)
+            - DeepLSD like Angle Field (between -Pi and Pi as radians)
         """
         if self.conf.timeit:
             total_start = sync_and_time()
@@ -305,7 +326,8 @@ class JointPointLineDetectorDescriptor(BaseModel):
         wh = torch.tensor([w, h], device=image.device)
         # no padding required, can set detection_threshold=-1 and conf.max_num_keypoints -> HERE WE SET THESE VALUES
         # SO WE CAN EXPECT SAME NUM!
-        output["keypoints"] = wh * (torch.stack(keypoints) + 1.0) / 2.0
+        rescaled_kp = wh * (torch.stack(keypoints) + 1.0) / 2.0
+        output["keypoints"] = rescaled_kp
         output["keypoint_scores"] = torch.stack(kptscores)
 
         # Keypoint descriptors
@@ -326,31 +348,31 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 start_lines = sync_and_time()
             lines = []
             valid_lines = []
-            np_df = output["line_distancefield"]  # .cpu().numpy()
-            np_al = output["line_anglefield"]  # .cpu().numpy()
-            np_kp = output["keypoints"]
-            for df, af, kp,img in zip(np_df, np_al, np_kp,image):
-                # img_lines = detect_jpldd_lines(
-                #     df, af, kp, (h, w), merge=self.conf.line_detection.merge
-                # )
-                img_lines = self.line_extractor.post_processing_step(
-                    kp,img,df,af
-                )
+
+            for df, af, kp in zip(line_distance_field, line_angle_field, rescaled_kp):
+                line_data = {
+                    "points": torch.clone(kp),
+                    "distance_map": torch.clone(df),
+                    "angle_map": torch.clone(af),
+                }
+                img_line_indices = self.line_extractor(line_data)
+                # Line matchers expect the lines to be stored as line endpoints where line endpoint = idx of respective keypoint
+                img_lines = img_line_indices
                 if len(img_lines) == 0:
                     print("NO LINES DETECTED")
                     img_lines = (
-                        torch.arange(30).reshape(-1, 2).to(np_df[-1].device)
+                        torch.arange(30)
+                        .reshape(-1, 2)
+                        .to(line_distance_field[-1].device)
                     )
 
                 lines.append(img_lines)
                 valid_lines.append(
-                    torch.ones(len(lines[-1])).to(np_df[-1].device)
+                    torch.ones(len(lines[-1])).to(line_distance_field[-1].device)
                 )
             output["lines"] = lines
             output["valid_lines"] = valid_lines
             # Use aliked points sampled from inbetween Line endpoints?
-            line_descriptors = None
-            output["line_descriptors"] = line_descriptors
             if self.conf.timeit:
                 self.timings["line-detection"].append(sync_and_time() - start_lines)
 
@@ -358,20 +380,40 @@ class JointPointLineDetectorDescriptor(BaseModel):
             self.timings["total-makespan"].append(sync_and_time() - total_start)
         return output
 
+    def weighted_bce_loss(self, prediction, target):
+        return -self.lambda_valid_kp * target * torch.log(prediction) - (
+            1 - target
+        ) * torch.log(1 - prediction)
+
+    def focal_loss(self, prediction, target):
+        alpha = self.conf.training.loss.kp_loss_parameters.focal_alpha
+        gamma = self.conf.training.loss.kp_loss_parameters.focal_gamma
+        epsilon = 1e-6  # Small value to avoid log(0)
+
+        # Compute the positive and negative parts of the focal loss
+        pos_part = (
+            -alpha * torch.pow(1 - prediction, gamma) * torch.log(prediction + epsilon)
+        )
+        neg_part = (
+            -(1 - alpha)
+            * torch.pow(prediction, gamma)
+            * torch.log(1 - prediction + epsilon)
+        )
+
+        # Combine the parts to get the total loss
+        loss = target * pos_part + (1 - target) * neg_part
+
+        return loss
+
     def loss(self, pred, data):
         """
         format of data: B x H x W
         perform loss calculation based on prediction and data(=groundtruth) for a batch
-        1. On Keypoint-ScoreMap:        weighted BCE Loss
+        1. On Keypoint-ScoreMap:        weighted BCE Loss / BCE Loss / Focal Loss
         2. On Keypoint-Descriptors:     L1 loss
         3. On Line-Angle Field:         use angle loss from deepLSD paper
         4. On Line-Distance Field:      use L1 loss on normalized versions of Distance field (as in deepLSD paper)
         """
-
-        def weighted_bce_loss(pred, target):
-            return -self.lambda_valid_kp * target * torch.log(pred) - (
-                1 - target
-            ) * torch.log(1 - pred)
 
         losses = {}
         metrics = {}
@@ -385,7 +427,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             and data["superpoint_heatmap"].max() <= 1
         )
         # Use Weighted BCE Loss for Point Heatmap
-        keypoint_scoremap_loss = weighted_bce_loss(
+        keypoint_scoremap_loss = self.loss_fn(
             pred["keypoint_and_junction_score_map"], data["superpoint_heatmap"]
         ).mean(dim=(1, 2))
 
@@ -422,13 +464,14 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
         # Compute overall loss
         overall_loss = (
-            self.conf.training.loss_weights.keypoint_weight * keypoint_scoremap_loss
-            + self.conf.training.loss_weights.line_af_weight * line_af_loss
-            + self.conf.training.loss_weights.line_df_weight * line_df_loss
+            self.conf.training.loss.loss_weights.keypoint_weight
+            * keypoint_scoremap_loss
+            + self.conf.training.loss.loss_weights.line_af_weight * line_af_loss
+            + self.conf.training.loss.loss_weights.line_df_weight * line_df_loss
         )
         if self.conf.training.train_descriptors.do:
             overall_loss += (
-                self.conf.training.loss_weights.descriptor_weight
+                self.conf.training.loss.loss_weights.descriptor_weight
                 * keypoint_descriptor_loss
             )
         losses["total"] = overall_loss
@@ -460,7 +503,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             aliked_state_url, map_location="cpu"
         )
         # change keys
-        for k, v in list(aliked_state_dict.items()):
+        for k, _ in list(aliked_state_dict.items()):
             if k.startswith("block") or k.startswith("conv"):
                 change_dict_key(aliked_state_dict, k, f"encoder_backbone.{k}")
             elif k.startswith("score_head"):
@@ -480,12 +523,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
     def count_trainable_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
-
-    def check_loss_keys_in_dict(self, data_keys):
-        for required_loss_key in self.conf.required_loss_keys:
-            if required_loss_key not in data_keys:
-                return False
-        return True
 
     def state_dict(self, *args, **kwargs):
         """
@@ -508,7 +545,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         """
         results = {}
         for k, v in self.timings.items():
-            results[k] = np.mean(v)
+            results[k] = np.median(v)
             if reset:
                 self.timings[k] = []
         return results

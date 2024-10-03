@@ -178,7 +178,7 @@ def merge_lines_torch(lines, thresh=5.0, overlap_thresh=0.0, return_indices=Fals
     """
     if len(lines) == 0:
         return lines
-    
+
     orig_lines = lines
     lines = lines[:, :, :2]
 

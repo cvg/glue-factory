@@ -24,6 +24,7 @@ def get_structural_line_dist(warped_ref_line_seg, target_line_seg):
     dist = dist.diagonal()
     return dist.numpy()
 
+
 def get_structural_dist(warped_ref_line_seg, target_line_seg):
     """Compute the distances between two sets of lines
     using the structural distance."""
@@ -38,7 +39,7 @@ def get_structural_dist(warped_ref_line_seg, target_line_seg):
         )
         / 2
     )
-    
+
     return dist.numpy()
 
 
@@ -180,7 +181,9 @@ def get_orth_line_dist(
     of lines and the average overlapping ratio of both lines.
     Enforce a high line distance for small overlaps.
     This is compatible for nD objects (e.g. both lines in 2D or 3D)."""
-    return get_orth_dist(line_seg1, line_seg2, min_overlap, return_overlap, mode).diagonal()
+    return get_orth_dist(
+        line_seg1, line_seg2, min_overlap, return_overlap, mode
+    ).diagonal()
 
 
 def get_orth_dist(

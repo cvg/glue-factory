@@ -74,7 +74,9 @@ def generate_ground_truth_with_homography_adaptation(
         # Forward pass
         with torch.no_grad():
             outs = net.forward_ha({"image": warped_imgs})
-            assert "lines" not in outs, "Please turn off line detection for generation of homographies as this is known to cause memory and performance issues"
+            assert (
+                "lines" not in outs
+            ), "Please turn off line detection for generation of homographies as this is known to cause memory and performance issues"
             outs["offset"] = torch.stack(
                 (
                     outs["df"] * torch.sin(outs["line_level"] + torch.pi / 2),

@@ -1,0 +1,64 @@
+data:
+    name: gluefactory.datasets.oxford_paris_mini_1view_jpldd
+    data_dir: "revisitop1m_POLD2/jpg"  # as subdirectory of DATA_PATH(defined in settings.py)
+    grayscale: False
+    num_workers: 6  # defines processes used in Dataloader
+    train_batch_size: 8  # per GPU
+    val_batch_size: 8
+    prefetch_factor: 8
+    reshape: [ 400, 400 ]
+    load_features:
+        do: True
+        check_exists: True
+        point_gt:
+            data_keys: [ "superpoint_heatmap" ]
+            use_score_heatmap: False
+        line_gt:
+            data_keys: [ "deeplsd_distance_field", "deeplsd_angle_field" ]
+    val_size: 500
+    train_size: 11500
+    
+model:
+    name: joint_point_line_extractor
+    model_name: "aliked-n16"
+    line_neighborhood: 5
+    max_num_keypoints: 1000  # setting for training, for eval: -1
+    training:
+        do: True
+        aliked_pretrained: True
+        pretrain_kp_decoder: True
+        train_descriptors:
+            do: True # if train is True, initialize ALIKED Light model form OTF Descriptor GT
+            gt_aliked_model: "aliked-n32"
+        loss:
+            kp_loss_name: "focal_loss"
+            kp_loss_parameters:
+                lambda_weighted_bce: 200
+                focal_alpha: 0.25
+                focal_gamma: 2
+            loss_weights:
+                line_af_weight: 1
+                line_df_weight: 1
+                keypoint_weight: 1
+                descriptor_loss: 1
+    line_detection:
+      do: False
+    checkpoint: null  # if given load model weights from this checkpoint
+    timeit: False  # override timeit: False from BaseModel
+train:
+    load_experiment: null  # initialize the model from a previous experiment (take weights)
+    seed: 7
+    epochs: 40
+    log_every_iter: 8
+    eval_every_iter: 5000 # automatically creates new checkpoint if new best eval metric is reached -> set > #batches to not eval except at the end of each epoch
+    save_every_iter: 10000
+    test_every_epoch: -1 # check if test deactivated
+    optimizer: "adam"
+    best_key: "loss/total" # key used to determine best checkpoint and evaluation progress
+    lr: 0.0001
+    scheduler: 'ReduceLROnPlateau'
+    patience: 10
+    keep_last_checkpoints: 5
+    submodules: []
+    timeit: False    # print jpldd model mean timings every epoch
+

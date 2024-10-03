@@ -209,7 +209,7 @@ class SuperPoint(BaseModel):
             "keypoints": keypoints + 0.5,
             "keypoint_scores": scores,
             "descriptors": desc.transpose(-1, -2),
-            "heatmap": scoremap_raw
+            "heatmap": scoremap_raw,
         }
         if self.conf.dense_outputs:
             pred["dense_descriptors"] = descriptors_dense
