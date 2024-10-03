@@ -395,11 +395,11 @@ def training(rank, conf, output_dir, args):
         # update learning rate
         if conf.train.lr_schedule.on_epoch and epoch > 0:
             old_lr = optimizer.param_groups[0]["lr"]
-            if conf.train.lr_schedule.type != 'ReduceLROnPlateau':
+            if conf.train.lr_schedule.type != "ReduceLROnPlateau":
                 lr_scheduler.step()
             else:
                 if results is not None:
-                    lr_scheduler.step(results['loss/total'])
+                    lr_scheduler.step(results["loss/total"])
             logger.info(
                 f'lr changed from {old_lr} to {optimizer.param_groups[0]["lr"]}'
             )

@@ -802,7 +802,15 @@ class ALIKED(BaseModel):
         self.upsample32 = nn.Upsample(
             scale_factor=32, mode="bilinear", align_corners=True
         )
-        self.score_head = SMH(dim)
+        self.score_head = nn.Sequential(
+            resnet.conv1x1(dim, 8),
+            self.gate,
+            resnet.conv3x3(8, 4),
+            self.gate,
+            resnet.conv3x3(4, 4),
+            self.gate,
+            resnet.conv3x3(4, 1),
+        )
         self.desc_head = SDDH(dim, K, M, gate=self.gate, conv2D=conv2D, mask=mask)
         self.dkd = DKD(
             radius=conf.nms_radius,

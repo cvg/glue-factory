@@ -8,13 +8,15 @@ Usage (plot the confusion matrix):
 
 import argparse
 import logging
-from omegaconf import OmegaConf
+
 import torch
+from omegaconf import OmegaConf
 from torch import nn
 
 from gluefactory.models.base_model import BaseModel
 
 logger = logging.getLogger(__name__)
+
 
 class POLD2_MLP(BaseModel):
 
@@ -42,18 +44,22 @@ class POLD2_MLP(BaseModel):
             input_dim += conf.num_line_samples
         if input_dim == 0:
             raise ValueError("No input features selected for MLP")
-        
+
         mlp_layers = []
         mlp_layers.append(nn.Linear(input_dim, conf.mlp_hidden_dims[0]))
         mlp_layers.append(nn.ReLU())
         for i in range(1, len(conf.mlp_hidden_dims)):
-            mlp_layers.append(nn.Linear(conf.mlp_hidden_dims[i-1], conf.mlp_hidden_dims[i]))
+            mlp_layers.append(
+                nn.Linear(conf.mlp_hidden_dims[i - 1], conf.mlp_hidden_dims[i])
+            )
             mlp_layers.append(nn.ReLU())
         mlp_layers.append(nn.Linear(conf.mlp_hidden_dims[-1], 1))
         self.mlp = nn.Sequential(*mlp_layers)
 
         if self.conf.weights is not None:
-            ckpt = torch.load(str(self.conf.weights), map_location=self.device, weights_only=True)
+            ckpt = torch.load(
+                str(self.conf.weights), map_location=self.device, weights_only=True
+            )
             self.load_state_dict(ckpt["model"], strict=True)
             logger.info(f"Successfully loaded model weights from {self.conf.weights}")
         self.mlp.to(self.device)
@@ -61,19 +67,17 @@ class POLD2_MLP(BaseModel):
         self.set_initialized()
 
     def _forward(self, data):
-        x = data['input']
-        return {
-            "line_probs": torch.sigmoid(self.mlp(x))
-        }
+        x = data["input"]
+        return {"line_probs": torch.sigmoid(self.mlp(x))}
 
     def loss(self, pred, data):
-        
+
         losses = {}
 
         # Compute the loss (BCE loss between predictions and labels)
         labels = data["label"]
         x_pred = pred["line_probs"]
-        
+
         loss = nn.BCELoss()(x_pred.reshape(-1), labels.float())
         losses["total"] = loss.unsqueeze(0)
 
@@ -84,7 +88,7 @@ class POLD2_MLP(BaseModel):
 
         return losses, metrics
 
-    def metrics(self, pred, data, eps = 1e-7):
+    def metrics(self, pred, data, eps=1e-7):
         labels = data["label"].flatten()
         x_pred = pred["line_probs"].flatten()
 
@@ -93,11 +97,11 @@ class POLD2_MLP(BaseModel):
         x_pred_th = (x_pred > self.conf.pred_threshold).float()
 
         tp = (x_pred_th * labels).sum().item()
-        tn = ((1-x_pred_th)*(1-labels)).sum().item()
-        fp = (x_pred_th * (1-labels)).sum().item()
-        fn = ((1-x_pred_th)*labels).sum().item()
+        tn = ((1 - x_pred_th) * (1 - labels)).sum().item()
+        fp = (x_pred_th * (1 - labels)).sum().item()
+        fn = ((1 - x_pred_th) * labels).sum().item()
 
-        accuracy = (tp+tn)/(tp+tn+fp+fn+eps)
+        accuracy = (tp + tn) / (tp + tn + fp + fn + eps)
         precision = tp / (tp + fp + eps)
         recall = tp / (tp + fn + eps)
         f1 = (2 * precision * recall) / (precision + recall + eps)
@@ -121,7 +125,9 @@ if __name__ == "__main__":
     parser.add_argument("--weights", type=str, default=None)
     args = parser.parse_args()
 
-    conf = OmegaConf.load(args.conf) if args.conf is not None else POLD2_MLP.default_conf
+    conf = (
+        OmegaConf.load(args.conf) if args.conf is not None else POLD2_MLP.default_conf
+    )
     conf.weights = args.weights
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -129,11 +135,13 @@ if __name__ == "__main__":
     model.eval()
 
     # Load the data
-    from gluefactory.datasets.pold2_mlp_dataset import POLD2_MLP_Dataset
+    from pathlib import Path
+
+    import matplotlib.pyplot as plt
     import numpy as np
     from sklearn import metrics
-    import matplotlib.pyplot as plt
-    from pathlib import Path
+
+    from gluefactory.datasets.pold2_mlp_dataset import POLD2_MLP_Dataset
 
     dataset = POLD2_MLP_Dataset(conf.data)
     dataloader = dataset.get_data_loader("val")
@@ -142,20 +150,20 @@ if __name__ == "__main__":
     predicted = []
 
     for batch_idx, batch in enumerate(dataloader):
-        if batch_idx == len(dataloader)-1:
+        if batch_idx == len(dataloader) - 1:
             break
 
         y = batch["label"]
         batch["input"] = batch["input"].to(device)
         batch["label"] = batch["label"].to(device)
-        
+
         with torch.no_grad():
             x_pred = model(batch)
             x_pred = x_pred["line_probs"]
 
             actual.append(y.cpu().numpy())
             predicted.append(x_pred.cpu().numpy())
-    
+
     actual = np.array(actual).flatten()
     predicted = np.array(predicted).flatten()
 

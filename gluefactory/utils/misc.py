@@ -1,5 +1,7 @@
-import torch
 import time
+
+import torch
+
 
 def to_view(data, i):
     return {k + i: v for k, v in data.items()}
@@ -42,6 +44,7 @@ def unstack_twoviews(data, B, indices=["0to1", "0to2", "1to2"]):
     for i, idx in enumerate(indices):
         out[idx] = {k: v[i * B : (i + 1) * B] for k, v in data.items()}
     return out
+
 
 def sync_and_time():
     if torch.cuda.is_available():
