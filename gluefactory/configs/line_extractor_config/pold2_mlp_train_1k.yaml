@@ -54,3 +54,4 @@ train:
     keep_last_checkpoints: 3
     seed: 0
     submodules: []
+    use_gpu: False

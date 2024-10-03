@@ -48,7 +48,7 @@ class LineExtractor(BaseModel):
         "device": None
     }
 
-    def _init(self, conf):
+    def _init(self, conf: dict):
 
         self.num_sample = conf.num_sample
         self.num_sample_strong = conf.mlp_conf.num_line_samples
@@ -137,6 +137,10 @@ class LineExtractor(BaseModel):
         # Finally we can filter the indices
         return indices[detected_line_indices & detected_line_float]
 
+    def compute_band_points(points):
+        pass
+
+
     # MLP filter
     def mlp_filter(self, points, indices_image, distance_map, angle_map):
         use_df = self.conf.mlp_conf.has_distance_field
@@ -145,11 +149,25 @@ class LineExtractor(BaseModel):
         # Sample coordinates
         points_coordinates = self.get_coordinates(points, indices_image, self.coeffs_strong, self.coeffs_strong_second)
 
+        if self.conf.mlp_conf.use_band:
+            first_band_points,second_band_points = self.compute_band_points()
+            first_band_points_coordinates = self.get_coordinates(first_band_points, indices_image, self.coeffs_strong, self.coeffs_strong_second)
+            second_band_points_coordinates = self.get_coordinates(second_band_points, indices_image, self.coeffs_strong, self.coeffs_strong_second)
+
         # Sample points
         if use_df:
             df_vals = self.sample_map(points_coordinates, distance_map).view(self.num_sample_strong, -1)
+            if self.conf.mlp_conf.use_band:
+                df_vals_band1 = self.sample_map(first_band_points_coordinates, distance_map).view(self.num_sample_strong, -1)
+                df_vals_band2 = self.sample_map(second_band_points_coordinates, distance_map).view(self.num_sample_strong, -1)
+                df_vals = torch.cat((df_vals,df_vals_band1,df_vals_band2),dim=1)
+
         if use_af:
             af_vals = self.sample_map(points_coordinates, angle_map).view(self.num_sample_strong, -1)
+            if self.conf.mlp_conf.use_band:
+                af_vals_band1 = self.sample_map(first_band_points_coordinates, angle_map).view(self.num_sample_strong, -1)
+                af_vals_band2 = self.sample_map(second_band_points_coordinates, angle_map).view(self.num_sample_strong, -1)
+                af_vals = torch.cat((af_vals,af_vals_band1,af_vals_band2),dim=1)
 
         # Prepare input for MLP
         if use_df and use_af:

@@ -22,6 +22,7 @@ class POLD2_MLP(BaseModel):
         "has_angle_field": True,
         "has_distance_field": True, 
         "num_line_samples": 30,    # number of sampled points between line endpoints
+        "use_bands": True,
         "mlp_hidden_dims": [256, 128, 128, 64, 32],
         "pred_threshold": 0.9,
         "weights": None,
