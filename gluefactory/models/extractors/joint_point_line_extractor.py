@@ -326,7 +326,8 @@ class JointPointLineDetectorDescriptor(BaseModel):
         wh = torch.tensor([w, h], device=image.device)
         # no padding required, can set detection_threshold=-1 and conf.max_num_keypoints -> HERE WE SET THESE VALUES
         # SO WE CAN EXPECT SAME NUM!
-        output["keypoints"] = wh * (torch.stack(keypoints) + 1.0) / 2.0
+        rescaled_kp = wh * (torch.stack(keypoints) + 1.0) / 2.0
+        output["keypoints"] = rescaled_kp
         output["keypoint_scores"] = torch.stack(kptscores)
 
         # Keypoint descriptors
@@ -348,7 +349,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             lines = []
             valid_lines = []
 
-            for df, af, kp in zip(line_distance_field, line_angle_field, keypoints):
+            for df, af, kp in zip(line_distance_field, line_angle_field, rescaled_kp):
                 line_data = {
                     "points": torch.clone(kp),
                     "distance_map": torch.clone(df),

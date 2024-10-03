@@ -39,12 +39,12 @@ class LineExtractor(BaseModel):
             "avg_filter_size": 13,
             "avg_filter_padding": 6,
             "avg_filter_stride": 1,
-            "max_value": 2,
             "inlier_ratio": 1.0,
-            "mean_value_ratio": 0.8,
+            "max_accepted_mean_value": 0.8,
         },
         "mlp_conf": POLD2_MLP.default_conf,
         "device": None,
+        "debug": False,
     }
 
     def _init(self, conf):
@@ -128,12 +128,29 @@ class LineExtractor(BaseModel):
     def sample_map(self, points, map):
         return map[points[:, 1], points[:, 0]]
 
+
     # Distance map filtering
     def filter_with_distance_field(
-        self, points, binary_distance_map, distance_map, indices
-    ):
+        self, points: torch.Tensor, binary_distance_map: torch.Tensor, distance_map: torch.Tensor, indices: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Heuristic filtering line candidates given each as 2 line endpoints, by sampling equidistant points
+        inbetween line endpoints. It then checks:
+            1. Is the mean DF value of samples for a line below a certain thresh
+            2. How many df values of samples for a line are below a threshold (told by binary_distance_map at these points)
+
+        If both conditions are True for a line candidate it is considered a valid line by this filter.
+        
+        Args:
+            points (torch.Tensor): all keypoints
+            binary_distance_map (torch.Tensor): binary map, telling whether df values at pos are smaller than a threshold
+            distance_map (torch.Tensor): distance field as in DeepLSD, normalized to [0, 1]
+            indices (torch.Tensor): indices of line endpoints
+        Return:
+            Indices of
+        """
         inlier_ratio = self.conf.distance_map.inlier_ratio
-        mean_value_ratio = self.conf.distance_map.mean_value_ratio
+        max_accepted_mean_value = self.conf.distance_map.max_accepted_mean_value
 
         # Get coordinates
         points_coordinates = self.get_coordinates(
@@ -141,46 +158,45 @@ class LineExtractor(BaseModel):
         )
 
         # Sample points
-        print(binary_distance_map.shape)
-        print(
-            torch.sum(binary_distance_map)
-            / (binary_distance_map.shape[0] * binary_distance_map.shape[1])
-        )
         binary_df_sampled = self.sample_map(
             points_coordinates, binary_distance_map
         ).view(self.num_sample, -1)
         df_sampled = self.sample_map(points_coordinates, distance_map).view(
             self.num_sample, -1
         )
-        print(np.unique(binary_df_sampled.cpu()))
-
-        print(f"Sampled Binary DF: {binary_df_sampled.shape}")
-        print(
-            f"inlier vector: {torch.sum(binary_df_sampled, dim=0)}, needed inliers: {self.num_sample * inlier_ratio}, unique values: {np.unique(torch.sum(binary_df_sampled, dim=0).cpu())}"
-        )
-
-        print(f"\nSampled DF: {df_sampled.shape}")
-        print(
-            f"mean samples vector: {torch.mean(df_sampled.float(), dim=0)}, mean_val_ratio: {mean_value_ratio}, unique vals: {np.unique(torch.mean(df_sampled.float(), dim=0).cpu())}"
-        )
 
         # We reduce the values along the line
         detected_line_indices = (
             torch.sum(binary_df_sampled, dim=0) >= self.num_sample * inlier_ratio
         )
-        detected_line_float = torch.mean(df_sampled.float(), dim=0) <= mean_value_ratio
+        detected_line_float = torch.mean(df_sampled.float(), dim=0) <= max_accepted_mean_value
 
-        print(f"Decision pos lines binary df: {torch.sum(detected_line_indices)}")
-        print(f"Decision pos lines df: {torch.sum(detected_line_float)}")
+        if self.conf.debug:
+            print(f"Decision pos lines binary df: {torch.sum(detected_line_indices)}")
+            print(f"Decision pos lines df: {torch.sum(detected_line_float)}")
+            print(f"Decision overall num lines: {torch.sum(detected_line_indices & detected_line_float)}")
         # Finally we can filter the indices
         return indices[detected_line_indices & detected_line_float]
 
     # MLP filter
-    def mlp_filter(self, points, indices_image, distance_map, angle_map):
+    def mlp_filter(self, points: torch.Tensor, indices_image: torch.Tensor, distance_map: torch.Tensor, angle_map: torch.Tensor) -> torch.Tensor:
+        """
+        Uses a small Fully Connected NN (MLP) to predict the probabilities of all given line candidates to really be a line!
+        This probabilityx is then used to filter out line candidates whose predicted probability is below a certain threshhold.
+
+        Args:
+            points (torch.Tensor): all keypoints, Shape: (#keypoints , 2)
+            indices_image (torch.Tensor): Each row contains indices of 2 keypoints (indexing keypoint list "points"). Thus each row = 1 line candidate. Shape: (#candidate_lines , 2)
+            distance_map (torch.Tensor): distance field as in DeepLSD
+            angle_map (torch.Tensor): angle field as in DeepLSD
+
+        Returns:
+            torch.Tensor: _description_
+        """
         use_df = self.conf.mlp_conf.has_distance_field
         use_af = self.conf.mlp_conf.has_angle_field
 
-        # Sample coordinates
+        # Sample coordinates (sample line points for each pair of kp representing a line candidate)
         points_coordinates = self.get_coordinates(
             points, indices_image, self.coeffs_strong, self.coeffs_strong_second
         )
@@ -223,22 +239,24 @@ class LineExtractor(BaseModel):
         indices_image = self.filter_with_distance_field(
             points, binary_distance_map, distance_map, indices_image
         )
-        print(f"Indices_image: {indices_image.shape}")
+        if self.conf.debug:
+            print(f"Num lines after 1st stage: {indices_image.shape[0]}")
 
         # Second pass - strong filer - MLP filter
         indices_image = self.mlp_filter(points, indices_image, distance_map, angle_map)
 
-        print(indices_image.shape)
+        if self.conf.debug:
+            print(f"Num lines after MLP stage: {indices_image.shape[0]}")
         return indices_image
 
-    # TODO: Add merging of lines
-    def _forward(self, data):
+    def _forward(self, data: dict) -> torch.Tensor:
         points = data["points"]
         distance_map = data["distance_map"]
         angle_map = data["angle_map"]
 
-        # Convert angle map (direction vector) to angle (radians from 0 to pi)
-        angle_map = torch.atan2(angle_map[1], angle_map[0]) % torch.pi
+        # Convert angle map (direction vector) to angle (radians from 0 to pi) but only if loading ground truth!
+        if angle_map.ndim > 2:
+            angle_map = torch.atan2(angle_map[1], angle_map[0]) % torch.pi
 
         # Get indices
         if len(points) > self.max_point_size:
@@ -251,17 +269,13 @@ class LineExtractor(BaseModel):
         number_pairs = int(len(points) * (len(points) - 1) / 2)
         indices_image = self.indices[:number_pairs]
 
-        df_max = self.conf.distance_map.max_value
-        distance_map[distance_map > df_max] = df_max
-
+        # normalize to [0, 1] by dividing by max value TODO: strict positive Z-Score normalization ?
+        df_max = distance_map.max()
         distance_map = distance_map.float()
         distance_map /= df_max
 
         # Process distance map
         binary_distance_map = self.process_distance_map(distance_map)
-        # print(binary_distance_map.shape)
-        # print(np.unique(binary_distance_map.cpu()))
-        # print(f"Binary dist map pos values: {100* binary_distance_map.cpu().sum() / (binary_distance_map.shape[0]*binary_distance_map.shape[1])}%")
 
         # Apply two stage filter
         return self.two_stage_filter(
