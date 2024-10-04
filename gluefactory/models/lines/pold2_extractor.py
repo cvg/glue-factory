@@ -44,6 +44,7 @@ class LineExtractor(BaseModel):
             "max_accepted_mean_value": 0.8,
         },
         "mlp_conf": POLD2_MLP.default_conf,
+        "nms": True,
         "device": None,
         "debug": False,
     }
@@ -209,7 +210,7 @@ class LineExtractor(BaseModel):
         use_af = self.conf.mlp_conf.has_angle_field
 
         # Sample coordinates (sample line points for each pair of kp representing a line candidate)
-        points_coordinates = torch.zeros(0, 2).int()
+        points_coordinates = torch.zeros(0, 2).int().to(self.device)
 
         num_bands = self.conf.mlp_conf.num_bands
         band_width = self.conf.mlp_conf.band_width
@@ -278,6 +279,7 @@ class LineExtractor(BaseModel):
         points = data["points"]
         distance_map = data["distance_map"]
         angle_map = data["angle_map"]
+        descriptors = data["descriptors"]
 
         # Convert angle map (direction vector) to angle (radians from 0 to pi) but only if loading ground truth!
         if angle_map.ndim > 2:
@@ -303,9 +305,28 @@ class LineExtractor(BaseModel):
         binary_distance_map = self.process_distance_map(distance_map)
 
         # Apply two stage filter
-        return self.two_stage_filter(
-            points, binary_distance_map, distance_map, angle_map, indices_image
+        filtered_idx = self.two_stage_filter(points, binary_distance_map, distance_map, angle_map, indices_image)
+
+        # Apply NMS
+        if self.conf.nms:
+            # Get line end points
+            lines = points[filtered_idx]
+
+            # Append indices to lines - (N,2,3)
+            lines = torch.cat([lines.reshape(-1,2), filtered_idx.reshape(-1,1)], axis=-1).reshape(-1, 2, 3)
+            filtered_idx = merge_lines_torch(torch.tensor(lines), return_indices=True).int()
+
+        # Prepare output
+        lines = points[filtered_idx]
+        line_descriptors = torch.stack(
+            [descriptors[filtered_idx[:, 0]], descriptors[filtered_idx[:, 1]]], dim=1
         )
+
+        return {
+            "lines": lines,
+            "line_descriptors": line_descriptors,
+            "line_endpoint_indices": filtered_idx,
+        }
 
     def loss(self, pred, data):
         raise NotImplementedError
@@ -355,9 +376,14 @@ def test_extractor(extractor, folder_path, device, show=False):
     # Start counter
     start_time = time.perf_counter()
 
-    data = {"points": points, "distance_map": distance_map, "angle_map": angle_map}
+    data = {
+        "points": points,
+        "distance_map": distance_map,
+        "angle_map": angle_map,
+        "descriptors": torch.zeros(len(points), 128).to(device)
+    }
     # Post processing step
-    indices_image = extractor(data)
+    indices_image = extractor(data)["line_endpoint_indices"]
 
     if device == "cuda":
         torch.cuda.synchronize()
