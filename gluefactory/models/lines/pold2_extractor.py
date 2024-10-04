@@ -34,6 +34,7 @@ class LineExtractor(BaseModel):
     default_conf = {
         "num_sample": 8,
         "max_point_size": 1500,
+        "min_line_length": 20,
         "distance_map": {
             "threshold": 0.5,
             "avg_filter_size": 13,
@@ -128,6 +129,16 @@ class LineExtractor(BaseModel):
     def sample_map(self, points, map):
         return map[points[:, 1], points[:, 0]]
 
+    def filter_small_lines(self, points, indices_image):
+        """
+        Filter out lines that are too short.
+        """
+        min_line_length = self.conf.min_line_length
+        lines = points[indices_image]
+        diff = lines[:, 0] - lines[:, 1]
+        diff = torch.sqrt(torch.sum(diff ** 2, dim=1))
+
+        return indices_image[diff > min_line_length]
 
     # Distance map filtering
     def filter_with_distance_field(
@@ -245,6 +256,9 @@ class LineExtractor(BaseModel):
     def two_stage_filter(
         self, points, binary_distance_map, distance_map, angle_map, indices_image
     ):
+
+        # Filter out small lines
+        indices_image = self.filter_small_lines(points, indices_image)
 
         # First pass - weak filter - Handcrafted heuristic
         indices_image = self.filter_with_distance_field(
