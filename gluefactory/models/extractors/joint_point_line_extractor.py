@@ -354,17 +354,23 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 start_lines = sync_and_time()
             lines = []
             valid_lines = []
+            line_descs = []
+            line_indices = []
 
-            for df, af, kp in zip(line_distance_field, line_angle_field, rescaled_kp):
+            for df, af, kp, desc in zip(line_distance_field, line_angle_field, rescaled_kp, keypoint_descriptors):
                 line_data = {
                     "points": torch.clone(kp),
                     "distance_map": torch.clone(df),
                     "angle_map": torch.clone(af),
+                    "descriptors": torch.clone(desc),
                 }
-                img_line_indices = self.line_extractor(line_data)
-                # Line matchers expect the lines to be stored as line endpoints where line endpoint = idx of respective keypoint
-                img_lines = img_line_indices
-                if len(img_lines) == 0:
+                line_pred = self.line_extractor(line_data)
+                lines.append(line_pred["lines"])
+                line_descs.append(line_pred["line_descriptors"])
+                line_indices.append(line_pred["line_endpoint_indices"])
+
+                # Line matchers expect the lines to be stored as line endpoints where line endpoint = coordinate of respective keypoint
+                if len(lines) == 0:
                     print("NO LINES DETECTED")
                     img_lines = (
                         torch.arange(30)
@@ -372,12 +378,12 @@ class JointPointLineDetectorDescriptor(BaseModel):
                         .to(line_distance_field[-1].device)
                     )
 
-                lines.append(img_lines)
                 valid_lines.append(
                     torch.ones(len(lines[-1])).to(line_distance_field[-1].device)
                 )
-            output["lines"] = lines
-            output["valid_lines"] = valid_lines
+            output["lines"] = torch.stack(lines, dim=0)
+            output["valid_lines"] = torch.stack(valid_lines, dim=0)
+
             # Use aliked points sampled from inbetween Line endpoints?
             if self.conf.timeit:
                 self.timings["line-detection"].append(sync_and_time() - start_lines)
