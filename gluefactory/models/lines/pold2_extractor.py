@@ -209,7 +209,7 @@ class LineExtractor(BaseModel):
         use_af = self.conf.mlp_conf.has_angle_field
 
         # Sample coordinates (sample line points for each pair of kp representing a line candidate)
-        points_coordinates = torch.zeros(0, 2).int()
+        points_coordinates = torch.zeros(0, 2).int().to(self.device)
 
         num_bands = self.conf.mlp_conf.num_bands
         band_width = self.conf.mlp_conf.band_width
