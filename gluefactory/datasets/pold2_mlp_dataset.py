@@ -43,6 +43,8 @@ class POLD2_MLP_Dataset(BaseDataset):
             "num_negative_per_image": 10,
             "num_positive_per_image": 10,  # -1 to use all
             "num_line_samples": 30,  # number of sampled points between line endpoints
+            "num_bands": 1,  # number of bands to sample along the line
+            "band_width": 1,  # width of the band
             "deeplsd_config": {
                 "detect_lines": True,
                 "line_detection_params": {
@@ -127,8 +129,8 @@ class POLD2_MLP_Dataset(BaseDataset):
             lines = np.array(out["lines"][0])
 
             return distances, angles, lines, gray_img.shape
-
-        def datasetEntryFromPoints(p1, p2, distance_map, angle_map, blend, image_shape):
+        
+        def getPointsOnLine(p1, p2, blend, image_shape):
             v1 = blend * p1
             v2 = (1 - blend) * p2
 
@@ -136,6 +138,20 @@ class POLD2_MLP_Dataset(BaseDataset):
 
             points[:, 1] = np.clip(points[:, 1], 0, image_shape[0] - 1)
             points[:, 0] = np.clip(points[:, 0], 0, image_shape[1] - 1)
+
+            return points
+
+        def datasetEntryFromPoints(p1, p2, distance_map, angle_map, blend, image_shape):
+
+            num_bands = conf.generate.num_bands
+            band_width = conf.generate.band_width
+            band_ids = np.arange(0, num_bands) - num_bands // 2
+            band_ids *= band_width
+
+            points = np.zeros((0, 2), dtype=int)
+            for i in band_ids:
+                cur_points = getPointsOnLine(p1+i, p2+i, blend, image_shape)
+                points = np.vstack([points, cur_points])
 
             df_val = distance_map[points[:, 1], points[:, 0]].reshape(-1)
             af_val = angle_map[points[:, 1], points[:, 0]].reshape(-1)
