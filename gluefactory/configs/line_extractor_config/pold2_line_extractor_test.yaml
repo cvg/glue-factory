@@ -14,6 +14,8 @@ mlp_conf:
     name: gluefactory.models.lines.pold2_mlp
     has_angle_field: True
     has_distance_field: True
+    num_bands: 3
+    band_width: 2
     num_line_samples: 150
     mlp_hidden_dims: [256, 128, 128, 64, 32]
     pred_threshold: 0.9

@@ -178,15 +178,12 @@ class LineExtractor(BaseModel):
         # Finally we can filter the indices
         return indices[detected_line_indices & detected_line_float]
 
-    def compute_band_points(points):
-        pass
-
 
     # MLP filter
     def mlp_filter(self, points: torch.Tensor, indices_image: torch.Tensor, distance_map: torch.Tensor, angle_map: torch.Tensor) -> torch.Tensor:
         """
         Uses a small Fully Connected NN (MLP) to predict the probabilities of all given line candidates to really be a line!
-        This probabilityx is then used to filter out line candidates whose predicted probability is below a certain threshhold.
+        This probability is then used to filter out line candidates whose predicted probability is below a certain threshhold.
 
         Args:
             points (torch.Tensor): all keypoints, Shape: (#keypoints , 2)
@@ -201,30 +198,30 @@ class LineExtractor(BaseModel):
         use_af = self.conf.mlp_conf.has_angle_field
 
         # Sample coordinates (sample line points for each pair of kp representing a line candidate)
-        points_coordinates = self.get_coordinates(
-            points, indices_image, self.coeffs_strong, self.coeffs_strong_second
-        )
+        points_coordinates = torch.zeros(0, 2).int()
 
-        if self.conf.mlp_conf.use_band:
-            first_band_points,second_band_points = self.compute_band_points()
-            first_band_points_coordinates = self.get_coordinates(first_band_points, indices_image, self.coeffs_strong, self.coeffs_strong_second)
-            second_band_points_coordinates = self.get_coordinates(second_band_points, indices_image, self.coeffs_strong, self.coeffs_strong_second)
+        num_bands = self.conf.mlp_conf.num_bands
+        band_width = self.conf.mlp_conf.band_width
+        band_ids = np.arange(0, num_bands) - num_bands // 2
+        band_ids *= band_width
+        for i in band_ids:
+            band_pts = points + i
+            band_pts = band_pts.int()
+
+            cur_coords = self.get_coordinates(
+                band_pts, indices_image, self.coeffs_strong, self.coeffs_strong_second
+            )
+            cur_coords[:, 0] = torch.clamp(cur_coords[:, 0], 0, distance_map.shape[1] - 1)
+            cur_coords[:, 1] = torch.clamp(cur_coords[:, 1], 0, distance_map.shape[0] - 1)
+            points_coordinates = torch.cat((points_coordinates, cur_coords), dim=0)
 
         # Sample points
         if use_df:
             df_vals = self.sample_map(points_coordinates, distance_map).view(self.num_sample_strong, -1)
-            if self.conf.mlp_conf.use_band:
-                df_vals_band1 = self.sample_map(first_band_points_coordinates, distance_map).view(self.num_sample_strong, -1)
-                df_vals_band2 = self.sample_map(second_band_points_coordinates, distance_map).view(self.num_sample_strong, -1)
-                df_vals = torch.cat((df_vals,df_vals_band1,df_vals_band2),dim=1)
-
+            
         if use_af:
             af_vals = self.sample_map(points_coordinates, angle_map).view(self.num_sample_strong, -1)
-            if self.conf.mlp_conf.use_band:
-                af_vals_band1 = self.sample_map(first_band_points_coordinates, angle_map).view(self.num_sample_strong, -1)
-                af_vals_band2 = self.sample_map(second_band_points_coordinates, angle_map).view(self.num_sample_strong, -1)
-                af_vals = torch.cat((af_vals,af_vals_band1,af_vals_band2),dim=1)
-
+            
         # Prepare input for MLP
         if use_df and use_af:
             inp_vals = torch.cat((df_vals, af_vals), dim=0)
