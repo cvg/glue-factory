@@ -154,9 +154,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
             nn.Conv2d(conf.line_af_decoder_channels, 1, kernel_size=1),
             nn.Sigmoid(),
         )
-        self.line_extractor = LineExtractor(
-            self.conf.line_detection.conf,
-        )
 
         if conf.timeit:
             self.timings = {
@@ -197,14 +194,23 @@ class JointPointLineDetectorDescriptor(BaseModel):
         if conf.checkpoint is not None and Path(conf.checkpoint).exists():
             logger.warning(f"Load model parameters from checkpoint {conf.checkpoint}")
             chkpt = torch.load(conf.checkpoint, map_location=torch.device("cpu"))
+
+            # remove mlp weights from line detection
+            chkpt["model"] = {k: v for k, v in chkpt["model"].items() if not ("mlp" in k)}
+
             self.load_state_dict(
-                chkpt["model"], strict=False
+                chkpt["model"], strict=True
             )  # set to false as otherwise error raised for missing mlp weights
         elif conf.checkpoint is not None:
             chkpt = torch.hub.load_state_dict_from_url(
                 conf.checkpoint, map_location=torch.device("cpu")
             )
             self.load_state_dict(chkpt["model"], strict=False)
+        
+        # Load line extraction after checkpoint loading
+        self.line_extractor = LineExtractor(
+            self.conf.line_detection.conf,
+        )
 
     # Utility methods for line df and af with deepLSD
     def normalize_df(self, df):
