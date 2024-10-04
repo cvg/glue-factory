@@ -28,7 +28,8 @@ class POLD2_MLP(BaseModel):
         "has_angle_field": True,
         "has_distance_field": True, 
         "num_line_samples": 30,    # number of sampled points between line endpoints
-        "use_bands": True,
+        "num_bands": 1,            # number of bands to sample along the line
+        "band_width": 1,           # width of the band to sample along the line
         "mlp_hidden_dims": [256, 128, 128, 64, 32],
         "pred_threshold": 0.9,
         "weights": None,
@@ -46,6 +47,7 @@ class POLD2_MLP(BaseModel):
             input_dim += conf.num_line_samples
         if conf.has_distance_field:
             input_dim += conf.num_line_samples
+        input_dim *= conf.num_bands
         if input_dim == 0:
             raise ValueError("No input features selected for MLP")
 
