@@ -17,6 +17,8 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from gluefactory.models.deeplsd_inference import DeepLSD
+from gluefactory.utils.image import load_image
+from gluefactory.models.extractors.joint_point_line_extractor import JointPointLineDetectorDescriptor
 
 from ..settings import DATA_PATH
 from ..utils.tools import fork_rng
@@ -53,6 +55,17 @@ class POLD2_MLP_Dataset(BaseDataset):
                     "grad_thresh": 3,
                     "grad_nfa": True,
                 },
+            },
+            "jpldd_config" : {
+                "name": "joint_point_line_extractor",
+                "max_num_keypoints": 500,  # setting for training, for eval: -1
+                "timeit": True,  # override timeit: False from BaseModel
+                "line_df_decoder_channels": 32,
+                "line_af_decoder_channels": 32,
+                "line_detection": {
+                        "do": False,
+                    },
+                "checkpoint": "/local/home/Point-Line/outputs/training/focal_loss_experiments/rk_focal_threshDF_focal/checkpoint_best.tar"
             },
             "weights": None,  # path to the weights of the DeepLSD model (relative to DATA_PATH)
             "glob": "revisitop1m/jpg/**/base_image.jpeg",  # relative to DATA_PATH
@@ -103,7 +116,7 @@ class POLD2_MLP_Dataset(BaseDataset):
     def generate_data(self, conf: OmegaConf, data_dir: Path):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        def get_line_from_image(file_path, net):
+        def get_line_from_image(file_path, deeplsd_net, jpldd_net):
             img = cv2.imread(file_path)[:, :, ::-1]
             gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
@@ -113,20 +126,25 @@ class POLD2_MLP_Dataset(BaseDataset):
                 ]
                 / 255.0
             }
+            inputs_jpldd = {
+                "image": load_image(file_path).to(device).unsqueeze(0)
+            }
 
             with torch.no_grad():
-                out = net(inputs)
+                out_deeplsd = deeplsd_net(inputs)
+                out_jpldd = jpldd_net(inputs_jpldd)
+
 
             # distance field
-            distances = out["df"][0]
-            distances /= net.conf.line_neighborhood
+            distances = out_jpldd["line_distancefield"][0]
+            distances /= deeplsd_net.conf.line_neighborhood
             distances = distances.cpu().numpy()
 
             # angle field
-            angles = out["line_level"][0]
+            angles = out_jpldd["line_anglefield"][0]
             angles = angles.cpu().numpy() / np.pi
 
-            lines = np.array(out["lines"][0])
+            lines = np.array(out_deeplsd["lines"][0])
 
             return distances, angles, lines, gray_img.shape
         
@@ -185,9 +203,11 @@ class POLD2_MLP_Dataset(BaseDataset):
         # Load the DeepLSD model
         ckpt_path = DATA_PATH / gen_conf.weights
         ckpt = torch.load(str(ckpt_path), map_location=device, weights_only=False)
-        net = DeepLSD(gen_conf.deeplsd_config)
-        net.load_state_dict(ckpt["model"])
-        net = net.to(device).eval()
+        deeplsd_net = DeepLSD(gen_conf.deeplsd_config)
+        deeplsd_net.load_state_dict(ckpt["model"])
+        deeplsd_net = deeplsd_net.to(device).eval()
+        jpldd_net = JointPointLineDetectorDescriptor(gen_conf.jpldd_config)
+        jpldd_net = jpldd_net.to(device).eval()
 
         blend = np.linspace(0, 1, conf.generate.num_line_samples).reshape(-1, 1)
 
@@ -200,7 +220,7 @@ class POLD2_MLP_Dataset(BaseDataset):
 
         for file_path in tqdm(fps, desc="Generating data"):
             distance_map, angle_map, lines, img_shape = get_line_from_image(
-                file_path, net
+                file_path, deeplsd_net, jpldd_net
             )
 
             lines = lines.astype(int)  # convert to int for indexing
