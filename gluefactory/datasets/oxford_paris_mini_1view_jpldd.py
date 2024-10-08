@@ -42,10 +42,10 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         "num_workers": 0,  # number of workers used by the Dataloader
         "prefetch_factor": None,
         "reshape": None,  # ex [800, 800]  # if reshape is activated AND multiscale learning is activated -> reshape has prevalence
-        "multiscale-learning": {
+        "multiscale_learning": {
             "do": True,
-            "scales-list": [(800, 800), (600, 600), (400, 400)],
-            "scale-selection": 'random' # random or round-robin
+            "scales_list": [(800, 800), (600, 600), (400, 400)],
+            "scale_selection": 'random' # random or round-robin
         },
         "load_features": {
             "do": False,
@@ -132,7 +132,7 @@ def resize_img(img: torch.Tensor, size: tuple) -> torch.Tensor:
     resized = kornia.geometry.transform.resize(
             img,
             size,
-            side='long',
+            side="long",
             antialias=True,
             align_corners=None,
             interpolation='bilinear',
@@ -148,7 +148,7 @@ class _Dataset(torch.utils.data.Dataset):
         self.grayscale = bool(conf.grayscale)
 
         self.preprocessor = None
-        if self.conf.multiscale_learning.do and self.conf.multiscale_learning.scales_selection == 'round-robin':
+        if self.conf.multiscale_learning.do and self.conf.multiscale_learning.scale_selection == 'round-robin':
             self.scale_selection_idx = 0
 
         self.img_dir = DATA_PATH / conf.data_dir
@@ -268,8 +268,10 @@ class _Dataset(torch.utils.data.Dataset):
         full_artificial_img_path = self.img_dir / self.image_sub_paths[idx]
         folder_path = full_artificial_img_path.parent / full_artificial_img_path.stem
         img = self._read_image(folder_path)
-        orig_shape = img.shape
+        orig_shape = img.shape[-1], img.shape[-2]
         size_to_reshape_to = self.select_resize_shape(orig_shape)
+        print(orig_shape)
+        print(size_to_reshape_to)
         data = {
             "name": str(folder_path / "base_image.jpg"),
             "image": img if size_to_reshape_to == orig_shape else resize_img(img, size_to_reshape_to),
@@ -291,8 +293,8 @@ class _Dataset(torch.utils.data.Dataset):
         if not do_reshape and not do_ms_learning:
             return original_img_size
 
-        if do_ms_learning:
-            return self.conf.reshape
+        if do_reshape:
+            return tuple(self.conf.reshape)
 
         if do_ms_learning:
             scales_list = self.conf.multiscale_learning.scales_list
@@ -300,12 +302,12 @@ class _Dataset(torch.utils.data.Dataset):
             assert len(scales_list) > 1 # need more than one scale for multiscale learning to make sense
 
             if scale_selection == "random":
-                return random.choice(scales_list)
+                return tuple(random.choice(scales_list))
             elif scale_selection == "round-robin":
                 current_scale = scales_list[self.scale_selection_idx]
                 self.scale_selection_idx += 1
                 self.scale_selection_idx = self.scale_selection_idx % len(scales_list)
-                return current_scale
+                return tuple(current_scale)
 
         raise Exception("Shouldn't end up here!")
 
