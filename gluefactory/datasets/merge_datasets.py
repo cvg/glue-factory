@@ -1,5 +1,6 @@
 import logging
 from random import shuffle
+import torch
 
 
 from gluefactory.datasets import BaseDataset, get_dataset
@@ -8,6 +9,7 @@ from gluefactory.datasets.minidepth import MiniDepthDataset
 
 
 logger = logging.getLogger(__name__)
+
 
 
 class MergedDataset(BaseDataset):
@@ -43,13 +45,24 @@ class MergedDataset(BaseDataset):
     }
 
     def _init(self, conf):
+        self.config = conf
+
+
+    def get_dataset(self, split):
+        return _Dataset(self.config, split)
+
+
+class _Dataset(torch.utils.data.Dataset):
+    def __init__(self, conf, split):
+        super().__init__()
+        self.conf = conf
         # load datasets, set split
-        self.set_split_for_all_datasets(conf['split'])
+        #self.set_split_for_all_datasets(split)
         self.datasets = {}  # store dataset objects
         self.img_index_collection = []  # store image indices
 
         logging.info(f"Initialize Merged Dataset with following datasets: {conf['datasets'].keys()}")
-        for key, dset_conf in conf["datasets"]:
+        for key, dset_conf in conf["datasets"].items():
             dset = get_dataset(dset_conf.name)(dset_conf)
             dset_initialized = dset.get_dataset(conf.split)
             self.datasets[key] = dset_initialized
@@ -66,14 +79,8 @@ class MergedDataset(BaseDataset):
         return len(self.img_index_collection)
 
 
-    def set_split_for_all_datasets(self, split: str):
-        """
-        Goes through config and sets split for all sub datasets to a common value.
-        """
-        dset_keys = self.conf.datasets.keys()
-        for key in dset_keys:
-            self.conf.datasets[key]["split"] = split
-
+    def get_dataset(self, split):
+        return self
 
     def __getitem__(self, idx):
         dataset_key, in_dataset_idx = self.img_index_collection[idx]

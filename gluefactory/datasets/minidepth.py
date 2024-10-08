@@ -73,7 +73,7 @@ class MiniDepthDataset(BaseDataset):
         torch.hub.download_url_to_file(url_base + zip_name, zip_path)
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
             zip_ref.extractall(tmp_dir)
-        shutil.move(tmp_dir / zip_name.split(".")[0], data_dir)
+        shutil.move(tmp_dir / zip_name.split(".")[0], data_dir.split("/")[0])
 
     def get_dataset(self, split):
         assert split in ["train", "val", "test", "all"]
