@@ -1,10 +1,12 @@
 import logging
 import os
 import pickle
+import random
 import shutil
 import tarfile
 from pathlib import Path
 
+import kornia
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -39,7 +41,12 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         "seed": 0,
         "num_workers": 0,  # number of workers used by the Dataloader
         "prefetch_factor": None,
-        "reshape": None,  # ex [800, 800]
+        "reshape": None,  # ex [800, 800]  # if reshape is activated AND multiscale learning is activated -> reshape has prevalence
+        "multiscale-learning": {
+            "do": True,
+            "scales-list": [(800, 800), (600, 600), (400, 400)],
+            "scale-selection": 'random' # random or round-robin
+        },
         "load_features": {
             "do": False,
             "check_exists": True,
@@ -121,23 +128,30 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         return _Dataset(self.conf, self.images[split], split)
 
 
+def resize_img(img: torch.Tensor, size: tuple) -> torch.Tensor:
+    resized = kornia.geometry.transform.resize(
+            img,
+            size,
+            side='long',
+            antialias=True,
+            align_corners=None,
+            interpolation='bilinear',
+        )
+    return resized
+
+
 class _Dataset(torch.utils.data.Dataset):
     def __init__(self, conf, image_sub_paths: list[str], split):
         super().__init__()
         self.split = split
         self.conf = conf
         self.grayscale = bool(conf.grayscale)
-        # self.conf is set in superclass
-        # set img preprocessor
+
         self.preprocessor = None
-        if self.conf.reshape is not None:
-            reshape_preprocessing = {"resize": self.conf.reshape}
-            self.preprocessor = ImagePreprocessor(reshape_preprocessing)
-        else:
-            self.preprocessor = ImagePreprocessor({})
+        if self.conf.multiscale_learning.do and self.conf.multiscale_learning.scales_selection == 'round-robin':
+            self.scale_selection_idx = 0
 
         self.img_dir = DATA_PATH / conf.data_dir
-
         # Extract image paths
         self.image_sub_paths = image_sub_paths  # [Path(i) for i in image_sub_paths]
 
@@ -182,13 +196,14 @@ class _Dataset(torch.utils.data.Dataset):
             img = img.to(self.conf.device)
         return img
 
-    def _read_groundtruth(self, image_folder_path, original_img_size):
+    def _read_groundtruth(self, image_folder_path, original_img_size: tuple, shape: tuple = None) -> dict:
         """
         Reads groundtruth for points and lines from respective files
         We can assume that gt files are existing at this point->filtered in init!
 
         image_folder_path: full image folder path to get the gt data from
         original_img_size: format w,h original image size to be able to create heatmaps.
+        shape: shape to reshape img to if it is not None
         """
         w, h = original_img_size
         features = {}
@@ -209,8 +224,8 @@ class _Dataset(torch.utils.data.Dataset):
             heatmap[coordinates[:, 1], coordinates[:, 0]] = 1.0
         heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
 
-        if self.conf.reshape is not None:
-            heatmap = self.preprocessor(heatmap)["image"]
+        if shape is not None:
+            heatmap = resize_img(heatmap, shape)
 
         if self.conf.debug:
             non_zero_coord = torch.nonzero(heatmap)
@@ -236,12 +251,12 @@ class _Dataset(torch.utils.data.Dataset):
         af_img *= np.pi
 
         df = torch.from_numpy(df_img).to(dtype=torch.float32)
-        if self.conf.reshape is not None:
-            df = self.preprocessor(df)["image"]
+        if shape is not None:
+            df = resize_img(df, shape)
         features[self.conf.load_features.line_gt.data_keys[0]] = df
         af = torch.from_numpy(af_img).to(dtype=torch.float32)
-        if self.conf.reshape is not None:
-            af = self.preprocessor(af)["image"]
+        if shape is not None:
+            af = resize_img(af, shape)
         features[self.conf.load_features.line_gt.data_keys[1]] = af
 
         return features
@@ -253,15 +268,46 @@ class _Dataset(torch.utils.data.Dataset):
         full_artificial_img_path = self.img_dir / self.image_sub_paths[idx]
         folder_path = full_artificial_img_path.parent / full_artificial_img_path.stem
         img = self._read_image(folder_path)
+        orig_shape = img.shape
+        size_to_reshape_to = self.select_resize_shape(orig_shape)
         data = {
             "name": str(folder_path / "base_image.jpg"),
-            **self.preprocessor(img),
+            "image": img if size_to_reshape_to == orig_shape else resize_img(img, size_to_reshape_to),
         }  # keys: 'name', 'scales', 'image_size', 'transform', 'original_image_size', 'image'
         if self.conf.load_features.do:
-            gt = self._read_groundtruth(folder_path, data["original_image_size"])
+            gt = self._read_groundtruth(folder_path, orig_shape, None if size_to_reshape_to == orig_shape else size_to_reshape_to)
             data = {**data, **gt}
 
         return data
+
+    def select_resize_shape(self, original_img_size: tuple) -> tuple:
+        """
+        Depending on whether resize or multiscale learning is activated the shape to resize the
+        image to is returned. If none of it is activated, the original image size will be returned.
+        Reshape has prevalence over multiscale learning!
+        """
+        do_reshape = self.conf.reshape is not None
+        do_ms_learning = self.conf.multiscale_learning.do
+        if not do_reshape and not do_ms_learning:
+            return original_img_size
+
+        if do_ms_learning:
+            return self.conf.reshape
+
+        if do_ms_learning:
+            scales_list = self.conf.multiscale_learning.scales_list
+            scale_selection = self.conf.multiscale_learning.scale_selection
+            assert len(scales_list) > 1 # need more than one scale for multiscale learning to make sense
+
+            if scale_selection == "random":
+                return random.choice(scales_list)
+            elif scale_selection == "round-robin":
+                current_scale = scales_list[self.scale_selection_idx]
+                self.scale_selection_idx += 1
+                self.scale_selection_idx = self.scale_selection_idx % len(scales_list)
+                return current_scale
+
+        raise Exception("Shouldn't end up here!")
 
     def __len__(self):
         return len(self.image_sub_paths)
