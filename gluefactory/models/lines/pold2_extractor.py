@@ -313,6 +313,8 @@ class LineExtractor(BaseModel):
             lines = points[filtered_idx]
 
             # Append indices to lines - (N,2,3)
+            # Lines are now in the form (x1, y1, idx1), (x2, y2, idx2), where idx1 and idx2 are the indices of the keypoints
+            # and (x1, y1) and (x2, y2) are the coordinates of the keypoints
             lines = torch.cat([lines.reshape(-1,2), filtered_idx.reshape(-1,1)], axis=-1).reshape(-1, 2, 3)
             filtered_idx = merge_lines_torch(torch.tensor(lines), return_indices=True).int()
 
