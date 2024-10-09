@@ -229,10 +229,10 @@ class LineExtractor(BaseModel):
 
         # Sample points
         if use_df:
-            df_vals = self.sample_map(points_coordinates, distance_map).view(self.num_sample_strong, -1)
+            df_vals = self.sample_map(points_coordinates, distance_map).view(self.num_sample_strong*num_bands, -1)
             
         if use_af:
-            af_vals = self.sample_map(points_coordinates, angle_map).view(self.num_sample_strong, -1)
+            af_vals = self.sample_map(points_coordinates, angle_map).view(self.num_sample_strong*num_bands, -1)
             
         # Prepare input for MLP
         if use_df and use_af:
