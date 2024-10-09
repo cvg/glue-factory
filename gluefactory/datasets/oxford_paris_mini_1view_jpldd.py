@@ -43,7 +43,7 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         "prefetch_factor": None,
         "reshape": None,  # ex [800, 800]  # if reshape is activated AND multiscale learning is activated -> reshape has prevalence
         "multiscale_learning": {
-            "do": True,
+            "do": False,
             "scales_list": [(800, 800), (600, 600), (400, 400)],
             "scale_selection": 'random' # random or round-robin
         },
