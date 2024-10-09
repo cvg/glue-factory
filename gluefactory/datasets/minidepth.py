@@ -9,7 +9,8 @@ import torch
 
 from gluefactory.datasets import BaseDataset
 from gluefactory.settings import DATA_PATH, root
-from gluefactory.utils.image import ImagePreprocessor, load_image
+from gluefactory.utils.image import load_image
+from gluefactory.datasets.utils import resize_img_kornia
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,12 @@ class MiniDepthDataset(BaseDataset):
         "seed": 0,
         "num_workers": 0,  # number of workers used by the Dataloader
         "prefetch_factor": None,
-        "preprocessing": {"resize": [800, 800]},
+        "reshape": None,  # ex [800, 800]  # if reshape is activated AND multiscale learning is activated -> reshape has prevalence
+        "multiscale_learning": {
+            "do": False,
+            "scales_list": [(600, 600), (400, 400)],
+            "scale_selection": 'random' # random or round-robin
+        },
         "load_features": {
             "do": False,
             "check_exists": True,
@@ -85,12 +91,18 @@ class _Dataset(torch.utils.data.Dataset):
         self.conf = conf
         self.grayscale = bool(conf.grayscale)
         # self.conf is set in superclass
-        # set img preprocessor
-        self.preprocessor = ImagePreprocessor(conf.preprocessing)
+        
+        if self.conf.multiscale_learning.do:
+            if self.conf.multiscale_learning.scale_selection == 'round-robin':
+                self.scale_selection_idx = 0
+            # Keep track uf how many selected with current scale for batching (all img in same batch need same size)
+            self.num_select_with_current_scale = 0
+            self.current_scale = None #tuple(self.conf.multiscale_learning.scales_list[0])
+            # we need to make sure that the appropriate batch size for the dataset conf is set correctly.
+            self.relevant_batch_size = self.conf[f"{split}_batch_size"]
 
         # select split scenes
         self.img_dir = DATA_PATH / conf.data_dir
-        scene_file_path = self.img_dir.parent
         # Extract the scenes corresponding to the right split
         scenes_file = None
         if split == "train":
@@ -166,13 +178,14 @@ class _Dataset(torch.utils.data.Dataset):
             img = img.to(self.conf.device)
         return img
 
-    def _read_groundtruth(self, image_path, enforce_batch_dim=True):
+    def _read_groundtruth(self, image_path, original_img_size: tuple, shape: tuple = None) -> dict:
         """
         Reads groundtruth for points and lines from respective h5files.
         We can assume that gt files are existing at this point->filtered in init!
 
         image_path: path to image as relative to base directory(self.img_path)
         """
+        # TODO: implement reshape of gt here once gt is generated and format is clear
         ground_truth = {}
         h5_file_name = image_path.with_suffix(".hdf5").name
         point_gt_file_path = self.point_gt_location / image_path.parent / h5_file_name
@@ -201,12 +214,14 @@ class _Dataset(torch.utils.data.Dataset):
         """
         path = self.image_paths[idx]
         img = self._read_image(self.img_dir / path)
+        orig_shape = img.shape[-1], img.shape[-2]
+        size_to_reshape_to = self.select_resize_shape(orig_shape)
         data = {
             "name": str(path),
-            **self.preprocessor(img),
+            "image": img if size_to_reshape_to == orig_shape else resize_img_kornia(img, size_to_reshape_to),
         }  # add metadata, like transform, image_size etc...
         if self.conf.load_features.do:
-            gt = self._read_groundtruth(path)
+            gt = self._read_groundtruth(path, orig_shape, None if size_to_reshape_to == orig_shape else size_to_reshape_to)
             data = {**data, **gt}
 
         return data

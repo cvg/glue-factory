@@ -6,14 +6,14 @@ import shutil
 import tarfile
 from pathlib import Path
 
-import kornia
 import numpy as np
 import torch
 from tqdm import tqdm
 
 from gluefactory.datasets import BaseDataset
 from gluefactory.settings import DATA_PATH, root
-from gluefactory.utils.image import ImagePreprocessor, load_image, read_image
+from gluefactory.utils.image import load_image, read_image
+from gluefactory.datasets.utils import resize_img_kornia
 
 logger = logging.getLogger(__name__)
 
@@ -128,27 +128,6 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         return _Dataset(self.conf, self.images[split], split)
 
 
-def resize_img(img: torch.Tensor, size: tuple) -> torch.Tensor:
-    """
-    This resize function has similar functionality to ImagePreprocessor resize
-
-    Args:
-        img (torch.Tensor): image to resize
-        size (tuple): shape to resize to
-
-    Returns:
-        torch.Tensor: reshaped image
-    """
-    resized = kornia.geometry.transform.resize(
-            img,
-            size,
-            side="long",
-            antialias=True,
-            align_corners=None,
-            interpolation='bilinear',
-        )
-    return resized
-
 
 class _Dataset(torch.utils.data.Dataset):
     def __init__(self, conf, image_sub_paths: list[str], split):
@@ -157,7 +136,6 @@ class _Dataset(torch.utils.data.Dataset):
         self.conf = conf
         self.grayscale = bool(conf.grayscale)
 
-        self.preprocessor = None
         if self.conf.multiscale_learning.do:
             if self.conf.multiscale_learning.scale_selection == 'round-robin':
                 self.scale_selection_idx = 0
@@ -242,7 +220,7 @@ class _Dataset(torch.utils.data.Dataset):
         heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
 
         if shape is not None:
-            heatmap = resize_img(heatmap, shape)
+            heatmap = resize_img_kornia(heatmap, shape)
 
         if self.conf.debug:
             non_zero_coord = torch.nonzero(heatmap)
@@ -269,11 +247,11 @@ class _Dataset(torch.utils.data.Dataset):
 
         df = torch.from_numpy(df_img).to(dtype=torch.float32)
         if shape is not None:
-            df = resize_img(df, shape)
+            df = resize_img_kornia(df, shape)
         features[self.conf.load_features.line_gt.data_keys[0]] = df
         af = torch.from_numpy(af_img).to(dtype=torch.float32)
         if shape is not None:
-            af = resize_img(af, shape)
+            af = resize_img_kornia(af, shape)
         features[self.conf.load_features.line_gt.data_keys[1]] = af
 
         return features
@@ -289,7 +267,7 @@ class _Dataset(torch.utils.data.Dataset):
         size_to_reshape_to = self.select_resize_shape(orig_shape)
         data = {
             "name": str(folder_path / "base_image.jpg"),
-            "image": img if size_to_reshape_to == orig_shape else resize_img(img, size_to_reshape_to),
+            "image": img if size_to_reshape_to == orig_shape else resize_img_kornia(img, size_to_reshape_to),
         }  # keys: 'name', 'scales', 'image_size', 'transform', 'original_image_size', 'image'
         if self.conf.load_features.do:
             gt = self._read_groundtruth(folder_path, orig_shape, None if size_to_reshape_to == orig_shape else size_to_reshape_to)

@@ -32,6 +32,7 @@ class MergedDataset(BaseDataset):
         #"respect_sub_dataset_splits": True,     # if True the validation set of the merged dataset will be the joint validation sets from all sub datasets
                                                 # if False all images from all subdatasets are considered as a whole to generate splits
         "inter_dataset_shuffle": True,  # if True, all images are shuffled (from all datasets)
+        "batch_from_same_dataset": True,  # if True, all images in a batch will be from same dataset. -> must be activated if datasets with multiscale learning are used
         "datasets": {  # Here list datasets with their (file)name. As an example we have Oxparis and Minidepth here
             "minidepth": {
                 "name": "gluefactory.datasets.minidepth",
@@ -60,6 +61,11 @@ class _Dataset(torch.utils.data.Dataset):
         #self.set_split_for_all_datasets(split)
         self.datasets = {}  # store dataset objects
         self.img_index_collection = []  # store image indices
+        if self.conf.batch_from_same_dataset:
+            self.relevant_batch_size = self.conf[f"{split}_batch_size"]
+            self.num_selected_from_same_dataset = 0
+            self.current_dataset = None
+            
 
         logging.info(f"Initialize Merged Dataset with following datasets: {conf['datasets'].keys()}")
         for key, dset_conf in conf["datasets"].items():
@@ -83,5 +89,27 @@ class _Dataset(torch.utils.data.Dataset):
         return self
 
     def __getitem__(self, idx):
-        dataset_key, in_dataset_idx = self.img_index_collection[idx]
-        return self.datasets[dataset_key][in_dataset_idx]
+        if not self.conf.batch_from_same_dataset:
+            dataset_key, in_dataset_idx = self.img_index_collection[idx]
+            return self.datasets[dataset_key][in_dataset_idx]
+        else:
+            # TODO implement get from same dataset
+            # Need intelligent selection mechanism -> in the end we want all images from a datset to be used after one epoch!
+            # Thus need to remove used images from idx list and restore list on new epoch OR sth else
+            pass
+    
+    def do_change_size_now(self) -> bool:
+        """
+        Based on current state descides whether to change shape to reshape images to.
+        This decision is needed as all images in a batch need same shape. So we only potentially change shape
+        when a new batch is starting.
+
+        Returns:
+            bool: should shape be potentially changed?
+        """
+        # check if batch changes
+        if self.num_selected_from_same_dataset % self.relevant_batch_size == 0:
+            self.num_selected_from_same_dataset = 0  # if batch changes set counter to 0
+            return True
+        else:
+            return False
