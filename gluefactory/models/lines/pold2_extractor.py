@@ -35,6 +35,7 @@ class LineExtractor(BaseModel):
         "num_sample": 8,
         "max_point_size": 1500,
         "min_line_length": 20,
+        "max_line_length": 200,
         "distance_map": {
             "threshold": 0.5,
             "avg_filter_size": 13,
@@ -136,9 +137,20 @@ class LineExtractor(BaseModel):
         min_line_length = self.conf.min_line_length
         lines = points[indices_image]
         diff = lines[:, 0] - lines[:, 1]
-        diff = torch.sqrt(torch.sum(diff ** 2, dim=1))
+        diff = torch.sum(diff ** 2, dim=1)
 
-        return indices_image[diff > min_line_length]
+        return indices_image[diff > (min_line_length**2)]
+
+    def filter_large_lines(self, points, indices_image):
+        """
+        Filter out lines that are too short.
+        """
+        max_line_length = self.conf.max_line_length
+        lines = points[indices_image]
+        diff = lines[:, 0] - lines[:, 1]
+        diff = torch.sum(diff ** 2, dim=1)
+
+        return indices_image[diff < (max_line_length**2)]
 
     # Distance map filtering
     def filter_with_distance_field(
@@ -225,13 +237,12 @@ class LineExtractor(BaseModel):
             cur_coords[:, 0] = torch.clamp(cur_coords[:, 0], 0, distance_map.shape[1] - 1)
             cur_coords[:, 1] = torch.clamp(cur_coords[:, 1], 0, distance_map.shape[0] - 1)
             points_coordinates = torch.cat((points_coordinates, cur_coords), dim=0)
-
         # Sample points
         if use_df:
-            df_vals = self.sample_map(points_coordinates, distance_map).view(self.num_sample_strong, -1)
+            df_vals = self.sample_map(points_coordinates, distance_map).view(self.num_sample_strong*num_bands, -1)
             
         if use_af:
-            af_vals = self.sample_map(points_coordinates, angle_map).view(self.num_sample_strong, -1)
+            af_vals = self.sample_map(points_coordinates, angle_map).view(self.num_sample_strong*num_bands, -1)
             
         # Prepare input for MLP
         if use_df and use_af:
@@ -259,6 +270,7 @@ class LineExtractor(BaseModel):
 
         # Filter out small lines
         indices_image = self.filter_small_lines(points, indices_image)
+        indices_image = self.filter_large_lines(points, indices_image)
 
         # First pass - weak filter - Handcrafted heuristic
         indices_image = self.filter_with_distance_field(
