@@ -328,7 +328,7 @@ class LineExtractor(BaseModel):
             # Lines are now in the form (x1, y1, idx1), (x2, y2, idx2), where idx1 and idx2 are the indices of the keypoints
             # and (x1, y1) and (x2, y2) are the coordinates of the keypoints
             lines = torch.cat([lines.reshape(-1,2), filtered_idx.reshape(-1,1)], axis=-1).reshape(-1, 2, 3)
-            filtered_idx = merge_lines_torch(torch.tensor(lines), return_indices=True).int()
+            filtered_idx = merge_lines_torch(lines, return_indices=True).int()
 
         # Prepare output
         lines = points[filtered_idx]
@@ -458,7 +458,7 @@ def test_extractor(extractor, folder_path, device, show=False):
         .cpu()
         .numpy()
     )
-    print(f"Number of lines after orig NMS: {len(onms_lines)}")
+    # print(f"Number of lines after orig NMS: {len(onms_lines)}")
 
     onms_img = show_lines(image, onms_lines)
     onms_img = show_points(onms_img, points)
