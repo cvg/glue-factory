@@ -44,7 +44,7 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         "reshape": None,  # ex [800, 800]  # if reshape is activated AND multiscale learning is activated -> reshape has prevalence
         "multiscale_learning": {
             "do": False,
-            "scales_list": [(800, 800), (600, 600), (400, 400)],
+            "scales_list": [(600, 600), (400, 400)],
             "scale_selection": 'random' # random or round-robin
         },
         "load_features": {
@@ -129,6 +129,16 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
 
 
 def resize_img(img: torch.Tensor, size: tuple) -> torch.Tensor:
+    """
+    This resize function has similar functionality to ImagePreprocessor resize
+
+    Args:
+        img (torch.Tensor): image to resize
+        size (tuple): shape to resize to
+
+    Returns:
+        torch.Tensor: reshaped image
+    """
     resized = kornia.geometry.transform.resize(
             img,
             size,
@@ -148,8 +158,14 @@ class _Dataset(torch.utils.data.Dataset):
         self.grayscale = bool(conf.grayscale)
 
         self.preprocessor = None
-        if self.conf.multiscale_learning.do and self.conf.multiscale_learning.scale_selection == 'round-robin':
-            self.scale_selection_idx = 0
+        if self.conf.multiscale_learning.do:
+            if self.conf.multiscale_learning.scale_selection == 'round-robin':
+                self.scale_selection_idx = 0
+            # Keep track uf how many selected with current scale for batching (all img in same batch need same size)
+            self.num_select_with_current_scale = 0
+            self.current_scale = None #tuple(self.conf.multiscale_learning.scales_list[0])
+            # we need to make sure that the appropriate batch size for the dataset conf is set correctly.
+            self.relevant_batch_size = self.conf[f"{split}_batch_size"]
 
         self.img_dir = DATA_PATH / conf.data_dir
         # Extract image paths
@@ -159,6 +175,7 @@ class _Dataset(torch.utils.data.Dataset):
         if len(self.image_sub_paths) == 0:
             raise ValueError(f"Could not find any image in folder: {self.img_dir}.")
         logger.info(f"NUMBER OF IMAGES: {len(self.image_sub_paths)}")
+        logger.info(f"KNOWN BATCHSIZE FOR MY SPLIT({self.split}) is {self.relevant_batch_size}")
         # Load features
         if conf.load_features.do:
             # filter out where missing groundtruth
@@ -277,8 +294,24 @@ class _Dataset(torch.utils.data.Dataset):
         if self.conf.load_features.do:
             gt = self._read_groundtruth(folder_path, orig_shape, None if size_to_reshape_to == orig_shape else size_to_reshape_to)
             data = {**data, **gt}
-
         return data
+    
+    def do_change_size_now(self) -> bool:
+        """
+        Based on current state descides whether to change shape to reshape images to.
+        This decision is needed as all images in a batch need same shape. So we only potentially change shape
+        when a new batch is starting.
+
+        Returns:
+            bool: should shape be potentially changed?
+        """
+        # check if batch changes
+        if self.num_select_with_current_scale % self.relevant_batch_size == 0:
+            self.num_select_with_current_scale = 0  # if batch changes set counter to 0
+            return True
+        else:
+            return False
+        
 
     def select_resize_shape(self, original_img_size: tuple) -> tuple:
         """
@@ -295,17 +328,25 @@ class _Dataset(torch.utils.data.Dataset):
             return tuple(self.conf.reshape)
 
         if do_ms_learning:
-            scales_list = self.conf.multiscale_learning.scales_list
-            scale_selection = self.conf.multiscale_learning.scale_selection
-            assert len(scales_list) > 1 # need more than one scale for multiscale learning to make sense
+            if self.do_change_size_now():
+                self.num_select_with_current_scale += 1
+                scales_list = self.conf.multiscale_learning.scales_list
+                scale_selection = self.conf.multiscale_learning.scale_selection
+                assert len(scales_list) > 1 # need more than one scale for multiscale learning to make sense
 
-            if scale_selection == "random":
-                return tuple(random.choice(scales_list))
-            elif scale_selection == "round-robin":
-                current_scale = scales_list[self.scale_selection_idx]
-                self.scale_selection_idx += 1
-                self.scale_selection_idx = self.scale_selection_idx % len(scales_list)
-                return tuple(current_scale)
+                if scale_selection == "random":
+                    choice = tuple(random.choice(scales_list))
+                    self.current_scale = choice
+                    return choice
+                elif scale_selection == "round-robin":
+                    current_scale = scales_list[self.scale_selection_idx]
+                    self.current_scale = current_scale
+                    self.scale_selection_idx += 1
+                    self.scale_selection_idx = self.scale_selection_idx % len(scales_list)
+                    return tuple(current_scale)
+            else:
+                self.num_select_with_current_scale += 1
+                return self.current_scale
 
         raise Exception("Shouldn't end up here!")
 
