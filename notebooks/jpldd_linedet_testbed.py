@@ -1,3 +1,9 @@
+"""
+Testbed for Joint Point-Line Detection Model (JPLDD) with Line Detection.
+Replication of notebooks/refine_line_detection.ipynb as a python script instead of a notebook.
+"""
+
+
 from gluefactory.models import get_model
 from gluefactory.datasets import get_dataset
 import torch
