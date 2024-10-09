@@ -270,8 +270,6 @@ class _Dataset(torch.utils.data.Dataset):
         img = self._read_image(folder_path)
         orig_shape = img.shape[-1], img.shape[-2]
         size_to_reshape_to = self.select_resize_shape(orig_shape)
-        print(orig_shape)
-        print(size_to_reshape_to)
         data = {
             "name": str(folder_path / "base_image.jpg"),
             "image": img if size_to_reshape_to == orig_shape else resize_img(img, size_to_reshape_to),
