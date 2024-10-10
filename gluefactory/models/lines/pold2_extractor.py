@@ -323,6 +323,13 @@ class LineExtractor(BaseModel):
         # Process distance map
         binary_distance_map = self.process_distance_map(distance_map)
 
+        # Save the binary distance map
+        if self.conf.debug:
+            global IDX
+            b_img = binary_distance_map.cpu().numpy() * 255
+            b_img = b_img.astype(np.uint8)
+            cv2.imwrite(f"tmp/{IDX}_binary_distance_map.jpg", b_img)
+
         # Apply two stage filter
         filtered_idx = self.two_stage_filter(points, binary_distance_map, distance_map, angle_map, indices_image)
 
@@ -366,11 +373,21 @@ def show_lines(image, lines):
 
     return image
 
+# Global variables for debugging
+IDX = None
+IMAGE = None
 
 def test_extractor(extractor, folder_path, device, show=False):
+    global IDX
+    global IMAGE
+
     image = torch.from_numpy(np.array(Image.open(f"{folder_path}/base_image.jpg"))).to(
         device
     )
+
+    IDX = folder_path.split("/")[-1]
+    IMAGE = image
+
     distance_map = torch.from_numpy(np.array(Image.open(f"{folder_path}/df.jpg"))).to(
         device
     )
@@ -425,7 +442,8 @@ def test_extractor(extractor, folder_path, device, show=False):
 
     folder_path = folder_path.split("/")[-1]
 
-    # logger.info(f"Elapsed time for {folder_path} is : {end_time - start_time}")
+    if extractor.conf.debug:
+        logger.info(f"Elapsed time for {folder_path} is : {end_time - start_time}")
 
     plt.imshow(o_img)
     if show:
@@ -465,7 +483,8 @@ def test_extractor(extractor, folder_path, device, show=False):
         .cpu()
         .numpy()
     )
-    # print(f"Number of lines after orig NMS: {len(onms_lines)}")
+    if extractor.conf.debug:
+        logger.info(f"Number of lines after NMS: {len(onms_lines)}")
 
     onms_img = show_lines(image, onms_lines)
     onms_img = show_points(onms_img, points)
