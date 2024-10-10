@@ -94,9 +94,14 @@ class LineExtractor(BaseModel):
         self.indices = indices
 
         # Import mlp
-        self.model = POLD2_MLP(conf.mlp_conf)
-        self.model.to(self.device)
-        self.model.eval()
+        if conf.mlp_conf is not None:
+            self.model = POLD2_MLP(conf.mlp_conf)
+            self.model.to(self.device)
+            self.model.eval()
+            
+            self.num_samples_mlp = conf.mlp_conf.num_line_samples
+            self.coeffs_mlp = torch.arange(0, 1, 1 / self.num_samples_mlp).to(self.device).view(-1, 1)
+            self.coeffs_mlp_second = (1 - torch.arange(0, 1, 1 / self.num_samples_mlp)).to(self.device).view(-1, 1)
 
     # Distance map processing
     def process_distance_map(self, distance_map):
@@ -281,10 +286,12 @@ class LineExtractor(BaseModel):
             print(f"Num lines after 1st stage: {indices_image.shape[0]}")
 
         # Second pass - strong filer - MLP filter
-        indices_image = self.mlp_filter(points, indices_image, distance_map, angle_map)
+        if self.conf.mlp_conf is not None:
+            indices_image = self.mlp_filter(points, indices_image, distance_map, angle_map)
 
-        if self.conf.debug:
-            print(f"Num lines after MLP stage: {indices_image.shape[0]}")
+            if self.conf.debug:
+                print(f"Num lines after MLP stage: {indices_image.shape[0]}")
+
         return indices_image
 
     def _forward(self, data: dict) -> torch.Tensor:
