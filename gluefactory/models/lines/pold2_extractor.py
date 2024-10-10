@@ -127,6 +127,8 @@ class LineExtractor(BaseModel):
         Filter out lines that are too short.
         """
         min_line_length = self.conf.min_line_length
+        if min_line_length is None:
+            return indices_image
         lines = points[indices_image]
         diff = lines[:, 0] - lines[:, 1]
         diff = torch.sum(diff ** 2, dim=1)
@@ -138,6 +140,8 @@ class LineExtractor(BaseModel):
         Filter out lines that are too short.
         """
         max_line_length = self.conf.max_line_length
+        if max_line_length is None:
+            return indices_image
         lines = points[indices_image]
         diff = lines[:, 0] - lines[:, 1]
         diff = torch.sum(diff ** 2, dim=1)
