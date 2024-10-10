@@ -154,12 +154,51 @@ print(f"AF: type: {type(af)}, shape: {af.shape}, min: {torch.min(af)}, max: {tor
 print(f"DF: type: {type(df)}, shape: {df.shape}, min: {torch.min(df)}, max: {torch.max(df)}")
 print(f"KP-HMAP: type: {type(hmap)}, shape: {hmap.shape}, min: {torch.min(hmap)}, max: {torch.max(hmap)}, sum: {torch.sum(hmap)}")
 
-## Inference
+## Inference - Random 300 samples [Get FPS]
+# Comment while inspecting binary_distance_field
 rand_idx = random.sample(range(0, len(ds)), 300) 
 
 for i in rand_idx:
     img_torch = ds[i]["image"].to(device).unsqueeze(0)
     with torch.no_grad():
         output_model = jpldd_model({"image": img_torch})
-        print(output_model['keypoints'].shape)
-        break
+
+timings=jpldd_model.get_current_timings(reset=True)
+pprint(timings)
+print(f"~FPS: {1 / (timings['total-makespan'])} using device {device}")
+
+# Save images
+IDX = 0
+for i in tqdm(rand_idx):
+    img_torch = ds[i]["image"].to(device).unsqueeze(0)
+    with torch.no_grad():
+        output_model = jpldd_model({"image": img_torch})
+
+    # Save image with keypoints and lines
+    img = (img_torch[0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+
+    lines = output_model["lines"][0].cpu().numpy().astype(int)
+    points = output_model["keypoints"][0].cpu().numpy().astype(int)
+
+    img = show_points(img, points)
+    img = show_lines(img, lines)
+
+    cv2.imwrite(f'{DEBUG_DIR}/{IDX}_lines.png', img)
+
+    # Save the distance field and angle field
+    keypoints = output_model["keypoints"][0].cpu().numpy()
+    heatmap = output_model["keypoint_and_junction_score_map"][0].cpu().numpy()
+    distance_field = output_model["line_distancefield"][0].cpu().numpy()#
+    angle_field = output_model["line_anglefield"][0].cpu().numpy()
+
+    visualize_img_and_pred(
+        keypoints,
+        heatmap,
+        distance_field,
+        angle_field,
+        img_torch[0].cpu()
+    )
+    plt.savefig(f'{DEBUG_DIR}/{IDX}_fields.png')
+
+    IDX += 1
