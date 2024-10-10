@@ -101,7 +101,7 @@ class LineExtractor(BaseModel):
         )
 
         distance_map_smooth = average_filter(distance_map[None, :, :].float())
-        output = (distance_map & (distance_map_smooth < 1))[0]
+        output = (distance_map & (distance_map_smooth < df_conf.smooth_threshold))[0]
 
         return output
 
