@@ -52,6 +52,7 @@ class LineExtractor(BaseModel):
         "nms": True,
         "device": None,
         "debug": False,
+        "debug_dir": 'tmp',
     }
 
     def _init(self, conf: dict):
@@ -334,7 +335,8 @@ class LineExtractor(BaseModel):
             global IDX
             b_img = binary_distance_map.cpu().numpy() * 255
             b_img = b_img.astype(np.uint8)
-            cv2.imwrite(f"tmp/{IDX}_binary_distance_map.jpg", b_img)
+            cv2.imwrite(f"{self.conf.debug_dir}/{IDX}_binary_distance_map.jpg", b_img)
+            IDX += 1
 
         # Apply two stage filter
         filtered_idx = self.two_stage_filter(points, binary_distance_map, distance_map, angle_map, indices_image)
@@ -380,7 +382,7 @@ def show_lines(image, lines):
     return image
 
 # Global variables for debugging
-IDX = None
+IDX = 0
 IMAGE = None
 
 def test_extractor(extractor, folder_path, device, show=False):
@@ -391,7 +393,6 @@ def test_extractor(extractor, folder_path, device, show=False):
         device
     )
 
-    IDX = folder_path.split("/")[-1]
     IMAGE = image
 
     distance_map = torch.from_numpy(np.array(Image.open(f"{folder_path}/df.jpg"))).to(
