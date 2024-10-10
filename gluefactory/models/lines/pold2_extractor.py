@@ -32,10 +32,7 @@ logger = logging.getLogger(__name__)
 class LineExtractor(BaseModel):
 
     default_conf = {
-        "num_sample": 8,
-        "max_point_size": 1500,
-        "min_line_length": 20,
-        "max_line_length": 200,
+        "samples": [8],                         # Number of samples to take along the line
         "distance_map": {
             "threshold": 0.5,
             "avg_filter_size": 13,
@@ -52,8 +49,6 @@ class LineExtractor(BaseModel):
 
     def _init(self, conf: dict):
 
-        self.num_sample = conf.num_sample
-        self.num_sample_strong = conf.mlp_conf.num_line_samples
         self.max_point_size = conf.max_point_size
 
         if conf.device is not None:
@@ -62,19 +57,15 @@ class LineExtractor(BaseModel):
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         # Precompute coeffs
-        coeffs = torch.arange(0, 1, 1 / self.num_sample).to(self.device).view(-1, 1)
-        coeffs_second = (
-            (1 - torch.arange(0, 1, 1 / self.num_sample)).to(self.device).view(-1, 1)
-        )
-
-        coeffs_strong = (
-            torch.arange(0, 1, 1 / self.num_sample_strong).to(self.device).view(-1, 1)
-        )
-        coeffs_strong_second = (
-            (1 - torch.arange(0, 1, 1 / self.num_sample_strong))
-            .to(self.device)
-            .view(-1, 1)
-        )
+        self.samples = self.conf.samples
+        self.coeffs_list = [
+            torch.arange(0, 1, 1 / sample).to(self.device).view(-1, 1)
+            for sample in self.samples
+        ]
+        self.coeffs_second_list = [
+            (1 - torch.arange(0, 1, 1 / sample)).to(self.device).view(-1, 1)
+            for sample in self.samples
+        ]
 
         # Precompute indices
         indices = torch.combinations(torch.arange(0, self.max_point_size), r=2).numpy()
@@ -86,11 +77,6 @@ class LineExtractor(BaseModel):
             key=cmp_to_key(lambda e1, e2: max(e1[0], e1[1]) - max(e2[0], e2[1])),
         )
         indices = torch.tensor(np.array(indices)).to(self.device)
-
-        self.coeffs = coeffs
-        self.coeffs_second = coeffs_second
-        self.coeffs_strong = coeffs_strong
-        self.coeffs_strong_second = coeffs_strong_second
         self.indices = indices
 
         # Import mlp
@@ -160,7 +146,7 @@ class LineExtractor(BaseModel):
 
     # Distance map filtering
     def filter_with_distance_field(
-        self, points: torch.Tensor, binary_distance_map: torch.Tensor, distance_map: torch.Tensor, indices: torch.Tensor
+        self, points: torch.Tensor, binary_distance_map: torch.Tensor, distance_map: torch.Tensor, indices: torch.Tensor, sample_idx: int
     ) -> torch.Tensor:
         """
         Heuristic filtering line candidates given each as 2 line endpoints, by sampling equidistant points
@@ -175,28 +161,31 @@ class LineExtractor(BaseModel):
             binary_distance_map (torch.Tensor): binary map, telling whether df values at pos are smaller than a threshold
             distance_map (torch.Tensor): distance field as in DeepLSD, normalized to [0, 1]
             indices (torch.Tensor): indices of line endpoints
+            sample_idx (int): index of the samples to use, i.e. how many samples to take along the line
         Return:
-            Indices of
+            Indices of valid line candidates
         """
+
+        num_sample = self.samples[sample_idx]
         inlier_ratio = self.conf.distance_map.inlier_ratio
         max_accepted_mean_value = self.conf.distance_map.max_accepted_mean_value
 
         # Get coordinates
         points_coordinates = self.get_coordinates(
-            points, indices, self.coeffs, self.coeffs_second
+            points, indices, self.coeffs_list[sample_idx], self.coeffs_second_list[sample_idx]
         )
 
         # Sample points
         binary_df_sampled = self.sample_map(
             points_coordinates, binary_distance_map
-        ).view(self.num_sample, -1)
+        ).view(num_sample, -1)
         df_sampled = self.sample_map(points_coordinates, distance_map).view(
-            self.num_sample, -1
+            num_sample, -1
         )
 
         # We reduce the values along the line
         detected_line_indices = (
-            torch.sum(binary_df_sampled, dim=0) >= self.num_sample * inlier_ratio
+            torch.sum(binary_df_sampled, dim=0) >= num_sample * inlier_ratio
         )
         detected_line_float = torch.mean(df_sampled.float(), dim=0) <= max_accepted_mean_value
 
@@ -278,12 +267,13 @@ class LineExtractor(BaseModel):
         indices_image = self.filter_small_lines(points, indices_image)
         indices_image = self.filter_large_lines(points, indices_image)
 
-        # First pass - weak filter - Handcrafted heuristic
-        indices_image = self.filter_with_distance_field(
-            points, binary_distance_map, distance_map, indices_image
-        )
-        if self.conf.debug:
-            print(f"Num lines after 1st stage: {indices_image.shape[0]}")
+        # Weak filter - Handcrafted heuristic
+        for i in range(len(self.samples)):
+            indices_image = self.filter_with_distance_field(
+                points, binary_distance_map, distance_map, indices_image, i
+            )
+            if self.conf.debug:
+                print(f"Num lines after stage {i}: {indices_image.shape[0]}")
 
         # Second pass - strong filer - MLP filter
         if self.conf.mlp_conf is not None:
