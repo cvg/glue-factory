@@ -56,6 +56,14 @@ def visualize_img_and_pred(keypoints, heatmap, distance_field, angle_field, img)
     ax[3].imshow(img.permute(1,2,0))
     ax[3].scatter(keypoints[:,1],keypoints[:,0], marker="o", color="red", s=3)
 
+# Set Output Directory
+DEBUG_DIR = "tmp_testbed"
+if os.path.exists(f"{DEBUG_DIR}"):
+    os.system(f"rm -r {DEBUG_DIR}")
+os.makedirs(f"{DEBUG_DIR}", exist_ok=True)
+
+
+# Set device
 if torch.cuda.is_available():
     device = 'cuda'
 elif torch.backends.mps.is_built():
