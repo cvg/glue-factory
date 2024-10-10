@@ -283,6 +283,8 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 keypoint_and_junction_score_map.squeeze()
             )  # B x H x W
 
+        # TODO: do remove keypoints in padded area and around border?
+
         # Line AF Decoder
         if self.conf.timeit:
             start_line_af = sync_and_time()
@@ -420,7 +422,8 @@ class JointPointLineDetectorDescriptor(BaseModel):
     def loss(self, pred, data):
         """
         format of data: B x H x W
-        perform loss calculation based on prediction and data(=groundtruth) for a batch
+        perform loss calculation based on prediction and data(=groundtruth) for a batch.
+        If predictions contain padding_mask we consider this on loss calculation
         1. On Keypoint-ScoreMap:        weighted BCE Loss / BCE Loss / Focal Loss
         2. On Keypoint-Descriptors:     L1 loss
         3. On Line-Angle Field:         use angle loss from deepLSD paper
@@ -430,17 +433,11 @@ class JointPointLineDetectorDescriptor(BaseModel):
         losses = {}
         metrics = {}
 
-        assert (
-            0 <= pred["keypoint_and_junction_score_map"].min()
-            and pred["keypoint_and_junction_score_map"].max() <= 1
-        )
-        assert (
-            0 <= data["superpoint_heatmap"].min()
-            and data["superpoint_heatmap"].max() <= 1
-        )
+        padding_mask = pred.get("padding_mask", torch.ones_like(pred['image']))
+
         # Use Weighted BCE Loss for Point Heatmap
         keypoint_scoremap_loss = self.loss_fn(
-            pred["keypoint_and_junction_score_map"], data["superpoint_heatmap"]
+            pred["keypoint_and_junction_score_map"] * padding_mask, data["superpoint_heatmap"] * padding_mask
         ).mean(dim=(1, 2))
 
         losses["keypoint_and_junction_score_map"] = keypoint_scoremap_loss
@@ -458,7 +455,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             losses["descriptors"] = keypoint_descriptor_loss
 
         # use angular loss for distance field
-        af_diff = data["deeplsd_angle_field"] - pred["line_anglefield"]
+        af_diff = (data["deeplsd_angle_field"] - pred["line_anglefield"]) * padding_mask
         line_af_loss = torch.minimum(af_diff**2, (torch.pi - af_diff.abs()) ** 2).mean(
             dim=(1, 2)
         )  # pixelwise minimum
@@ -467,8 +464,8 @@ class JointPointLineDetectorDescriptor(BaseModel):
         # use normalized versions for loss
         gt_mask = data["deeplsd_distance_field"] < self.conf.line_neighborhood
         line_df_loss = F.l1_loss(
-            self.normalize_df(pred["line_distancefield"]) * gt_mask,
-            self.normalize_df(data["deeplsd_distance_field"]) * gt_mask,
+            self.normalize_df(pred["line_distancefield"]) * gt_mask * padding_mask,
+            self.normalize_df(data["deeplsd_distance_field"]) * gt_mask * padding_mask,
             # only supervise in line neighborhood
             reduction="none",
         ).mean(dim=(1, 2))
