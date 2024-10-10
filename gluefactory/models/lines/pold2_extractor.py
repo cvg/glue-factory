@@ -216,7 +216,7 @@ class LineExtractor(BaseModel):
         use_af = self.conf.mlp_conf.has_angle_field
 
         # Sample coordinates (sample line points for each pair of kp representing a line candidate)
-        points_coordinates = torch.zeros(0, 2).int().to(self.device)
+        points_coordinates = torch.zeros(0, self.num_samples_mlp, 2).int().to(self.device)
 
         num_bands = self.conf.mlp_conf.num_bands
         band_width = self.conf.mlp_conf.band_width
@@ -227,21 +227,26 @@ class LineExtractor(BaseModel):
             band_pts = band_pts.int()
 
             cur_coords = self.get_coordinates(
-                band_pts, indices_image, self.coeffs_strong, self.coeffs_strong_second
+                band_pts, indices_image, self.coeffs_mlp, self.coeffs_mlp_second
             )
             cur_coords[:, 0] = torch.clamp(cur_coords[:, 0], 0, distance_map.shape[1] - 1)
             cur_coords[:, 1] = torch.clamp(cur_coords[:, 1], 0, distance_map.shape[0] - 1)
+
+            cur_coords = cur_coords.reshape(self.num_samples_mlp, -1, 2).permute(1, 0, 2)
             points_coordinates = torch.cat((points_coordinates, cur_coords), dim=0)
+
+        points_coordinates = points_coordinates.reshape(-1, 2)
+
         # Sample points
         if use_df:
-            df_vals = self.sample_map(points_coordinates, distance_map).view(self.num_sample_strong*num_bands, -1)
+            df_vals = self.sample_map(points_coordinates, distance_map).view(-1, self.num_samples_mlp * num_bands)
             
         if use_af:
-            af_vals = self.sample_map(points_coordinates, angle_map).view(self.num_sample_strong*num_bands, -1)
+            af_vals = self.sample_map(points_coordinates, angle_map).view(-1, self.num_samples_mlp * num_bands)
             
         # Prepare input for MLP
         if use_df and use_af:
-            inp_vals = torch.cat((df_vals, af_vals), dim=0)
+            inp_vals = torch.cat((df_vals, af_vals), dim=1)
         elif use_df:
             inp_vals = df_vals
         elif use_af:
@@ -250,7 +255,7 @@ class LineExtractor(BaseModel):
         # Return estimated probabilities
         predictions = self.model(
             {
-                "input": torch.swapaxes(inp_vals, 0, 1),
+                "input": inp_vals,
             }
         )["line_probs"]
         mlp_output = (predictions > self.conf.mlp_conf.pred_threshold).reshape(-1)
