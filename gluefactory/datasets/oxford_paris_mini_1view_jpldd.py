@@ -41,10 +41,10 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         "seed": 0,
         "num_workers": 0,  # number of workers used by the Dataloader
         "prefetch_factor": None,
-        "reshape": None,  # ex [800, 800]  # if reshape is activated AND multiscale learning is activated -> reshape has prevalence
+        "reshape": None,  # ex 800  # if reshape is activated AND multiscale learning is activated -> reshape has prevalence
         "multiscale_learning": {
             "do": False,
-            "scales_list": [(600, 600), (400, 400)],
+            "scales_list": [1000, 800, 600, 400],  # use interger scales to have resize keep aspect ratio -> not squashing img by forcing it to square
             "scale_selection": 'random' # random or round-robin
         },
         "load_features": {
@@ -141,7 +141,7 @@ class _Dataset(torch.utils.data.Dataset):
                 self.scale_selection_idx = 0
             # Keep track uf how many selected with current scale for batching (all img in same batch need same size)
             self.num_select_with_current_scale = 0
-            self.current_scale = None #tuple(self.conf.multiscale_learning.scales_list[0])
+            self.current_scale = None
             # we need to make sure that the appropriate batch size for the dataset conf is set correctly.
             self.relevant_batch_size = self.conf[f"{split}_batch_size"]
 
@@ -191,7 +191,7 @@ class _Dataset(torch.utils.data.Dataset):
             img = img.to(self.conf.device)
         return img
 
-    def _read_groundtruth(self, image_folder_path, original_img_size: tuple, shape: tuple = None) -> dict:
+    def _read_groundtruth(self, image_folder_path, original_img_size: tuple, shape: int = None) -> dict:
         """
         Reads groundtruth for points and lines from respective files
         We can assume that gt files are existing at this point->filtered in init!
@@ -291,7 +291,7 @@ class _Dataset(torch.utils.data.Dataset):
             return False
         
 
-    def select_resize_shape(self, original_img_size: tuple) -> tuple:
+    def select_resize_shape(self, original_img_size: tuple):
         """
         Depending on whether resize or multiscale learning is activated the shape to resize the
         image to is returned. If none of it is activated, the original image size will be returned.
@@ -303,7 +303,7 @@ class _Dataset(torch.utils.data.Dataset):
             return original_img_size
 
         if do_reshape:
-            return tuple(self.conf.reshape)
+            return int(self.conf.reshape)
 
         if do_ms_learning:
             if self.do_change_size_now():
@@ -313,7 +313,7 @@ class _Dataset(torch.utils.data.Dataset):
                 assert len(scales_list) > 1 # need more than one scale for multiscale learning to make sense
 
                 if scale_selection == "random":
-                    choice = tuple(random.choice(scales_list))
+                    choice = int(random.choice(scales_list))
                     self.current_scale = choice
                     return choice
                 elif scale_selection == "round-robin":
@@ -321,7 +321,7 @@ class _Dataset(torch.utils.data.Dataset):
                     self.current_scale = current_scale
                     self.scale_selection_idx += 1
                     self.scale_selection_idx = self.scale_selection_idx % len(scales_list)
-                    return tuple(current_scale)
+                    return int(current_scale)
             else:
                 self.num_select_with_current_scale += 1
                 return self.current_scale

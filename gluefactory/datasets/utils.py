@@ -99,13 +99,14 @@ def resize(image, size, fn=None, interp="linear", df=None):
     return cv2.resize(image, (w_new, h_new), interpolation=mode), scale
 
 
-def resize_img_kornia(img: torch.Tensor, size: tuple) -> torch.Tensor:
+def resize_img_kornia(img: torch.Tensor, size: int) -> torch.Tensor:
     """
-    This resize function has similar functionality to ImagePreprocessor resize
+    This resize function has similar functionality to ImagePreprocessor resize.
+    Here we resize and keep aspect ratio by scaling long side to 'size' abd scale the other part accoringly.
 
     Args:
         img (torch.Tensor): image to resize
-        size (tuple): shape to resize to
+        size (int): shape to resize to
 
     Returns:
         torch.Tensor: reshaped image
