@@ -33,14 +33,21 @@ class LineExtractor(BaseModel):
 
     default_conf = {
         "samples": [8],                         # Number of samples to take along the line
+        "max_point_size": 1500,                 # Maximum number of points to consider
+        "min_line_length": 40,                  # Minimum line length
+        "max_line_length": 900,                 # Maximum line length
+
         "distance_map": {
-            "threshold": 0.5,
-            "avg_filter_size": 13,
-            "avg_filter_padding": 6,
-            "avg_filter_stride": 1,
-            "inlier_ratio": 1.0,
-            "max_accepted_mean_value": 0.8,
+            "max_value": 5,                     # Maximum value to which the distance map is capped [Line Neighbourhood in Extractor Config]
+            "threshold": 0.5,                   # Threshold for generating binary distance map
+            "smooth_threshold": 0.95,           # Threshold for smoothened distance map
+            "avg_filter_size": 13,              # Size of the average filter
+            "avg_filter_padding": 6,            # Padding of the average filter
+            "avg_filter_stride": 1,             # Stride of the average filter
+            "inlier_ratio": 1.0,                # Ratio of inliers
+            "max_accepted_mean_value": 0.8,     # Maximum accepted DF mean value along the line
         },
+
         "mlp_conf": POLD2_MLP.default_conf,
         "nms": True,
         "device": None,
