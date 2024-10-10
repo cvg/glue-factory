@@ -316,7 +316,7 @@ class LineExtractor(BaseModel):
         indices_image = self.indices[:number_pairs]
 
         # normalize to [0, 1] by dividing by max value TODO: strict positive Z-Score normalization ?
-        df_max = distance_map.max()
+        df_max = self.conf.distance_map.max_value
         distance_map = distance_map.float()
         distance_map /= df_max
 
