@@ -92,7 +92,15 @@ class _Dataset(torch.utils.data.Dataset):
         super().__init__()
         self.conf = conf
         self.grayscale = bool(conf.grayscale)
-        
+
+        # Initialize Image Preprocessors for square padding and resizing
+        self.preprocessors = {} # stores preprocessor for each reshape size
+        if self.conf.reshape is not None:
+            self.register_image_preprocessor_for_size(self.conf.reshape)
+        if self.conf.multiscale_learning.do:
+            for scale in self.conf.multiscale_learning.scales_list:
+                self.register_image_preprocessor_for_size(scale)
+
         if self.conf.multiscale_learning.do:
             if self.conf.multiscale_learning.scale_selection == 'round-robin':
                 self.scale_selection_idx = 0
@@ -105,7 +113,6 @@ class _Dataset(torch.utils.data.Dataset):
         # select split scenes
         self.img_dir = DATA_PATH / conf.data_dir
         # Extract the scenes corresponding to the right split
-        scenes_file = None
         if split == "train":
             scenes_file = root / conf.train_scenes_file_path
         elif split == "val":
@@ -186,7 +193,7 @@ class _Dataset(torch.utils.data.Dataset):
 
         image_path: path to image as relative to base directory(self.img_path)
         """
-        # TODO: implement reshape of gt here once gt is generated and format is clear
+        # TODO: implement reshape of gt here once gt is generated and format is clear (use preprocessors for padding as well)
         ground_truth = {}
         h5_file_name = image_path.with_suffix(".hdf5").name
         point_gt_file_path = self.point_gt_location / image_path.parent / h5_file_name
@@ -219,7 +226,7 @@ class _Dataset(torch.utils.data.Dataset):
         size_to_reshape_to = self.select_resize_shape(orig_shape)
         data = {
             "name": str(path),
-            "image": img if size_to_reshape_to == orig_shape else resize_img_kornia(img, size_to_reshape_to),
+            "image": img if size_to_reshape_to == orig_shape else self.preprocessors[size_to_reshape_to](img),
         }  # add metadata, like transform, image_size etc...
         if self.conf.load_features.do:
             gt = self._read_groundtruth(path, orig_shape, None if size_to_reshape_to == orig_shape else size_to_reshape_to)

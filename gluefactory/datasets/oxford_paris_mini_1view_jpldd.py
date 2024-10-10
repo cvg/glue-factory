@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from gluefactory.datasets import BaseDataset
 from gluefactory.settings import DATA_PATH, root
-from gluefactory.utils.image import load_image, read_image
+from gluefactory.utils.image import load_image, read_image, ImagePreprocessor
 from gluefactory.datasets.utils import resize_img_kornia
 
 logger = logging.getLogger(__name__)
@@ -136,6 +136,14 @@ class _Dataset(torch.utils.data.Dataset):
         self.conf = conf
         self.grayscale = bool(conf.grayscale)
 
+        # Initialize Image Preprocessors for square padding and resizing
+        self.preprocessors = {} # stores preprocessor for each reshape size
+        if self.conf.reshape is not None:
+            self.register_image_preprocessor_for_size(self.conf.reshape)
+        if self.conf.multiscale_learning.do:
+            for scale in self.conf.multiscale_learning.scales_list:
+                self.register_image_preprocessor_for_size(scale)
+
         if self.conf.multiscale_learning.do:
             if self.conf.multiscale_learning.scale_selection == 'round-robin':
                 self.scale_selection_idx = 0
@@ -176,6 +184,23 @@ class _Dataset(torch.utils.data.Dataset):
 
             self.image_sub_paths = new_img_path_list
             logger.info(f"NUMBER OF IMAGES WITH GT: {len(self.image_sub_paths)}")
+
+    def register_image_preprocessor_for_size(self, size: int) -> None:
+        """
+        We use image preprocessor to reshape images and square pad them. We resize keeping the aspect ratio of images.
+        Thus image sizes can be different even when long side scaled to same length. Thus square padding is needed so that
+        all images can be stuck together in a batch.
+        """
+        self.preprocessors[size] = ImagePreprocessor({
+                                                        "resize": size,
+                                                        "edge_divisible_by": None,
+                                                        "side": "long",
+                                                        "interpolation": "bilinear",
+                                                        "align_corners": None,
+                                                        "antialias": True,
+                                                        "square_pad": True,
+                                                        "add_padding_mask": True,}
+                                                     )
 
     def _read_image(self, img_folder_path, enforce_batch_dim=False):
         """
@@ -220,7 +245,7 @@ class _Dataset(torch.utils.data.Dataset):
         heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
 
         if shape is not None:
-            heatmap = resize_img_kornia(heatmap, shape)
+            heatmap = self.preprocessors[shape](heatmap)['image']  # only store image here as padding map will be stored by preprocessing image
 
         if self.conf.debug:
             non_zero_coord = torch.nonzero(heatmap)
@@ -247,11 +272,11 @@ class _Dataset(torch.utils.data.Dataset):
 
         df = torch.from_numpy(df_img).to(dtype=torch.float32)
         if shape is not None:
-            df = resize_img_kornia(df, shape)
+            df = self.preprocessors[shape](df)['image']  # only store image here as padding map will be stored by preprocessing image
         features[self.conf.load_features.line_gt.data_keys[0]] = df
         af = torch.from_numpy(af_img).to(dtype=torch.float32)
         if shape is not None:
-            af = resize_img_kornia(af, shape)
+            af = self.preprocessors[shape](af)['image']  # only store image here as padding map will be stored by preprocessing image
         features[self.conf.load_features.line_gt.data_keys[1]] = af
 
         return features
@@ -267,7 +292,7 @@ class _Dataset(torch.utils.data.Dataset):
         size_to_reshape_to = self.select_resize_shape(orig_shape)
         data = {
             "name": str(folder_path / "base_image.jpg"),
-            "image": img if size_to_reshape_to == orig_shape else resize_img_kornia(img, size_to_reshape_to),
+            "image": img if size_to_reshape_to == orig_shape else self.preprocessors[size_to_reshape_to](img)
         }  # keys: 'name', 'scales', 'image_size', 'transform', 'original_image_size', 'image'
         if self.conf.load_features.do:
             gt = self._read_groundtruth(folder_path, orig_shape, None if size_to_reshape_to == orig_shape else size_to_reshape_to)
