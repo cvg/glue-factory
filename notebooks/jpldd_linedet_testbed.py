@@ -70,9 +70,10 @@ elif torch.backends.mps.is_built():
     device = 'mps'
 else:
     device = 'cpu'
-
 print(f"Device Used: {device}")
 
+
+## Model
 jpldd_conf = {
     "name": "joint_point_line_extractor",
     "max_num_keypoints": 500,  # setting for training, for eval: -1
@@ -82,28 +83,34 @@ jpldd_conf = {
     "line_detection": {
         "do": True,
         "conf": {
-            "num_sample": 8,
-            "num_sample_strong": 150,
             "max_point_size": 1500,
+            "min_line_length": 60,
+            "max_line_length": None,
+            "samples": [8, 16, 32, 64, 128, 256, 512],
+            "distance_map": {
+                "max_value": 5,
+                "threshold": 0.5,
+                "smooth_threshold": 0.85,
+                "avg_filter_size": 13,
+                "avg_filter_padding": 6,
+                "avg_filter_stride": 1,
+                "inlier_ratio": 0.85,
+                "mean_value_ratio": 0.5
+            },
 
-        "distance_map": {
-            "threshold": 0.5,
-            "avg_filter_size": 13,
-            "avg_filter_padding": 6,
-            "avg_filter_stride": 1,
-            "max_value": 2,
-            "inlier_ratio": 0.8,
-            "mean_value_ratio": 0.8
-        },
+            "mlp_conf": {
+                "has_angle_field": True,
+                "has_distance_field": True, 
+                "num_bands": 1,
+                "band_width": 2,
+                "num_line_samples": 150,
+                "mlp_hidden_dims": [256, 128, 128, 64, 32],
+                "pred_threshold": 0.95,
+                "weights": "/local/home/Point-Line/outputs/training/pold2_mlp_gen+train_run1/checkpoint_best.tar",
+            },
 
-        "mlp_conf": {
-            "has_angle_field": True,
-            "has_distance_field": True, 
-            "num_line_samples": 30,    # number of sampled points between line endpoints
-            "mlp_hidden_dims": [256, 128, 128, 64, 32],
-            "pred_threshold": 0.9,
-            "weights": "/local/home/Point-Line/outputs/training/pold2_mlp_1k_img/checkpoint_best.tar",
-        }
+            "debug": True,
+            "debug_dir": DEBUG_DIR,
         }
     },
     "checkpoint": "/local/home/Point-Line/outputs/training/focal_loss_experiments/rk_focal_threshDF_focal/checkpoint_best.tar"
