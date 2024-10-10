@@ -9,7 +9,52 @@ Usage:
 from gluefactory.models import get_model
 from gluefactory.datasets import get_dataset
 import torch
+import numpy as np
 import random
+from tqdm import tqdm
+from pprint import pprint
+import cv2
+import os
+import matplotlib.pyplot as plt
+import flow_vis
+
+# Plotting functions
+def show_points(image, points):
+    for point in points:
+        cv2.circle(image, (point[0], point[1]), 4, (191, 69, 17), -1)
+
+    return image
+
+def show_lines(image, lines):
+    for pair_line in lines:
+        cv2.line(image, pair_line[0], pair_line[1], (0, 255, 0), 3)
+
+    return image
+
+def get_flow_vis(df, ang, line_neighborhood=5):
+    norm = line_neighborhood + 1 - np.clip(df, 0, line_neighborhood)
+    flow_uv = np.stack([norm * np.cos(ang), norm * np.sin(ang)], axis=-1)
+    flow_img = flow_vis.flow_to_color(flow_uv, convert_to_bgr=False)
+    return flow_img
+
+def visualize_img_and_pred(keypoints, heatmap, distance_field, angle_field, img):
+    _, ax = plt.subplots(1, 4, figsize=(20, 20))
+    ax[0].axis('off')
+    ax[0].set_title('Heatmap')
+    ax[0].imshow(heatmap)
+
+    ax[1].axis('off')
+    ax[1].set_title('Distance Field')
+    ax[1].imshow(distance_field)
+
+    ax[2].axis('off')
+    ax[2].set_title('Angle Field')
+    ax[2].imshow(get_flow_vis(distance_field, angle_field))
+
+    ax[3].axis('off')
+    ax[3].set_title('Original')
+    ax[3].imshow(img.permute(1,2,0))
+    ax[3].scatter(keypoints[:,1],keypoints[:,0], marker="o", color="red", s=3)
 
 if torch.cuda.is_available():
     device = 'cuda'
