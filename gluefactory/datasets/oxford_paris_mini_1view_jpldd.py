@@ -327,6 +327,43 @@ class _Dataset(torch.utils.data.Dataset):
                 return self.current_scale
 
         raise Exception("Shouldn't end up here!")
+    
+    
+    def set_num_selected_with_current_scale(self, value: int) -> None:
+        """
+        Sets the self.num_selected_with_current_scale variable to a certain value.
+        This method is implemented as interface for the MergedDataset to be able to deal with multiscale learning
+        on multiple datasets
+
+        Args:
+            value (int): new value for variable
+        """
+        self.num_select_with_current_scale = value
+
+
+    def get_current_scale(self) -> int:
+        """
+        Returns the current used scale to reshape images to. Returns None if multiscale learning is deactivated.
+        This method is implemented as interface for the MergedDataset to be able to deal with multiscale learning
+        on multiple datasets
+
+        Returns:
+            int: current scale used to reshape in multi-scale training. None if its deactivated
+        """
+        return self.current_scale
+    
+    
+    def set_current_scale(self, value):
+        """
+        Sets the current scale used for multiscale training. Used to set size of reshape of this dataset during batch.
+        This method is implemented as interface for the MergedDataset to be able to deal with multiscale learning
+        on multiple datasets.
+
+        Returns:
+            int: current scale used to reshape in multi-scale training. None if its deactivated
+        """
+        self.current_scale = value
+
 
     def __len__(self):
         return len(self.image_sub_paths)
