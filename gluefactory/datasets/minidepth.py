@@ -10,8 +10,7 @@ import torch
 
 from gluefactory.datasets import BaseDataset
 from gluefactory.settings import DATA_PATH, root
-from gluefactory.utils.image import load_image
-from gluefactory.datasets.utils import resize_img_kornia
+from gluefactory.utils.image import load_image, ImagePreprocessor
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +37,7 @@ class MiniDepthDataset(BaseDataset):
         "num_workers": 0,  # number of workers used by the Dataloader
         "prefetch_factor": None,
         "reshape": None,  # ex 800  # if reshape is activated AND multiscale learning is activated -> reshape has prevalence
+        "square_pad": False,
         "multiscale_learning": {
             "do": False,
             "scales_list": [1000, 800, 600, 400],
@@ -185,6 +185,25 @@ class _Dataset(torch.utils.data.Dataset):
         if self.conf.device is not None:
             img = img.to(self.conf.device)
         return img
+    
+    
+    def register_image_preprocessor_for_size(self, size: int) -> None:
+        """
+        We use image preprocessor to reshape images and square pad them. We resize keeping the aspect ratio of images.
+        Thus image sizes can be different even when long side scaled to same length. Thus square padding is needed so that
+        all images can be stuck together in a batch.
+        """
+        self.preprocessors[size] = ImagePreprocessor({
+                                                        "resize": size,
+                                                        "edge_divisible_by": None,
+                                                        "side": "long",
+                                                        "interpolation": "bilinear",
+                                                        "align_corners": None,
+                                                        "antialias": True,
+                                                        "square_pad": bool(self.conf.square_pad),
+                                                        "add_padding_mask": True,}
+                                                     )
+        
 
     def _read_groundtruth(self, image_path, original_img_size: tuple, shape: int = None) -> dict:
         """
