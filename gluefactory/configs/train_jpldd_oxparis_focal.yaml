@@ -3,8 +3,8 @@ data:
     data_dir: "revisitop1m_POLD2/jpg"  # as subdirectory of DATA_PATH(defined in settings.py)
     grayscale: False
     num_workers: 6  # defines processes used in Dataloader
-    train_batch_size: 8  # per GPU
-    val_batch_size: 8
+    train_batch_size: 4  # per GPU
+    val_batch_size: 4
     prefetch_factor: 8
     reshape: null
     square_pad: True

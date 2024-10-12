@@ -433,8 +433,9 @@ class JointPointLineDetectorDescriptor(BaseModel):
         losses = {}
         metrics = {}
 
-        padding_mask = pred.get("padding_mask", torch.ones_like(pred['image']))
-
+        # define padding mask which is only ones if no padding is used -> makes loss compatible with any scaling technique and whether padding is used or not
+        padding_mask = data.get("padding_mask", torch.ones_like(data['image']))[:, 0, :, :]
+        
         # Use Weighted BCE Loss for Point Heatmap
         keypoint_scoremap_loss = self.loss_fn(
             pred["keypoint_and_junction_score_map"] * padding_mask, data["superpoint_heatmap"] * padding_mask
@@ -455,11 +456,11 @@ class JointPointLineDetectorDescriptor(BaseModel):
             losses["descriptors"] = keypoint_descriptor_loss
 
         # use angular loss for distance field
-        af_diff = (data["deeplsd_angle_field"] - pred["line_anglefield"]) * padding_mask
-        line_af_loss = torch.minimum(af_diff**2, (torch.pi - af_diff.abs()) ** 2).mean(
+        af_diff = (data["deeplsd_angle_field"] - pred["line_anglefield"])
+        line_af_loss = (torch.minimum(af_diff**2, (torch.pi - af_diff.abs()) ** 2) * padding_mask).mean(
             dim=(1, 2)
         )  # pixelwise minimum
-        losses["line_anglefield"] = line_af_loss
+        losses["line_anglefield"] = line_af_loss 
 
         # use normalized versions for loss
         gt_mask = data["deeplsd_distance_field"] < self.conf.line_neighborhood
