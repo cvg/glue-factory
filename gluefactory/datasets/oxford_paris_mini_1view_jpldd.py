@@ -13,7 +13,6 @@ from tqdm import tqdm
 from gluefactory.datasets import BaseDataset
 from gluefactory.settings import DATA_PATH, root
 from gluefactory.utils.image import load_image, read_image, ImagePreprocessor
-from gluefactory.datasets.utils import resize_img_kornia
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +41,7 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         "num_workers": 0,  # number of workers used by the Dataloader
         "prefetch_factor": None,
         "reshape": None,  # ex 800  # if reshape is activated AND multiscale learning is activated -> reshape has prevalence
+        "square_pad": True,  # square padding is needed to batch together images with current scaling technique(keeping aspect ratio). Can and should be deactivated on benchmarks
         "multiscale_learning": {
             "do": False,
             "scales_list": [1000, 800, 600, 400],  # use interger scales to have resize keep aspect ratio -> not squashing img by forcing it to square
@@ -198,7 +198,7 @@ class _Dataset(torch.utils.data.Dataset):
                                                         "interpolation": "bilinear",
                                                         "align_corners": None,
                                                         "antialias": True,
-                                                        "square_pad": True,
+                                                        "square_pad": bool(self.conf.square_pad),
                                                         "add_padding_mask": True,}
                                                      )
 
@@ -245,7 +245,7 @@ class _Dataset(torch.utils.data.Dataset):
         heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
 
         if shape is not None:
-            heatmap = self.preprocessors[shape](heatmap)['image']  # only store image here as padding map will be stored by preprocessing image
+            heatmap = self.preprocessors[shape](heatmap.unsqueeze(0))['image'].squeeze(0)  # only store image here as padding map will be stored by preprocessing image
 
         if self.conf.debug:
             non_zero_coord = torch.nonzero(heatmap)
@@ -272,11 +272,11 @@ class _Dataset(torch.utils.data.Dataset):
 
         df = torch.from_numpy(df_img).to(dtype=torch.float32)
         if shape is not None:
-            df = self.preprocessors[shape](df)['image']  # only store image here as padding map will be stored by preprocessing image
+            df = self.preprocessors[shape](df.unsqueeze(0))['image'].squeeze(0)  # only store image here as padding map will be stored by preprocessing image
         features[self.conf.load_features.line_gt.data_keys[0]] = df
         af = torch.from_numpy(af_img).to(dtype=torch.float32)
         if shape is not None:
-            af = self.preprocessors[shape](af)['image']  # only store image here as padding map will be stored by preprocessing image
+            af = self.preprocessors[shape](af.unsqueeze(0))['image'].squeeze(0)  # only store image here as padding map will be stored by preprocessing image
         features[self.conf.load_features.line_gt.data_keys[1]] = af
 
         return features
@@ -292,8 +292,11 @@ class _Dataset(torch.utils.data.Dataset):
         size_to_reshape_to = self.select_resize_shape(orig_shape)
         data = {
             "name": str(folder_path / "base_image.jpg"),
-            "image": img if size_to_reshape_to == orig_shape else self.preprocessors[size_to_reshape_to](img)
         }  # keys: 'name', 'scales', 'image_size', 'transform', 'original_image_size', 'image'
+        if size_to_reshape_to == orig_shape:
+            data['image'] = img
+        else:
+            data = {**data, **self.preprocessors[size_to_reshape_to](img)}
         if self.conf.load_features.do:
             gt = self._read_groundtruth(folder_path, orig_shape, None if size_to_reshape_to == orig_shape else size_to_reshape_to)
             data = {**data, **gt}
