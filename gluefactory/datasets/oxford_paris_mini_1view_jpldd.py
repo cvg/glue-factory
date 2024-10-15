@@ -150,8 +150,8 @@ class _Dataset(torch.utils.data.Dataset):
             # Keep track uf how many selected with current scale for batching (all img in same batch need same size)
             self.num_select_with_current_scale = 0
             self.current_scale = None
-            # we need to make sure that the appropriate batch size for the dataset conf is set correctly.
-            self.relevant_batch_size = self.conf[f"{split}_batch_size"]
+        # we need to make sure that the appropriate batch size for the dataset conf is set correctly.
+        self.relevant_batch_size = self.conf[f"{split}_batch_size"]
 
         self.img_dir = DATA_PATH / conf.data_dir
         # Extract image paths
@@ -229,12 +229,14 @@ class _Dataset(torch.utils.data.Dataset):
         features = {}
         kp_file = image_folder_path / "keypoints.npy"
         kps_file = image_folder_path / "keypoint_scores.npy"
+        reshape_scales = None
 
         # Load keypoints and scores
         orig_kp = torch.from_numpy(np.load(kp_file)).to(dtype=torch.float32)
         integer_kp = torch.round(orig_kp).to(dtype=torch.int)
 
         kps = torch.from_numpy(np.load(kps_file)).to(dtype=torch.float32)
+        
 
         heatmap = np.zeros((h, w))
         coordinates = integer_kp
@@ -245,13 +247,14 @@ class _Dataset(torch.utils.data.Dataset):
         heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
 
         if shape is not None:
-            heatmap = self.preprocessors[shape](heatmap.unsqueeze(0))['image'].squeeze(0)  # only store image here as padding map will be stored by preprocessing image
-
-        if self.conf.debug:
-            non_zero_coord = torch.nonzero(heatmap)
-            features["orig_points"] = non_zero_coord[:][:, torch.tensor([1, 0])]
+            preprocessor_outputs = self.preprocessors[shape](heatmap.unsqueeze(0))
+            reshape_scales = preprocessor_outputs["scales"]
+            heatmap = preprocessor_outputs['image'].squeeze(0)  # only store image here as padding map will be stored by preprocessing image
 
         features[self.conf.load_features.point_gt.data_keys[0]] = heatmap
+        
+        features["gt_keypoints"] = orig_kp * reshape_scales if reshape_scales is not None else orig_kp
+        features["gt_keypoints_scores"] = kps
 
         # Load pickle file for DF max and min values
         with open(image_folder_path / "values.pkl", "rb") as f:
