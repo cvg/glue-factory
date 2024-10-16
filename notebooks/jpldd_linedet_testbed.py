@@ -8,6 +8,8 @@ Usage:
 
 from gluefactory.models import get_model
 from gluefactory.datasets import get_dataset
+from gluefactory.models.deeplsd_inference import DeepLSD
+from gluefactory.settings import DATA_PATH
 import torch
 import numpy as np
 import random
@@ -17,6 +19,7 @@ import cv2
 import os
 import matplotlib.pyplot as plt
 import flow_vis
+from omegaconf import OmegaConf
 
 # Plotting functions
 def show_points(image, points):
@@ -25,9 +28,10 @@ def show_points(image, points):
 
     return image
 
-def show_lines(image, lines):
+def show_lines(image, lines, color='green'):
+    cval = (0, 255, 0) if color == 'green' else (0, 0, 255)
     for pair_line in lines:
-        cv2.line(image, pair_line[0], pair_line[1], (0, 255, 0), 3)
+        cv2.line(image, pair_line[0], pair_line[1], cval, 3)
 
     return image
 
@@ -72,6 +76,24 @@ else:
     device = 'cpu'
 print(f"Device Used: {device}")
 
+## DeepLSD Model
+deeplsd_conf = {
+    "detect_lines": True,
+    "line_detection_params": {
+        "merge": False,
+        "filtering": True,
+        "grad_thresh": 3,
+        "grad_nfa": True,
+    },
+    "weights": "DeepLSD/weights/deeplsd_md.tar",  # path to the weights of the DeepLSD model (relative to DATA_PATH)
+}
+deeplsd_conf = OmegaConf.create(deeplsd_conf)
+
+ckpt_path = DATA_PATH / deeplsd_conf.weights
+ckpt = torch.load(str(ckpt_path), map_location=device, weights_only=False)
+deeplsd_net = DeepLSD(deeplsd_conf)
+deeplsd_net.load_state_dict(ckpt["model"])
+deeplsd_net = deeplsd_net.to(device).eval()
 
 ## Model
 jpldd_conf = {
@@ -157,7 +179,7 @@ print(f"KP-HMAP: type: {type(hmap)}, shape: {hmap.shape}, min: {torch.min(hmap)}
 ## Inference - Random 300 samples [Get FPS]
 # Comment while inspecting binary_distance_field
 rand_idx = random.sample(range(0, len(ds)), 300) 
-
+"""
 for i in rand_idx:
     img_torch = ds[i]["image"].to(device).unsqueeze(0)
     with torch.no_grad():
@@ -166,7 +188,7 @@ for i in rand_idx:
 timings=jpldd_model.get_current_timings(reset=True)
 pprint(timings)
 print(f"~FPS: {1 / (timings['total-makespan'])} using device {device}")
-
+"""
 # Save images
 IDX = 0
 for i in tqdm(rand_idx):
@@ -176,13 +198,35 @@ for i in tqdm(rand_idx):
 
     # Save image with keypoints and lines
     img = (img_torch[0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    c_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
     lines = output_model["lines"][0].cpu().numpy().astype(int)
     points = output_model["keypoints"][0].cpu().numpy().astype(int)
 
+    img = c_img.copy()
     img = show_points(img, points)
     img = show_lines(img, lines)
+    img = cv2.putText(img, "JPLDD", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+
+    # Calculate DeepLSD Lines
+    with torch.no_grad():
+        gray_img = cv2.cvtColor(c_img, cv2.COLOR_BGR2GRAY)
+        inputs = {
+            "image": torch.tensor(gray_img, dtype=torch.float, device=device)[
+                None, None
+            ]
+            / 255.0
+        }
+        deeplsd_output = deeplsd_net(inputs)
+        deeplsd_lines = np.array(deeplsd_output["lines"][0]).astype(int)
+        print(f"Num DeepLSD Lines: {len(deeplsd_lines)}")
+
+    c_img = show_points(c_img, points)
+    c_img = show_lines(c_img, deeplsd_lines, color='red')
+    c_img = cv2.putText(c_img, "DeepLSD", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+
+    # Concatenate both images
+    img = np.concatenate([img, c_img], axis=1)
 
     cv2.imwrite(f'{DEBUG_DIR}/{IDX}_lines.png', img)
 
@@ -200,5 +244,6 @@ for i in tqdm(rand_idx):
         img_torch[0].cpu()
     )
     plt.savefig(f'{DEBUG_DIR}/{IDX}_fields.png')
+    plt.close()
 
     IDX += 1
