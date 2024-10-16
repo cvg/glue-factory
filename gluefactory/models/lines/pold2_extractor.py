@@ -228,7 +228,7 @@ class LineExtractor(BaseModel):
         use_af = self.conf.mlp_conf.has_angle_field
 
         # Sample coordinates (sample line points for each pair of kp representing a line candidate)
-        points_coordinates = torch.zeros(0, self.num_samples_mlp, 2).int().to(self.device)
+        points_coordinates = torch.zeros(len(indices_image), 0, 2).int().to(self.device)
 
         num_bands = self.conf.mlp_conf.num_bands
         band_width = self.conf.mlp_conf.band_width
@@ -245,7 +245,7 @@ class LineExtractor(BaseModel):
             cur_coords[:, 1] = torch.clamp(cur_coords[:, 1], 0, distance_map.shape[0] - 1)
 
             cur_coords = cur_coords.reshape(self.num_samples_mlp, -1, 2).permute(1, 0, 2)
-            points_coordinates = torch.cat((points_coordinates, cur_coords), dim=0)
+            points_coordinates = torch.cat((points_coordinates, cur_coords), dim=1)
 
         points_coordinates = points_coordinates.reshape(-1, 2)
 
