@@ -322,10 +322,14 @@ class LineExtractor(BaseModel):
         number_pairs = int(len(points) * (len(points) - 1) / 2)
         indices_image = self.indices[:number_pairs]
 
-        # normalize to [0, 1] by dividing by max value TODO: strict positive Z-Score normalization ?
+        # normalize DF to [0, 1] by dividing by max value TODO: strict positive Z-Score normalization ?
         df_max = self.conf.distance_map.max_value
         distance_map = distance_map.float()
         distance_map /= df_max
+
+        # normalize AF to [0, 1]
+        angle_map = angle_map.float()
+        angle_map = angle_map / torch.pi
 
         # Process distance map
         binary_distance_map = self.process_distance_map(distance_map)
