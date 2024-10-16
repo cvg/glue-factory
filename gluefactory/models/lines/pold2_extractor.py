@@ -45,7 +45,7 @@ class LineExtractor(BaseModel):
             "avg_filter_padding": 6,            # Padding of the average filter
             "avg_filter_stride": 1,             # Stride of the average filter
             "inlier_ratio": 1.0,                # Ratio of inliers
-            "max_accepted_mean_value": 0.8,     # Maximum accepted DF mean value along the line
+            "max_accepted_mean_value": 0.4,     # Maximum accepted DF mean value along the line
         },
 
         "mlp_conf": POLD2_MLP.default_conf,
