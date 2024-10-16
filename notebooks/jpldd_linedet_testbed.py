@@ -108,7 +108,8 @@ jpldd_conf = {
             "max_point_size": 1500,
             "min_line_length": 60,
             "max_line_length": None,
-            "samples": [8, 16, 32, 64, 128, 256, 512],
+            "samples": [8, 16, 32],
+
             "distance_map": {
                 "max_value": 5,
                 "threshold": 0.5,
@@ -116,21 +117,21 @@ jpldd_conf = {
                 "avg_filter_size": 13,
                 "avg_filter_padding": 6,
                 "avg_filter_stride": 1,
-                "inlier_ratio": 0.85,
-                "mean_value_ratio": 0.5
+                "inlier_ratio": 0.9,
+                "max_accepted_mean_value": 0.3,
             },
 
             "mlp_conf": {
                 "has_angle_field": True,
                 "has_distance_field": True, 
-                "num_bands": 1,
-                "band_width": 2,
+                "num_bands": 3,
+                "band_width": 1,
                 "num_line_samples": 150,
                 "mlp_hidden_dims": [256, 128, 128, 64, 32],
                 "pred_threshold": 0.95,
-                "weights": "/local/home/Point-Line/outputs/training/pold2_mlp_gen+train_run1/checkpoint_best.tar",
+                "weights": "/local/home/Point-Line/outputs/training/pold2_mlp_gen+train_Bands-3-1_1kimg_50pimg/checkpoint_best.tar",
             },
-
+            "nms": True,
             "debug": True,
             "debug_dir": DEBUG_DIR,
         }
