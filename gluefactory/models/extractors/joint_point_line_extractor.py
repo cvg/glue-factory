@@ -12,7 +12,7 @@ from gluefactory.datasets.homographies_deeplsd import sample_homography
 from gluefactory.models import get_model
 from gluefactory.models.backbones.backbone_encoder import AlikedEncoder, aliked_cfgs
 from gluefactory.models.base_model import BaseModel
-from gluefactory.models.extractors.aliked import SDDH, SMH, DKDLight, InputPadder
+from gluefactory.models.extractors.aliked import SDDH, SMH, DKDLight, InputPadder, DKD
 from gluefactory.models.lines.pold2_extractor import LineExtractor
 from gluefactory.models.utils.metrics_points import (
     compute_loc_error,
@@ -109,7 +109,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         # Load Network Components
         self.encoder_backbone = AlikedEncoder(aliked_model_cfg)
         self.keypoint_and_junction_branch = SMH(dim)  # using SMH from ALIKE here
-        self.dkd = DKDLight(
+        self.dkd = DKD(
             radius=conf.nms_radius,
             top_k=-1 if conf.detection_threshold > 0 else conf.max_num_keypoints,
             scores_th=conf.detection_threshold,
@@ -320,8 +320,9 @@ class JointPointLineDetectorDescriptor(BaseModel):
         if self.conf.timeit:
             start_keypoints = sync_and_time()
 
-        keypoints, kptscores = self.dkd(
+        keypoints, kpt_dispersities, kptscores = self.dkd(
             keypoint_and_junction_score_map,
+            sub_pixel=True
         )
         if self.conf.timeit:
             self.timings["keypoint-detection"].append(sync_and_time() - start_keypoints)
