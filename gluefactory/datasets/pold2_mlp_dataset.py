@@ -55,6 +55,7 @@ class POLD2_MLP_Dataset(BaseDataset):
                     "grad_thresh": 3,
                     "grad_nfa": True,
                 },
+                "weights": None,  # path to the weights of the DeepLSD model (relative to DATA_PATH)
             },
             "jpldd_config" : {
                 "name": "joint_point_line_extractor",
@@ -65,10 +66,9 @@ class POLD2_MLP_Dataset(BaseDataset):
                 "line_detection": {
                         "do": False,
                     },
-                "checkpoint": "/local/home/Point-Line/outputs/training/focal_loss_experiments/rk_focal_threshDF_focal/checkpoint_best.tar"
+                "checkpoint": None,
             },
-            "weights": None,  # path to the weights of the DeepLSD model (relative to DATA_PATH)
-            "glob": "revisitop1m/jpg/**/base_image.jpeg",  # relative to DATA_PATH
+            "glob": "revisitop1m/jpg/**/base_image.jpg",  # relative to DATA_PATH
         },
     }
 
@@ -201,7 +201,7 @@ class POLD2_MLP_Dataset(BaseDataset):
             )
 
         # Load the DeepLSD model
-        ckpt_path = DATA_PATH / gen_conf.weights
+        ckpt_path = DATA_PATH / gen_conf.deeplsd_config.weights
         ckpt = torch.load(str(ckpt_path), map_location=device, weights_only=False)
         deeplsd_net = DeepLSD(gen_conf.deeplsd_config)
         deeplsd_net.load_state_dict(ckpt["model"])
@@ -216,6 +216,7 @@ class POLD2_MLP_Dataset(BaseDataset):
         negatives = []
 
         fps = glob.glob(str(DATA_PATH / gen_conf.glob), recursive=True)
+        print(f"Found {len(fps)} images for glob {str(DATA_PATH / gen_conf.glob)}")
         fps = np.random.choice(fps, gen_conf.num_images, replace=False)
 
         for file_path in tqdm(fps, desc="Generating data"):
