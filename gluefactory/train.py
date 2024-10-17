@@ -73,6 +73,7 @@ default_train_conf = {
     "pr_curves": {},
     "plot": None,
     "submodules": [],
+    "use_gpu": True
 }
 default_train_conf = OmegaConf.create(default_train_conf)
 
@@ -230,29 +231,32 @@ def training(rank, conf, output_dir, args):
         writer = SummaryWriter(log_dir=str(output_dir))
 
     data_conf = copy.deepcopy(conf.data)
-    if args.distributed:
-        logger.info(f"Training in distributed mode with {args.n_gpus} GPUs")
-        assert torch.cuda.is_available()
-        device = rank
-        torch.distributed.init_process_group(
-            backend="nccl",
-            world_size=args.n_gpus,
-            rank=device,
-            init_method="file://" + str(args.lock_file),
-        )
-        torch.cuda.set_device(device)
-
-        # adjust batch size and num of workers since these are per GPU
-        if "batch_size" in data_conf:
-            data_conf.batch_size = int(data_conf.batch_size / args.n_gpus)
-        if "train_batch_size" in data_conf:
-            data_conf.train_batch_size = int(data_conf.train_batch_size / args.n_gpus)
-        if "num_workers" in data_conf:
-            data_conf.num_workers = int(
-                (data_conf.num_workers + args.n_gpus - 1) / args.n_gpus
+    if conf.train.use_gpu:
+        if args.distributed:
+            logger.info(f"Training in distributed mode with {args.n_gpus} GPUs")
+            assert torch.cuda.is_available()
+            device = rank
+            torch.distributed.init_process_group(
+                backend="nccl",
+                world_size=args.n_gpus,
+                rank=device,
+                init_method="file://" + str(args.lock_file),
             )
+            torch.cuda.set_device(device)
+
+            # adjust batch size and num of workers since these are per GPU
+            if "batch_size" in data_conf:
+                data_conf.batch_size = int(data_conf.batch_size / args.n_gpus)
+            if "train_batch_size" in data_conf:
+                data_conf.train_batch_size = int(data_conf.train_batch_size / args.n_gpus)
+            if "num_workers" in data_conf:
+                data_conf.num_workers = int(
+                    (data_conf.num_workers + args.n_gpus - 1) / args.n_gpus
+                )
+        else:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
     else:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = "cpu"
     logger.info(f"Using device {device}")
 
     dataset = get_dataset(data_conf.name)(data_conf)

@@ -17,6 +17,8 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from gluefactory.models.deeplsd_inference import DeepLSD
+from gluefactory.utils.image import load_image
+from gluefactory.models.extractors.joint_point_line_extractor import JointPointLineDetectorDescriptor
 
 from ..settings import DATA_PATH
 from ..utils.tools import fork_rng
@@ -36,12 +38,15 @@ class POLD2_MLP_Dataset(BaseDataset):
         "reseed": False,
         # data generation (None to skip)
         "generate": {
+            "regenerate": False,
             "use_df": True,
             "use_af": True,
             "num_images": 100,
             "num_negative_per_image": 10,
             "num_positive_per_image": 10,  # -1 to use all
-            "num_line_samples": 150,  # number of sampled points between line endpoints
+            "num_line_samples": 30,  # number of sampled points between line endpoints
+            "num_bands": 1,  # number of bands to sample along the line
+            "band_width": 1,  # width of the band
             "deeplsd_config": {
                 "detect_lines": True,
                 "line_detection_params": {
@@ -50,9 +55,20 @@ class POLD2_MLP_Dataset(BaseDataset):
                     "grad_thresh": 3,
                     "grad_nfa": True,
                 },
+                "weights": None,  # path to the weights of the DeepLSD model (relative to DATA_PATH)
             },
-            "weights": None,  # path to the weights of the DeepLSD model (relative to DATA_PATH)
-            "glob": "revisitop1m/jpg/**/base_image.jpeg",  # relative to DATA_PATH
+            "jpldd_config" : {
+                "name": "joint_point_line_extractor",
+                "max_num_keypoints": 500,  # setting for training, for eval: -1
+                "timeit": True,  # override timeit: False from BaseModel
+                "line_df_decoder_channels": 32,
+                "line_af_decoder_channels": 32,
+                "line_detection": {
+                        "do": False,
+                    },
+                "checkpoint": None,
+            },
+            "glob": "revisitop1m/jpg/**/base_image.jpg",  # relative to DATA_PATH
         },
     }
 
@@ -100,7 +116,7 @@ class POLD2_MLP_Dataset(BaseDataset):
     def generate_data(self, conf: OmegaConf, data_dir: Path):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        def get_line_from_image(file_path, net):
+        def get_line_from_image(file_path, deeplsd_net, jpldd_net):
             img = cv2.imread(file_path)[:, :, ::-1]
             gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
@@ -110,24 +126,29 @@ class POLD2_MLP_Dataset(BaseDataset):
                 ]
                 / 255.0
             }
+            inputs_jpldd = {
+                "image": load_image(file_path).to(device).unsqueeze(0)
+            }
 
             with torch.no_grad():
-                out = net(inputs)
+                out_deeplsd = deeplsd_net(inputs)
+                out_jpldd = jpldd_net(inputs_jpldd)
+
 
             # distance field
-            distances = out["df"][0]
-            distances /= net.conf.line_neighborhood
+            distances = out_jpldd["line_distancefield"][0]
+            distances /= deeplsd_net.conf.line_neighborhood
             distances = distances.cpu().numpy()
 
             # angle field
-            angles = out["line_level"][0]
+            angles = out_jpldd["line_anglefield"][0]
             angles = angles.cpu().numpy() / np.pi
 
-            lines = np.array(out["lines"][0])
+            lines = np.array(out_deeplsd["lines"][0])
 
             return distances, angles, lines, gray_img.shape
-
-        def datasetEntryFromPoints(p1, p2, distance_map, angle_map, blend, image_shape):
+        
+        def getPointsOnLine(p1, p2, blend, image_shape):
             v1 = blend * p1
             v2 = (1 - blend) * p2
 
@@ -135,6 +156,20 @@ class POLD2_MLP_Dataset(BaseDataset):
 
             points[:, 1] = np.clip(points[:, 1], 0, image_shape[0] - 1)
             points[:, 0] = np.clip(points[:, 0], 0, image_shape[1] - 1)
+
+            return points
+
+        def datasetEntryFromPoints(p1, p2, distance_map, angle_map, blend, image_shape):
+
+            num_bands = conf.generate.num_bands
+            band_width = conf.generate.band_width
+            band_ids = np.arange(0, num_bands) - num_bands // 2
+            band_ids *= band_width
+
+            points = np.zeros((0, 2), dtype=int)
+            for i in band_ids:
+                cur_points = getPointsOnLine(p1+i, p2+i, blend, image_shape)
+                points = np.vstack([points, cur_points])
 
             df_val = distance_map[points[:, 1], points[:, 0]].reshape(-1)
             af_val = angle_map[points[:, 1], points[:, 0]].reshape(-1)
@@ -147,8 +182,12 @@ class POLD2_MLP_Dataset(BaseDataset):
                 return np.hstack([df_val, af_val])
 
         if data_dir.exists():
-            logger.warning("Data directory already exists. Overwriting.")
-            shutil.rmtree(data_dir)
+            if conf.generate.regenerate:
+                logger.warning("Data directory already exists. Overwriting.")
+                shutil.rmtree(data_dir)
+            else:
+                logger.info("Found existing data. Not regenerating")
+                return
 
         data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -162,11 +201,13 @@ class POLD2_MLP_Dataset(BaseDataset):
             )
 
         # Load the DeepLSD model
-        ckpt_path = DATA_PATH / gen_conf.weights
+        ckpt_path = DATA_PATH / gen_conf.deeplsd_config.weights
         ckpt = torch.load(str(ckpt_path), map_location=device, weights_only=False)
-        net = DeepLSD(gen_conf.deeplsd_config)
-        net.load_state_dict(ckpt["model"])
-        net = net.to(device).eval()
+        deeplsd_net = DeepLSD(gen_conf.deeplsd_config)
+        deeplsd_net.load_state_dict(ckpt["model"])
+        deeplsd_net = deeplsd_net.to(device).eval()
+        jpldd_net = JointPointLineDetectorDescriptor(gen_conf.jpldd_config)
+        jpldd_net = jpldd_net.to(device).eval()
 
         blend = np.linspace(0, 1, conf.generate.num_line_samples).reshape(-1, 1)
 
@@ -175,11 +216,12 @@ class POLD2_MLP_Dataset(BaseDataset):
         negatives = []
 
         fps = glob.glob(str(DATA_PATH / gen_conf.glob), recursive=True)
+        print(f"Found {len(fps)} images for glob {str(DATA_PATH / gen_conf.glob)}")
         fps = np.random.choice(fps, gen_conf.num_images, replace=False)
 
         for file_path in tqdm(fps, desc="Generating data"):
             distance_map, angle_map, lines, img_shape = get_line_from_image(
-                file_path, net
+                file_path, deeplsd_net, jpldd_net
             )
 
             lines = lines.astype(int)  # convert to int for indexing

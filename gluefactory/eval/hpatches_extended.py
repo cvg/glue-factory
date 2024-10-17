@@ -89,17 +89,7 @@ def export_predictions(
                 scales = 1.0 / (
                     data["scales"] if len(idx) == 0 else data[f"view{idx}"]["scales"]
                 )
-                # comment for POLD2, uncomment for SP+LSD
-                if (len(pred[f"keypoints{idx}"][0].shape)) == 3:
-                    pred[k] = pred[k] * scales[None]
-                else:
-                    pred[k] = (
-                        # For JPLDD Line detection
-                        # (pred[f"keypoints{idx}"][0][pred[k][0][:,2].to(torch.int32)].reshape(1, -1, 2))
-                        (pred[f"keypoints{idx}"][0][pred[k]].reshape(1, -1, 2))
-                        .reshape(-1, 2, 2)
-                        .unsqueeze(0)
-                    )
+                pred[k] = pred[k] * scales[None]
             if k.startswith("orig_lines"):
                 idx = k.replace("orig_lines", "")
                 scales = 1.0 / (

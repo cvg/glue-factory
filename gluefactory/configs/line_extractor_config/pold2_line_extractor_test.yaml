@@ -1,23 +1,26 @@
-num_sample: 8
-num_sample_strong: 150
 max_point_size: 1500
+samples: [8, 16, 32, 64, 128, 256, 512]
+
 distance_map:
+    max_value: 5
     threshold: 0.5
+    smooth_threshold: 0.95
     avg_filter_size: 13
     avg_filter_padding: 6
     avg_filter_stride: 1
-    max_value: 2
-    inlier_ratio: 0.8
-    mean_value_ratio: 0.8
+    inlier_ratio: 1.0
+    max_accepted_mean_value: 0.5
 
 mlp_conf:
     name: gluefactory.models.lines.pold2_mlp
     has_angle_field: True
     has_distance_field: True
+    num_bands: 1
+    band_width: 2
     num_line_samples: 150
     mlp_hidden_dims: [256, 128, 128, 64, 32]
-    pred_threshold: 0.9
+    pred_threshold: 0.95
     weights: /local/home/Point-Line/outputs/training/pold2_mlp_gen+train_run1/checkpoint_best.tar
-    # weights: gluefactory/models/mlp/mlp.pth
 
 device: cpu
+debug: True

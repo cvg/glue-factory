@@ -154,9 +154,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
             nn.Conv2d(conf.line_af_decoder_channels, 1, kernel_size=1),
             nn.Sigmoid(),
         )
-        self.line_extractor = LineExtractor(
-            self.conf.line_detection.conf,
-        )
 
         if conf.timeit:
             self.timings = {
@@ -197,14 +194,23 @@ class JointPointLineDetectorDescriptor(BaseModel):
         if conf.checkpoint is not None and Path(conf.checkpoint).exists():
             logger.warning(f"Load model parameters from checkpoint {conf.checkpoint}")
             chkpt = torch.load(conf.checkpoint, map_location=torch.device("cpu"))
+
+            # remove mlp weights from line detection
+            chkpt["model"] = {k: v for k, v in chkpt["model"].items() if not ("mlp" in k)}
+
             self.load_state_dict(
-                chkpt["model"], strict=False
-            )  # set to false as otherwise error raised for missing mlp weights
+                chkpt["model"], strict=True
+            )  # set to True to check if all keys are present (mlp weights are not present as we removed them above)
         elif conf.checkpoint is not None:
             chkpt = torch.hub.load_state_dict_from_url(
                 conf.checkpoint, map_location=torch.device("cpu")
             )
             self.load_state_dict(chkpt["model"], strict=False)
+        
+        # Load line extraction after checkpoint loading
+        self.line_extractor = LineExtractor(
+            self.conf.line_detection.conf,
+        )
 
     # Utility methods for line df and af with deepLSD
     def normalize_df(self, df):
@@ -348,17 +354,23 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 start_lines = sync_and_time()
             lines = []
             valid_lines = []
+            line_descs = []
+            line_indices = []
 
-            for df, af, kp in zip(line_distance_field, line_angle_field, rescaled_kp):
+            for df, af, kp, desc in zip(line_distance_field, line_angle_field, rescaled_kp, keypoint_descriptors):
                 line_data = {
                     "points": torch.clone(kp),
                     "distance_map": torch.clone(df),
                     "angle_map": torch.clone(af),
+                    "descriptors": torch.clone(desc),
                 }
-                img_line_indices = self.line_extractor(line_data)
-                # Line matchers expect the lines to be stored as line endpoints where line endpoint = idx of respective keypoint
-                img_lines = img_line_indices
-                if len(img_lines) == 0:
+                line_pred = self.line_extractor(line_data)
+                lines.append(line_pred["lines"])
+                line_descs.append(line_pred["line_descriptors"])
+                line_indices.append(line_pred["line_endpoint_indices"])
+
+                # Line matchers expect the lines to be stored as line endpoints where line endpoint = coordinate of respective keypoint
+                if len(lines) == 0:
                     print("NO LINES DETECTED")
                     img_lines = (
                         torch.arange(30)
@@ -366,12 +378,12 @@ class JointPointLineDetectorDescriptor(BaseModel):
                         .to(line_distance_field[-1].device)
                     )
 
-                lines.append(img_lines)
                 valid_lines.append(
                     torch.ones(len(lines[-1])).to(line_distance_field[-1].device)
                 )
-            output["lines"] = lines
-            output["valid_lines"] = valid_lines
+            output["lines"] = torch.stack(lines, dim=0)
+            output["valid_lines"] = torch.stack(valid_lines, dim=0)
+
             # Use aliked points sampled from inbetween Line endpoints?
             if self.conf.timeit:
                 self.timings["line-detection"].append(sync_and_time() - start_lines)

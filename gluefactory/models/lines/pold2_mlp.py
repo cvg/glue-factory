@@ -1,9 +1,13 @@
 """
 MLP classifier for candidate line endpoints using DF and AF values sampled along the line.
-Usage (plot the confusion matrix):
+Use the following command to train the MLP:
+    python -m gluefactory.train pold2_mlp_test --conf gluefactory/configs/pold2_mlp_train.yaml
+Use the following command to plot the confusion matrix):
     python -m gluefactory.models.lines.pold2_mlp \
         --conf gluefactory/configs/pold2_mlp_train.yaml \
         --weights outputs/training/pold2_mlp_test/checkpoint_best.tar
+Use the following command to test the dataloader:
+    python -m gluefactory.datasets.pold2_mlp_dataset --conf gluefactory/configs/pold2_mlp_dataloader_test.yaml
 """
 
 import argparse
@@ -22,8 +26,10 @@ class POLD2_MLP(BaseModel):
 
     default_conf = {
         "has_angle_field": True,
-        "has_distance_field": True,
-        "num_line_samples": 150,  # number of sampled points between line endpoints
+        "has_distance_field": True, 
+        "num_line_samples": 30,    # number of sampled points between line endpoints
+        "num_bands": 1,            # number of bands to sample along the line
+        "band_width": 1,           # width of the band to sample along the line
         "mlp_hidden_dims": [256, 128, 128, 64, 32],
         "pred_threshold": 0.9,
         "weights": None,
@@ -41,6 +47,7 @@ class POLD2_MLP(BaseModel):
             input_dim += conf.num_line_samples
         if conf.has_distance_field:
             input_dim += conf.num_line_samples
+        input_dim *= conf.num_bands
         if input_dim == 0:
             raise ValueError("No input features selected for MLP")
 

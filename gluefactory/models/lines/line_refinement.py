@@ -71,6 +71,7 @@ def merge_line_cluster_torch(lines, return_indices=False):
     Returns:
         The merged (2, 2) torch tensor line segment.
     """
+    device = lines.device
     orig_lines = lines
     lines = orig_lines[:, :, :2]
 
@@ -92,10 +93,10 @@ def merge_line_cluster_torch(lines, return_indices=False):
     a, b, c = cov[0, 0], cov[0, 1], cov[1, 1]
     # Principal component of a 2x2 symmetric matrix
     if b == 0:
-        u = torch.tensor([1, 0]) if a >= c else torch.tensor([0, 1])
+        u = torch.tensor([1, 0], device=device) if a >= c else torch.tensor([0, 1], device=device)
     else:
         m = (c - a + torch.sqrt((a - c) ** 2 + 4 * b**2)) / (2 * b)
-        u = torch.tensor([1, m]) / torch.sqrt(1 + m**2)
+        u = torch.tensor([1, m], device=device) / torch.sqrt(1 + m**2)
 
     # Get the center of gravity of all endpoints
     cross = torch.mean(points.float(), dim=0)
@@ -200,7 +201,7 @@ def merge_lines_torch(lines, thresh=5.0, overlap_thresh=0.0, return_indices=Fals
         adjacency_mat = ((overlaps > 0) | (close_endpoint < overlap_thresh)) * (
             orth_dist < thresh
         )
-    n_comp, components = connected_components(adjacency_mat, directed=False)
+    n_comp, components = connected_components(adjacency_mat.cpu(), directed=False)
 
     # For each cluster, merge all lines into a single one
     new_lines = []

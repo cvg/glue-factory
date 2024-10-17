@@ -32,25 +32,31 @@ logger = logging.getLogger(__name__)
 class LineExtractor(BaseModel):
 
     default_conf = {
-        "num_sample": 8,
-        "max_point_size": 1500,
+        "samples": [8],                         # Number of samples to take along the line
+        "max_point_size": 1500,                 # Maximum number of points to consider
+        "min_line_length": 40,                  # Minimum line length
+        "max_line_length": 900,                 # Maximum line length
+
         "distance_map": {
-            "threshold": 0.5,
-            "avg_filter_size": 13,
-            "avg_filter_padding": 6,
-            "avg_filter_stride": 1,
-            "inlier_ratio": 1.0,
-            "max_accepted_mean_value": 0.8,
+            "max_value": 5,                     # Maximum value to which the distance map is capped [Line Neighbourhood in Extractor Config]
+            "threshold": 0.5,                   # Threshold for generating binary distance map
+            "smooth_threshold": 0.95,           # Threshold for smoothened distance map
+            "avg_filter_size": 13,              # Size of the average filter
+            "avg_filter_padding": 6,            # Padding of the average filter
+            "avg_filter_stride": 1,             # Stride of the average filter
+            "inlier_ratio": 1.0,                # Ratio of inliers
+            "max_accepted_mean_value": 0.4,     # Maximum accepted DF mean value along the line
         },
+
         "mlp_conf": POLD2_MLP.default_conf,
+        "nms": True,
         "device": None,
         "debug": False,
+        "debug_dir": 'tmp',
     }
 
-    def _init(self, conf):
+    def _init(self, conf: dict):
 
-        self.num_sample = conf.num_sample
-        self.num_sample_strong = conf.mlp_conf.num_line_samples
         self.max_point_size = conf.max_point_size
 
         if conf.device is not None:
@@ -59,19 +65,15 @@ class LineExtractor(BaseModel):
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         # Precompute coeffs
-        coeffs = torch.arange(0, 1, 1 / self.num_sample).to(self.device).view(-1, 1)
-        coeffs_second = (
-            (1 - torch.arange(0, 1, 1 / self.num_sample)).to(self.device).view(-1, 1)
-        )
-
-        coeffs_strong = (
-            torch.arange(0, 1, 1 / self.num_sample_strong).to(self.device).view(-1, 1)
-        )
-        coeffs_strong_second = (
-            (1 - torch.arange(0, 1, 1 / self.num_sample_strong))
-            .to(self.device)
-            .view(-1, 1)
-        )
+        self.samples = self.conf.samples
+        self.coeffs_list = [
+            torch.arange(0, 1, 1 / sample).to(self.device).view(-1, 1)
+            for sample in self.samples
+        ]
+        self.coeffs_second_list = [
+            (1 - torch.arange(0, 1, 1 / sample)).to(self.device).view(-1, 1)
+            for sample in self.samples
+        ]
 
         # Precompute indices
         indices = torch.combinations(torch.arange(0, self.max_point_size), r=2).numpy()
@@ -83,17 +85,17 @@ class LineExtractor(BaseModel):
             key=cmp_to_key(lambda e1, e2: max(e1[0], e1[1]) - max(e2[0], e2[1])),
         )
         indices = torch.tensor(np.array(indices)).to(self.device)
-
-        self.coeffs = coeffs
-        self.coeffs_second = coeffs_second
-        self.coeffs_strong = coeffs_strong
-        self.coeffs_strong_second = coeffs_strong_second
         self.indices = indices
 
         # Import mlp
-        self.model = POLD2_MLP(conf.mlp_conf)
-        self.model.to(self.device)
-        self.model.eval()
+        if conf.mlp_conf is not None:
+            self.model = POLD2_MLP(conf.mlp_conf)
+            self.model.to(self.device)
+            self.model.eval()
+            
+            self.num_samples_mlp = conf.mlp_conf.num_line_samples
+            self.coeffs_mlp = torch.arange(0, 1, 1 / self.num_samples_mlp).to(self.device).view(-1, 1)
+            self.coeffs_mlp_second = (1 - torch.arange(0, 1, 1 / self.num_samples_mlp)).to(self.device).view(-1, 1)
 
     # Distance map processing
     def process_distance_map(self, distance_map):
@@ -107,7 +109,7 @@ class LineExtractor(BaseModel):
         )
 
         distance_map_smooth = average_filter(distance_map[None, :, :].float())
-        output = (distance_map & (distance_map_smooth < 1))[0]
+        output = (distance_map & (distance_map_smooth < df_conf.smooth_threshold))[0]
 
         return output
 
@@ -128,10 +130,35 @@ class LineExtractor(BaseModel):
     def sample_map(self, points, map):
         return map[points[:, 1], points[:, 0]]
 
+    def filter_small_lines(self, points, indices_image):
+        """
+        Filter out lines that are shorter than a threshold.
+        """
+        min_line_length = self.conf.min_line_length
+        if min_line_length is None:
+            return indices_image
+        lines = points[indices_image]
+        diff = lines[:, 0] - lines[:, 1]
+        diff = torch.sum(diff ** 2, dim=1)
+
+        return indices_image[diff > (min_line_length**2)]
+
+    def filter_large_lines(self, points, indices_image):
+        """
+        Filter out lines that are longer than a threshold.
+        """
+        max_line_length = self.conf.max_line_length
+        if max_line_length is None:
+            return indices_image
+        lines = points[indices_image]
+        diff = lines[:, 0] - lines[:, 1]
+        diff = torch.sum(diff ** 2, dim=1)
+
+        return indices_image[diff < (max_line_length**2)]
 
     # Distance map filtering
     def filter_with_distance_field(
-        self, points: torch.Tensor, binary_distance_map: torch.Tensor, distance_map: torch.Tensor, indices: torch.Tensor
+        self, points: torch.Tensor, binary_distance_map: torch.Tensor, distance_map: torch.Tensor, indices: torch.Tensor, sample_idx: int
     ) -> torch.Tensor:
         """
         Heuristic filtering line candidates given each as 2 line endpoints, by sampling equidistant points
@@ -146,28 +173,31 @@ class LineExtractor(BaseModel):
             binary_distance_map (torch.Tensor): binary map, telling whether df values at pos are smaller than a threshold
             distance_map (torch.Tensor): distance field as in DeepLSD, normalized to [0, 1]
             indices (torch.Tensor): indices of line endpoints
+            sample_idx (int): index of the samples to use, i.e. how many samples to take along the line
         Return:
-            Indices of
+            Indices of valid line candidates
         """
+
+        num_sample = self.samples[sample_idx]
         inlier_ratio = self.conf.distance_map.inlier_ratio
         max_accepted_mean_value = self.conf.distance_map.max_accepted_mean_value
 
         # Get coordinates
         points_coordinates = self.get_coordinates(
-            points, indices, self.coeffs, self.coeffs_second
+            points, indices, self.coeffs_list[sample_idx], self.coeffs_second_list[sample_idx]
         )
 
         # Sample points
         binary_df_sampled = self.sample_map(
             points_coordinates, binary_distance_map
-        ).view(self.num_sample, -1)
+        ).view(num_sample, -1)
         df_sampled = self.sample_map(points_coordinates, distance_map).view(
-            self.num_sample, -1
+            num_sample, -1
         )
 
         # We reduce the values along the line
         detected_line_indices = (
-            torch.sum(binary_df_sampled, dim=0) >= self.num_sample * inlier_ratio
+            torch.sum(binary_df_sampled, dim=0) >= num_sample * inlier_ratio
         )
         detected_line_float = torch.mean(df_sampled.float(), dim=0) <= max_accepted_mean_value
 
@@ -178,11 +208,12 @@ class LineExtractor(BaseModel):
         # Finally we can filter the indices
         return indices[detected_line_indices & detected_line_float]
 
+
     # MLP filter
     def mlp_filter(self, points: torch.Tensor, indices_image: torch.Tensor, distance_map: torch.Tensor, angle_map: torch.Tensor) -> torch.Tensor:
         """
         Uses a small Fully Connected NN (MLP) to predict the probabilities of all given line candidates to really be a line!
-        This probabilityx is then used to filter out line candidates whose predicted probability is below a certain threshhold.
+        This probability is then used to filter out line candidates whose predicted probability is below a certain threshhold.
 
         Args:
             points (torch.Tensor): all keypoints, Shape: (#keypoints , 2)
@@ -197,23 +228,37 @@ class LineExtractor(BaseModel):
         use_af = self.conf.mlp_conf.has_angle_field
 
         # Sample coordinates (sample line points for each pair of kp representing a line candidate)
-        points_coordinates = self.get_coordinates(
-            points, indices_image, self.coeffs_strong, self.coeffs_strong_second
-        )
+        points_coordinates = torch.zeros(len(indices_image), 0, 2).int().to(self.device)
+
+        num_bands = self.conf.mlp_conf.num_bands
+        band_width = self.conf.mlp_conf.band_width
+        band_ids = np.arange(0, num_bands) - num_bands // 2
+        band_ids *= band_width
+        for i in band_ids:
+            band_pts = points + i
+            band_pts = band_pts.int()
+
+            cur_coords = self.get_coordinates(
+                band_pts, indices_image, self.coeffs_mlp, self.coeffs_mlp_second
+            )
+            cur_coords[:, 0] = torch.clamp(cur_coords[:, 0], 0, distance_map.shape[1] - 1)
+            cur_coords[:, 1] = torch.clamp(cur_coords[:, 1], 0, distance_map.shape[0] - 1)
+
+            cur_coords = cur_coords.reshape(self.num_samples_mlp, -1, 2).permute(1, 0, 2)
+            points_coordinates = torch.cat((points_coordinates, cur_coords), dim=1)
+
+        points_coordinates = points_coordinates.reshape(-1, 2)
 
         # Sample points
         if use_df:
-            df_vals = self.sample_map(points_coordinates, distance_map).view(
-                self.num_sample_strong, -1
-            )
+            df_vals = self.sample_map(points_coordinates, distance_map).view(-1, self.num_samples_mlp * num_bands)
+            
         if use_af:
-            af_vals = self.sample_map(points_coordinates, angle_map).view(
-                self.num_sample_strong, -1
-            )
-
+            af_vals = self.sample_map(points_coordinates, angle_map).view(-1, self.num_samples_mlp * num_bands)
+            
         # Prepare input for MLP
         if use_df and use_af:
-            inp_vals = torch.cat((df_vals, af_vals), dim=0)
+            inp_vals = torch.cat((df_vals, af_vals), dim=1)
         elif use_df:
             inp_vals = df_vals
         elif use_af:
@@ -222,7 +267,7 @@ class LineExtractor(BaseModel):
         # Return estimated probabilities
         predictions = self.model(
             {
-                "input": torch.swapaxes(inp_vals, 0, 1),
+                "input": inp_vals,
             }
         )["line_probs"]
         mlp_output = (predictions > self.conf.mlp_conf.pred_threshold).reshape(-1)
@@ -235,24 +280,32 @@ class LineExtractor(BaseModel):
         self, points, binary_distance_map, distance_map, angle_map, indices_image
     ):
 
-        # First pass - weak filter - Handcrafted heuristic
-        indices_image = self.filter_with_distance_field(
-            points, binary_distance_map, distance_map, indices_image
-        )
-        if self.conf.debug:
-            print(f"Num lines after 1st stage: {indices_image.shape[0]}")
+        # Filter out small lines
+        indices_image = self.filter_small_lines(points, indices_image)
+        indices_image = self.filter_large_lines(points, indices_image)
+
+        # Weak filter - Handcrafted heuristic
+        for i in range(len(self.samples)):
+            indices_image = self.filter_with_distance_field(
+                points, binary_distance_map, distance_map, indices_image, i
+            )
+            if self.conf.debug:
+                print(f"Num lines after stage {i}: {indices_image.shape[0]}")
 
         # Second pass - strong filer - MLP filter
-        indices_image = self.mlp_filter(points, indices_image, distance_map, angle_map)
+        if self.conf.mlp_conf is not None:
+            indices_image = self.mlp_filter(points, indices_image, distance_map, angle_map)
 
-        if self.conf.debug:
-            print(f"Num lines after MLP stage: {indices_image.shape[0]}")
+            if self.conf.debug:
+                print(f"Num lines after MLP stage: {indices_image.shape[0]}")
+
         return indices_image
 
     def _forward(self, data: dict) -> torch.Tensor:
         points = data["points"]
         distance_map = data["distance_map"]
         angle_map = data["angle_map"]
+        descriptors = data["descriptors"]
 
         # Convert angle map (direction vector) to angle (radians from 0 to pi) but only if loading ground truth!
         if angle_map.ndim > 2:
@@ -269,18 +322,51 @@ class LineExtractor(BaseModel):
         number_pairs = int(len(points) * (len(points) - 1) / 2)
         indices_image = self.indices[:number_pairs]
 
-        # normalize to [0, 1] by dividing by max value TODO: strict positive Z-Score normalization ?
-        df_max = distance_map.max()
+        # normalize DF to [0, 1] by dividing by max value TODO: strict positive Z-Score normalization ?
+        df_max = self.conf.distance_map.max_value
         distance_map = distance_map.float()
         distance_map /= df_max
+
+        # normalize AF to [0, 1]
+        angle_map = angle_map.float()
+        angle_map = angle_map / torch.pi
 
         # Process distance map
         binary_distance_map = self.process_distance_map(distance_map)
 
+        # Save the binary distance map
+        if self.conf.debug:
+            global IDX
+            b_img = binary_distance_map.cpu().numpy() * 255
+            b_img = b_img.astype(np.uint8)
+            cv2.imwrite(f"{self.conf.debug_dir}/{IDX}_binary_distance_map.jpg", b_img)
+            IDX += 1
+
         # Apply two stage filter
-        return self.two_stage_filter(
-            points, binary_distance_map, distance_map, angle_map, indices_image
+        filtered_idx = self.two_stage_filter(points, binary_distance_map, distance_map, angle_map, indices_image)
+
+        # Apply NMS
+        if self.conf.nms:
+            # Get line end points
+            lines = points[filtered_idx]
+
+            # Append indices to lines - (N,2,3)
+            # Lines are now in the form (x1, y1, idx1), (x2, y2, idx2), where idx1 and idx2 are the indices of the keypoints
+            # and (x1, y1) and (x2, y2) are the coordinates of the keypoints
+            lines = torch.cat([lines.reshape(-1,2), filtered_idx.reshape(-1,1)], axis=-1).reshape(-1, 2, 3)
+            filtered_idx = merge_lines_torch(lines, return_indices=True).int()
+
+        # Prepare output
+        lines = points[filtered_idx]
+        line_descriptors = torch.stack(
+            [descriptors[filtered_idx[:, 0]], descriptors[filtered_idx[:, 1]]], dim=1
         )
+
+        return {
+            "lines": lines,
+            "line_descriptors": line_descriptors,
+            "line_endpoint_indices": filtered_idx,
+        }
 
     def loss(self, pred, data):
         raise NotImplementedError
@@ -299,11 +385,20 @@ def show_lines(image, lines):
 
     return image
 
+# Global variables for debugging
+IDX = 0
+IMAGE = None
 
 def test_extractor(extractor, folder_path, device, show=False):
+    global IDX
+    global IMAGE
+
     image = torch.from_numpy(np.array(Image.open(f"{folder_path}/base_image.jpg"))).to(
         device
     )
+
+    IMAGE = image
+
     distance_map = torch.from_numpy(np.array(Image.open(f"{folder_path}/df.jpg"))).to(
         device
     )
@@ -330,9 +425,14 @@ def test_extractor(extractor, folder_path, device, show=False):
     # Start counter
     start_time = time.perf_counter()
 
-    data = {"points": points, "distance_map": distance_map, "angle_map": angle_map}
+    data = {
+        "points": points,
+        "distance_map": distance_map,
+        "angle_map": angle_map,
+        "descriptors": torch.zeros(len(points), 128).to(device)
+    }
     # Post processing step
-    indices_image = extractor(data)
+    indices_image = extractor(data)["line_endpoint_indices"]
 
     if device == "cuda":
         torch.cuda.synchronize()
@@ -353,7 +453,8 @@ def test_extractor(extractor, folder_path, device, show=False):
 
     folder_path = folder_path.split("/")[-1]
 
-    # logger.info(f"Elapsed time for {folder_path} is : {end_time - start_time}")
+    if extractor.conf.debug:
+        logger.info(f"Elapsed time for {folder_path} is : {end_time - start_time}")
 
     plt.imshow(o_img)
     if show:
@@ -393,7 +494,8 @@ def test_extractor(extractor, folder_path, device, show=False):
         .cpu()
         .numpy()
     )
-    print(f"Number of lines after orig NMS: {len(onms_lines)}")
+    if extractor.conf.debug:
+        logger.info(f"Number of lines after NMS: {len(onms_lines)}")
 
     onms_img = show_lines(image, onms_lines)
     onms_img = show_points(onms_img, points)
