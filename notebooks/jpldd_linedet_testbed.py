@@ -21,62 +21,9 @@ import matplotlib.pyplot as plt
 import flow_vis
 from omegaconf import OmegaConf
 
-# Plotting functions
-def show_points(image, points):
-    for point in points:
-        cv2.circle(image, (point[0], point[1]), 4, (191, 69, 17), -1)
-
-    return image
-
-def show_lines(image, lines, color='green'):
-    cval = (0, 255, 0) if color == 'green' else (0, 0, 255)
-    for pair_line in lines:
-        cv2.line(image, pair_line[0], pair_line[1], cval, 3)
-
-    return image
-
-def get_flow_vis(df, ang, line_neighborhood=5):
-    norm = line_neighborhood + 1 - np.clip(df, 0, line_neighborhood)
-    flow_uv = np.stack([norm * np.cos(ang), norm * np.sin(ang)], axis=-1)
-    flow_img = flow_vis.flow_to_color(flow_uv, convert_to_bgr=False)
-    return flow_img
-
-def visualize_img_and_pred(keypoints, heatmap, distance_field, angle_field, img):
-    _, ax = plt.subplots(1, 4, figsize=(20, 20))
-    ax[0].axis('off')
-    ax[0].set_title('Heatmap')
-    ax[0].imshow(heatmap)
-
-    ax[1].axis('off')
-    ax[1].set_title('Distance Field')
-    ax[1].imshow(distance_field)
-
-    ax[2].axis('off')
-    ax[2].set_title('Angle Field')
-    ax[2].imshow(get_flow_vis(distance_field, angle_field))
-
-    ax[3].axis('off')
-    ax[3].set_title('Original')
-    ax[3].imshow(img.permute(1,2,0))
-    ax[3].scatter(keypoints[:,0],keypoints[:,1], marker="o", color="red", s=3)
-
-# Set Output Directory
+# Configs and Constants
 DEBUG_DIR = "tmp_testbed"
-if os.path.exists(f"{DEBUG_DIR}"):
-    os.system(f"rm -r {DEBUG_DIR}")
-os.makedirs(f"{DEBUG_DIR}", exist_ok=True)
 
-
-# Set device
-if torch.cuda.is_available():
-    device = 'cuda'
-elif torch.backends.mps.is_built():
-    device = 'mps'
-else:
-    device = 'cpu'
-print(f"Device Used: {device}")
-
-## DeepLSD Model
 deeplsd_conf = {
     "detect_lines": True,
     "line_detection_params": {
@@ -87,15 +34,7 @@ deeplsd_conf = {
     },
     "weights": "DeepLSD/weights/deeplsd_md.tar",  # path to the weights of the DeepLSD model (relative to DATA_PATH)
 }
-deeplsd_conf = OmegaConf.create(deeplsd_conf)
 
-ckpt_path = DATA_PATH / deeplsd_conf.weights
-ckpt = torch.load(str(ckpt_path), map_location=device, weights_only=False)
-deeplsd_net = DeepLSD(deeplsd_conf)
-deeplsd_net.load_state_dict(ckpt["model"])
-deeplsd_net = deeplsd_net.to(device).eval()
-
-## Model
 jpldd_conf = {
     "name": "joint_point_line_extractor",
     "max_num_keypoints": 500,  # setting for training, for eval: -1
@@ -140,6 +79,71 @@ jpldd_conf = {
     #"checkpoint": "/local/home/rkreft/shared_team_folder/outputs/training/rk_oxparis_focal_hard_gt/checkpoint_best.tar"
     #"checkpoint": "/local/home/rkreft/shared_team_folder/outputs/training/rk_pold2gt_oxparis_base_hard_gt/checkpoint_best.tar"
 }
+
+# Plotting functions
+def show_points(image, points):
+    for point in points:
+        cv2.circle(image, (point[0], point[1]), 4, (191, 69, 17), -1)
+
+    return image
+
+def show_lines(image, lines, color='green'):
+    cval = (0, 255, 0) if color == 'green' else (0, 0, 255)
+    for pair_line in lines:
+        cv2.line(image, pair_line[0], pair_line[1], cval, 3)
+
+    return image
+
+def get_flow_vis(df, ang, line_neighborhood=5):
+    norm = line_neighborhood + 1 - np.clip(df, 0, line_neighborhood)
+    flow_uv = np.stack([norm * np.cos(ang), norm * np.sin(ang)], axis=-1)
+    flow_img = flow_vis.flow_to_color(flow_uv, convert_to_bgr=False)
+    return flow_img
+
+def visualize_img_and_pred(keypoints, heatmap, distance_field, angle_field, img):
+    _, ax = plt.subplots(1, 4, figsize=(20, 20))
+    ax[0].axis('off')
+    ax[0].set_title('Heatmap')
+    ax[0].imshow(heatmap)
+
+    ax[1].axis('off')
+    ax[1].set_title('Distance Field')
+    ax[1].imshow(distance_field)
+
+    ax[2].axis('off')
+    ax[2].set_title('Angle Field')
+    ax[2].imshow(get_flow_vis(distance_field, angle_field))
+
+    ax[3].axis('off')
+    ax[3].set_title('Original')
+    ax[3].imshow(img.permute(1,2,0))
+    ax[3].scatter(keypoints[:,0],keypoints[:,1], marker="o", color="red", s=3)
+
+# Set Output Directory
+if os.path.exists(f"{DEBUG_DIR}"):
+    os.system(f"rm -r {DEBUG_DIR}")
+os.makedirs(f"{DEBUG_DIR}", exist_ok=True)
+
+
+# Set device
+if torch.cuda.is_available():
+    device = 'cuda'
+elif torch.backends.mps.is_built():
+    device = 'mps'
+else:
+    device = 'cpu'
+print(f"Device Used: {device}")
+
+## DeepLSD Model
+deeplsd_conf = OmegaConf.create(deeplsd_conf)
+
+ckpt_path = DATA_PATH / deeplsd_conf.weights
+ckpt = torch.load(str(ckpt_path), map_location=device, weights_only=False)
+deeplsd_net = DeepLSD(deeplsd_conf)
+deeplsd_net.load_state_dict(ckpt["model"])
+deeplsd_net = deeplsd_net.to(device).eval()
+
+## Model
 jpldd_model = get_model("joint_point_line_extractor")(jpldd_conf).to(device)
 jpldd_model.eval()
 
