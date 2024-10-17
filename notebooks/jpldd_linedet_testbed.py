@@ -58,7 +58,7 @@ def visualize_img_and_pred(keypoints, heatmap, distance_field, angle_field, img)
     ax[3].axis('off')
     ax[3].set_title('Original')
     ax[3].imshow(img.permute(1,2,0))
-    ax[3].scatter(keypoints[:,1],keypoints[:,0], marker="o", color="red", s=3)
+    ax[3].scatter(keypoints[:,0],keypoints[:,1], marker="o", color="red", s=3)
 
 # Set Output Directory
 DEBUG_DIR = "tmp_testbed"
