@@ -51,7 +51,7 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
             "do": False,
             "check_exists": True,
             "point_gt": {
-                "data_keys": ["superpoint_heatmap"],
+                "data_keys": ["superpoint_heatmap", "gt_keypoints", "gt_keypoints_scores"],
                 "use_score_heatmap": True,
             },
             "line_gt": {
@@ -216,7 +216,7 @@ class _Dataset(torch.utils.data.Dataset):
             img = img.to(self.conf.device)
         return img
 
-    def _read_groundtruth(self, image_folder_path, original_img_size: tuple, shape: int = None) -> dict:
+    def _read_groundtruth(self, image_folder_path, shape: int = None) -> dict:
         """
         Reads groundtruth for points and lines from respective files
         We can assume that gt files are existing at this point->filtered in init!
@@ -225,37 +225,18 @@ class _Dataset(torch.utils.data.Dataset):
         original_img_size: format w,h original image size to be able to create heatmaps.
         shape: shape to reshape img to if it is not None
         """
-        w, h = original_img_size
+        reshape_scales = None
+        heatmap_gt_key_name = self.conf.load_features.point_gt.data_keys[0]
+        kp_gt_key_name = self.conf.load_features.point_gt.data_keys[1]
+        kp_score_gt_key_name = self.conf.load_features.point_gt.data_keys[2]
+        df_gt_key = self.conf.load_features.point_gt.data_keys[0]
+        af_gt_key = self.conf.load_features.point_gt.data_keys[1]
+
         features = {}
         kp_file = image_folder_path / "keypoints.npy"
         kps_file = image_folder_path / "keypoint_scores.npy"
-        reshape_scales = None
 
-        # Load keypoints and scores
-        orig_kp = torch.from_numpy(np.load(kp_file)).to(dtype=torch.float32)
-        integer_kp = torch.round(orig_kp).to(dtype=torch.int)
-
-        kps = torch.from_numpy(np.load(kps_file)).to(dtype=torch.float32)
-        
-
-        heatmap = np.zeros((h, w))
-        coordinates = integer_kp
-        if self.conf.load_features.point_gt.use_score_heatmap:
-            heatmap[coordinates[:, 1], coordinates[:, 0]] = kps
-        else:
-            heatmap[coordinates[:, 1], coordinates[:, 0]] = 1.0
-        heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
-
-        if shape is not None:
-            preprocessor_outputs = self.preprocessors[shape](heatmap.unsqueeze(0))
-            reshape_scales = preprocessor_outputs["scales"]
-            heatmap = preprocessor_outputs['image'].squeeze(0)  # only store image here as padding map will be stored by preprocessing image
-
-        features[self.conf.load_features.point_gt.data_keys[0]] = heatmap
-        
-        features["gt_keypoints"] = orig_kp * reshape_scales if reshape_scales is not None else orig_kp
-        features["gt_keypoints_scores"] = kps
-
+        #Load Line GT
         # Load pickle file for DF max and min values
         with open(image_folder_path / "values.pkl", "rb") as f:
             values = pickle.load(f)
@@ -274,13 +255,35 @@ class _Dataset(torch.utils.data.Dataset):
         af_img *= np.pi
 
         df = torch.from_numpy(df_img).to(dtype=torch.float32)
-        if shape is not None:
-            df = self.preprocessors[shape](df.unsqueeze(0))['image'].squeeze(0)  # only store image here as padding map will be stored by preprocessing image
-        features[self.conf.load_features.line_gt.data_keys[0]] = df
         af = torch.from_numpy(af_img).to(dtype=torch.float32)
+        # reshape AF and DF if needed
         if shape is not None:
-            af = self.preprocessors[shape](af.unsqueeze(0))['image'].squeeze(0)  # only store image here as padding map will be stored by preprocessing image
-        features[self.conf.load_features.line_gt.data_keys[1]] = af
+            preprocessor_df_out = self.preprocessors[shape](df.unsqueeze(0))
+            reshape_scales = preprocessor_df_out["scales"]
+            df = preprocessor_df_out['image'].squeeze(0)  # only store image here as padding map will be stored by preprocessing image
+            af = self.preprocessors[shape](af.unsqueeze(0))['image'].squeeze(0)
+        features[df_gt_key] = df
+        features[af_gt_key] = af
+
+        # Load Keypoint GT
+        orig_kp = torch.from_numpy(np.load(kp_file)).to(dtype=torch.float32)
+        kps = torch.from_numpy(np.load(kps_file)).to(dtype=torch.float32)
+
+        # rescale kp if needed
+        keypoints = orig_kp * reshape_scales if reshape_scales is not None else orig_kp
+        # create heatmap
+        heatmap = np.zeros_like(df)
+        integer_kp_coordinates = torch.round(keypoints).to(dtype=torch.int)
+        if self.conf.load_features.point_gt.use_score_heatmap:
+            heatmap[integer_kp_coordinates[:, 1], integer_kp_coordinates[:, 0]] = kps
+        else:
+            heatmap[integer_kp_coordinates[:, 1], integer_kp_coordinates[:, 0]] = 1.0
+        heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
+
+        features[heatmap_gt_key_name] = heatmap
+        
+        features[kp_gt_key_name] = keypoints
+        features[kp_score_gt_key_name] = kps
 
         return features
 
@@ -301,13 +304,13 @@ class _Dataset(torch.utils.data.Dataset):
         else:
             data = {**data, **self.preprocessors[size_to_reshape_to](img)}
         if self.conf.load_features.do:
-            gt = self._read_groundtruth(folder_path, orig_shape, None if size_to_reshape_to == orig_shape else size_to_reshape_to)
+            gt = self._read_groundtruth(folder_path, None if size_to_reshape_to == orig_shape else size_to_reshape_to)
             data = {**data, **gt}
         return data
     
     def do_change_size_now(self) -> bool:
         """
-        Based on current state descides whether to change shape to reshape images to.
+        Based on current state decides whether to change shape to reshape images to.
         This decision is needed as all images in a batch need same shape. So we only potentially change shape
         when a new batch is starting.
 

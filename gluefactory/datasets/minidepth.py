@@ -46,15 +46,16 @@ class MiniDepthDataset(BaseDataset):
         "load_features": {
             "do": False,
             "check_exists": True,
-            "check_nan": False,
             "device": None,  # choose device to move groundtruthdata to if None is given, just read, skip move to device
             "point_gt": {
                 "path": "outputs/results/superpoint_gt/minidepth",
-                "data_keys": ["superpoint_heatmap"],
+                "data_keys": ["superpoint_heatmap", "gt_keypoints", "gt_keypoints_scores"],
+                "use_score_heatmap": False,
             },
             "line_gt": {
                 "path": "outputs/results/deeplsd_gt/minidepth",
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
+                "enforce_threshold": 5.0
             },
         },
         "train_scenes_file_path": "gluefactory/datasets/minidepth_train_scenes.txt",  # path to training scenes file where train scenes from megadepth1500 are excluded, based on repo root
@@ -157,14 +158,11 @@ class _Dataset(torch.utils.data.Dataset):
                 flag = True
                 if (
                     self.conf.load_features.check_exists
-                    or self.conf.load_features.check_nan
                 ):
                     flag = False
                     if self.conf.load_features.check_exists:
                         if point_gt_file_path.exists() and line_gt_file_path.exists():
                             flag = True
-                    if self.conf.load_features.check_nan:
-                        flag = not self.contains_any_gt_nan(img_path)
                 if flag:
                     new_img_path_list.append(img_path)
             self.image_paths = new_img_path_list
@@ -205,26 +203,25 @@ class _Dataset(torch.utils.data.Dataset):
                                                      )
         
 
-    def _read_groundtruth(self, image_path, original_img_size: tuple, shape: int = None) -> dict:
+    def _read_groundtruth(self, image_path, shape: int = None) -> dict:
         """
         Reads groundtruth for points and lines from respective h5files.
         We can assume that gt files are existing at this point->filtered in init!
 
         image_path: path to image as relative to base directory(self.img_path)
         """
-        # TODO: implement reshape of gt here once gt is generated and format is clear (use preprocessors for padding as well)
+        reshape_scales = None
+        heatmap_gt_key_name = self.conf.load_features.point_gt.data_keys[1]
+        kp_gt_key_name = self.conf.load_features.point_gt.data_keys[1]
+        kp_score_gt_key_name = self.conf.load_features.point_gt.data_keys[2]
+        df_gt_key = self.conf.load_features.point_gt.data_keys[0]
+        af_gt_key = self.conf.load_features.point_gt.data_keys[1]
+
         ground_truth = {}
         h5_file_name = image_path.with_suffix(".hdf5").name
         point_gt_file_path = self.point_gt_location / image_path.parent / h5_file_name
         line_gt_file_path = self.line_gt_location / image_path.parent / h5_file_name
-        # Read data for points
-        with h5py.File(point_gt_file_path, "r") as point_file:
-            ground_truth = {
-                **self.read_datasets_from_h5(
-                    self.conf.load_features.point_gt.data_keys, point_file
-                ),
-                **ground_truth,
-            }
+
         # Read data for lines
         with h5py.File(line_gt_file_path, "r") as line_file:
             ground_truth = {
@@ -233,6 +230,50 @@ class _Dataset(torch.utils.data.Dataset):
                 ),
                 **ground_truth,
             }
+        # scale df and af
+        df_img = ground_truth[df_gt_key]
+        thres = self.conf.load_features.line_gt.enforce_threshold
+        if thres is not None:
+            df_img = np.where(df_img > thres, thres, df_img)
+        df = torch.from_numpy(df_img).to(dtype=torch.float32)
+
+        af_img = ground_truth[af_gt_key]
+        af = torch.from_numpy(af_img).to(dtype=torch.float32)
+        # rescale df and af if wanted
+        if shape is not None:
+            preprocessor_df_out = self.preprocessors[shape](df.unsqueeze(0))
+            reshape_scales = preprocessor_df_out['scales']  # store reshape scales for keypoints later
+            df= preprocessor_df_out['image'].squeeze(0)
+            af = self.preprocessors[shape](af.unsqueeze(0))['image'].squeeze(0)
+        ground_truth[af_gt_key] = af
+        ground_truth[df_gt_key] = df
+
+        # Read data for points
+        with h5py.File(point_gt_file_path, "r") as point_file:
+            ground_truth = {
+                **self.read_datasets_from_h5(
+                    self.conf.load_features.point_gt.data_keys, point_file
+                ),
+                **ground_truth,
+            }
+
+        # scale points and create heatmap
+        heatmap = np.zeros_like(df)  # df is potentioally already reshaped to new image size
+        keypoints = ground_truth[kp_gt_key_name]
+        keypoint_scores = ground_truth[kp_score_gt_key_name]
+
+        keypoints = keypoints * reshape_scales if reshape_scales is not None else keypoints
+        coordinates = torch.round(keypoints).to(dtype=torch.int)
+
+        if self.conf.load_features.point_gt.use_score_heatmap:
+            heatmap[coordinates[:, 1], coordinates[:, 0]] = keypoint_scores
+        else:
+            heatmap[coordinates[:, 1], coordinates[:, 0]] = 1.0
+        heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
+
+        ground_truth[heatmap_gt_key_name] = heatmap
+        ground_truth[kp_gt_key_name] = keypoints
+
         return ground_truth
 
     def __getitem__(self, idx):
@@ -248,7 +289,7 @@ class _Dataset(torch.utils.data.Dataset):
             "image": img if size_to_reshape_to == orig_shape else self.preprocessors[size_to_reshape_to](img),
         }  # add metadata, like transform, image_size etc...
         if self.conf.load_features.do:
-            gt = self._read_groundtruth(path, orig_shape, None if size_to_reshape_to == orig_shape else size_to_reshape_to)
+            gt = self._read_groundtruth(path, None if size_to_reshape_to == orig_shape else size_to_reshape_to)
             data = {**data, **gt}
 
         return data
@@ -265,20 +306,13 @@ class _Dataset(torch.utils.data.Dataset):
                 data[key] = d
         return data
 
-    def contains_any_gt_nan(self, img_path):
-        gt = self._read_groundtruth(img_path)
-        for k, v in gt.items():
-            if isinstance(v, torch.Tensor) and torch.iszer(v).any():
-                return True
-        return False
-
     def __len__(self):
         return len(self.image_paths)
     
     
     def do_change_size_now(self) -> bool:
         """
-        Based on current state descides whether to change shape to reshape images to.
+        Based on current state decides whether to change shape to reshape images to.
         This decision is needed as all images in a batch need same shape. So we only potentially change shape
         when a new batch is starting.
 
