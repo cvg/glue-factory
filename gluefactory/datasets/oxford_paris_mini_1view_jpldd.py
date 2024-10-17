@@ -229,8 +229,8 @@ class _Dataset(torch.utils.data.Dataset):
         heatmap_gt_key_name = self.conf.load_features.point_gt.data_keys[0]
         kp_gt_key_name = self.conf.load_features.point_gt.data_keys[1]
         kp_score_gt_key_name = self.conf.load_features.point_gt.data_keys[2]
-        df_gt_key = self.conf.load_features.point_gt.data_keys[0]
-        af_gt_key = self.conf.load_features.point_gt.data_keys[1]
+        df_gt_key = self.conf.load_features.line_gt.data_keys[0]
+        af_gt_key = self.conf.load_features.line_gt.data_keys[1]
 
         features = {}
         kp_file = image_folder_path / "keypoints.npy"
