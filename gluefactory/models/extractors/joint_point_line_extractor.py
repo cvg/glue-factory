@@ -200,7 +200,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
             self.load_state_dict(
                 chkpt["model"], strict=True
-            )  # set to false as otherwise error raised for missing mlp weights
+            )  # set to True to check if all keys are present (mlp weights are not present as we removed them above)
         elif conf.checkpoint is not None:
             chkpt = torch.hub.load_state_dict_from_url(
                 conf.checkpoint, map_location=torch.device("cpu")
