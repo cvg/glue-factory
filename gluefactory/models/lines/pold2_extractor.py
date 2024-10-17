@@ -132,7 +132,7 @@ class LineExtractor(BaseModel):
 
     def filter_small_lines(self, points, indices_image):
         """
-        Filter out lines that are too short.
+        Filter out lines that are shorter than a threshold.
         """
         min_line_length = self.conf.min_line_length
         if min_line_length is None:
@@ -145,7 +145,7 @@ class LineExtractor(BaseModel):
 
     def filter_large_lines(self, points, indices_image):
         """
-        Filter out lines that are too short.
+        Filter out lines that are longer than a threshold.
         """
         max_line_length = self.conf.max_line_length
         if max_line_length is None:
