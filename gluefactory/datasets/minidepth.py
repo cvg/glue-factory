@@ -25,7 +25,7 @@ class MiniDepthDataset(BaseDataset):
     """
 
     default_conf = {
-        "data_dir": "minidepth/images",  # as subdirectory of DATA_PATH(defined in settings.py)
+        "data_dir": "minidepth",  # as subdirectory of DATA_PATH(defined in settings.py)
         "grayscale": False,
         "train_batch_size": 2,  # prefix must match split
         "test_batch_size": 1,
@@ -48,12 +48,10 @@ class MiniDepthDataset(BaseDataset):
             "check_exists": True,
             "device": None,  # choose device to move groundtruthdata to if None is given, just read, skip move to device
             "point_gt": {
-                "path": "outputs/results/superpoint_gt/minidepth",
-                "data_keys": ["superpoint_heatmap", "gt_keypoints", "gt_keypoints_scores"],
+                "data_keys": ["superpoint_heatmap", "gt_keypoints", "gt_keypoints_scores"],  # heatmap is generated based on keypoints
                 "use_score_heatmap": False,
             },
             "line_gt": {
-                "path": "outputs/results/deeplsd_gt/minidepth",
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
                 "enforce_threshold": 5.0
             },
@@ -112,7 +110,9 @@ class _Dataset(torch.utils.data.Dataset):
             self.relevant_batch_size = self.conf[f"{split}_batch_size"]
 
         # select split scenes
-        self.img_dir = DATA_PATH / conf.data_dir
+        self.img_dir = DATA_PATH / conf.data_dir / "images"
+        self.line_gt_dir = DATA_PATH / conf.data_dir / "deeplsd_gt"
+        self.point_gt_dir = DATA_PATH / conf.data_dir / "keypoint_gt"
         # Extract the scenes corresponding to the right split
         if split == "train":
             scenes_file = root / conf.train_scenes_file_path
@@ -142,17 +142,15 @@ class _Dataset(torch.utils.data.Dataset):
         logger.info(f"NUMBER OF IMAGES: {len(self.image_paths)}")
         # Load features
         if conf.load_features.do:
-            self.point_gt_location = DATA_PATH.parent / conf.load_features.point_gt.path
-            self.line_gt_location = DATA_PATH.parent / conf.load_features.line_gt.path
             # filter out where missing groundtruth
             new_img_path_list = []
             for img_path in self.image_paths:
                 h5_file_name = img_path.with_suffix(".hdf5").name
                 point_gt_file_path = (
-                    self.point_gt_location / img_path.parent / h5_file_name
+                    self.point_gt_dir / img_path.parent / img_path.stem / 'keypoints.npy'
                 )
                 line_gt_file_path = (
-                    self.line_gt_location / img_path.parent / h5_file_name
+                    self.line_gt_dir / img_path.parent / h5_file_name
                 )
                 # perform sanity checks if wanted
                 flag = True
@@ -214,15 +212,16 @@ class _Dataset(torch.utils.data.Dataset):
         heatmap_gt_key_name = self.conf.load_features.point_gt.data_keys[1]
         kp_gt_key_name = self.conf.load_features.point_gt.data_keys[1]
         kp_score_gt_key_name = self.conf.load_features.point_gt.data_keys[2]
-        df_gt_key = self.conf.load_features.point_gt.data_keys[0]
-        af_gt_key = self.conf.load_features.point_gt.data_keys[1]
+        df_gt_key = self.conf.load_features.line_gt.data_keys[0]
+        af_gt_key = self.conf.load_features.line_gt.data_keys[1]
 
         ground_truth = {}
         h5_file_name = image_path.with_suffix(".hdf5").name
-        point_gt_file_path = self.point_gt_location / image_path.parent / h5_file_name
-        line_gt_file_path = self.line_gt_location / image_path.parent / h5_file_name
+        npy_file_subpath = image_path.parent / image_path.stem / 'keypoints.npy'
+        point_gt_file_path = self.point_gt_dir / npy_file_subpath
+        line_gt_file_path = self.line_gt_dir / image_path.parent / h5_file_name
 
-        # Read data for lines
+        # Read data for lines -> stored as tensors
         with h5py.File(line_gt_file_path, "r") as line_file:
             ground_truth = {
                 **self.read_datasets_from_h5(
@@ -238,7 +237,7 @@ class _Dataset(torch.utils.data.Dataset):
         df = torch.from_numpy(df_img).to(dtype=torch.float32)
 
         af_img = ground_truth[af_gt_key]
-        af = torch.from_numpy(af_img).to(dtype=torch.float32)
+        af = af_img.to(dtype=torch.float32)
         # rescale df and af if wanted
         if shape is not None:
             preprocessor_df_out = self.preprocessors[shape](df.unsqueeze(0))
@@ -249,20 +248,13 @@ class _Dataset(torch.utils.data.Dataset):
         ground_truth[df_gt_key] = df
 
         # Read data for points
-        with h5py.File(point_gt_file_path, "r") as point_file:
-            ground_truth = {
-                **self.read_datasets_from_h5(
-                    self.conf.load_features.point_gt.data_keys, point_file
-                ),
-                **ground_truth,
-            }
-
+        kp_file_content = torch.from_numpy(np.load(point_gt_file_path)).to(dtype=torch.float32)  # file contains (N, 3) shape np-array -> 1st two cols for kp x,y 3rd for kp-score
+        keypoints = kp_file_content[:, [0, 1]]
+        keypoint_scores = kp_file_content[:, 2]
+        
         # scale points and create heatmap
         heatmap = np.zeros_like(df)  # df is potentioally already reshaped to new image size
-        keypoints = ground_truth[kp_gt_key_name]
-        keypoint_scores = ground_truth[kp_score_gt_key_name]
-
-        keypoints = keypoints * reshape_scales if reshape_scales is not None else keypoints
+        keypoints = (keypoints * reshape_scales) if reshape_scales is not None else keypoints
         coordinates = torch.round(keypoints).to(dtype=torch.int)
 
         if self.conf.load_features.point_gt.use_score_heatmap:
@@ -273,6 +265,7 @@ class _Dataset(torch.utils.data.Dataset):
 
         ground_truth[heatmap_gt_key_name] = heatmap
         ground_truth[kp_gt_key_name] = keypoints
+        ground_truth[kp_score_gt_key_name] = keypoint_scores
 
         return ground_truth
 
