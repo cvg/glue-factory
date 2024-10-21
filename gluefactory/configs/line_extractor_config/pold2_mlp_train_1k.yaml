@@ -2,8 +2,8 @@ data:
     name: gluefactory.datasets.pold2_mlp_dataset
     data_dir: "pold2_mlp_dataset"
 
-    train_size: 32000
-    val_size: 8000
+    train_size: 85000
+    val_size: 15000
     shuffle_seed: 0
     reseed: False
 
@@ -12,9 +12,9 @@ data:
         use_df: True
         use_af: True
         num_images: 1000
-        num_negative_per_image: 40  
-        num_positive_per_image: 40
-        num_line_samples: 20
+        num_negative_per_image: 50  
+        num_positive_per_image: 50
+        num_line_samples: 30
         num_bands: 3
         deeplsd_config: 
             detect_lines: True
@@ -24,8 +24,19 @@ data:
                 grad_thresh: 3
                 grad_nfa: True
 
-        weights: "DeepLSD/weights/deeplsd_md.tar"
+            weights: "DeepLSD/weights/deeplsd_md.tar"
         glob: "revisitop1m_POLD2/jpg/**/base_image.jpg"
+
+        jpldd_config:
+            name: joint_point_line_extractor
+            max_num_keypoints: 500  # setting for training for eval: -1
+            timeit: True  # override timeit: False from BaseModel
+            line_df_decoder_channels: 32
+            line_af_decoder_channels: 32
+            line_detection:
+                    do: False
+                
+            checkpoint: /local/home/Point-Line/outputs/training/focal_loss_experiments/rk_focal_threshDF_focal/checkpoint_best.tar
     
     batch_size: 32
     num_workers: 1
@@ -36,14 +47,14 @@ model:
     name: gluefactory.models.lines.pold2_mlp
     has_angle_field: True
     has_distance_field: True
-    num_line_samples: 20
+    num_line_samples: 30
     num_bands: 3
     mlp_hidden_dims: [256, 128, 128, 64, 32]
     pred_threshold: 0.9
     weights: null
 
 train:
-    epochs: 20
+    epochs: 5
     lr: 0.001
     lr_schedule: 
         type: 'ReduceLROnPlateau'
