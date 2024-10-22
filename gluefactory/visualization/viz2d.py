@@ -10,6 +10,7 @@ import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+import cv2
 
 
 def cm_ranking(sc, ths=[512, 1024, 2048, 4096]):
@@ -484,3 +485,27 @@ def plot_cumulative(
     plt.tight_layout()
 
     return plt.gcf()
+
+
+# Plotting functions
+def show_points(image, points):
+    for point in points:
+        cv2.circle(image, (point[0], point[1]), 4, (191, 69, 17), -1)
+
+    return image
+
+def show_lines(image, lines, color='green'):
+    if color == 'green':
+        cval = (0, 255, 0)
+    elif color == 'red':
+        cval = (0, 0, 255)
+    elif color == 'yellow':
+        cval = (0, 255, 255)
+    elif color == 'blue':
+        cval = (255, 0, 0)
+    else:
+        cval = (0, 255, 0)
+    for pair_line in lines:
+        cv2.line(image, pair_line[0], pair_line[1], cval, 3)
+
+    return image
