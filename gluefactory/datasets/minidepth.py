@@ -50,6 +50,8 @@ class MiniDepthDataset(BaseDataset):
             "point_gt": {
                 "data_keys": ["superpoint_heatmap", "gt_keypoints", "gt_keypoints_scores"],  # heatmap is generated based on keypoints
                 "use_score_heatmap": False,
+                "max_num_keypoints": 76, # the number of gt_keypoints used for training. The heatmap is generated using all kp. (IN KP GT KP ARE SORTED BY SCORE) 
+                                          # -> Can also be set to None to return all points but this can only be used when batchsize=1. Min num kp in minidepth:  76
             },
             "line_gt": {
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
@@ -79,7 +81,7 @@ class MiniDepthDataset(BaseDataset):
         torch.hub.download_url_to_file(url_base + zip_name, zip_path)
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
             zip_ref.extractall(tmp_dir)
-        shutil.move(tmp_dir / zip_name.split(".")[0], data_dir.split("/")[0])
+        shutil.move(tmp_dir / zip_name.split(".")[0], str(data_dir))
 
     def get_dataset(self, split):
         assert split in ["train", "val", "test", "all"]
@@ -91,6 +93,7 @@ class _Dataset(torch.utils.data.Dataset):
         super().__init__()
         self.conf = conf
         self.grayscale = bool(conf.grayscale)
+        self.max_num_gt_kp = conf.load_features.point_gt.max_num_keypoints
 
         # Initialize Image Preprocessors for square padding and resizing
         self.preprocessors = {} # stores preprocessor for each reshape size
@@ -209,7 +212,7 @@ class _Dataset(torch.utils.data.Dataset):
         image_path: path to image as relative to base directory(self.img_path)
         """
         reshape_scales = None
-        heatmap_gt_key_name = self.conf.load_features.point_gt.data_keys[1]
+        heatmap_gt_key_name = self.conf.load_features.point_gt.data_keys[0]
         kp_gt_key_name = self.conf.load_features.point_gt.data_keys[1]
         kp_score_gt_key_name = self.conf.load_features.point_gt.data_keys[2]
         df_gt_key = self.conf.load_features.line_gt.data_keys[0]
@@ -249,7 +252,7 @@ class _Dataset(torch.utils.data.Dataset):
 
         # Read data for points
         kp_file_content = torch.from_numpy(np.load(point_gt_file_path)).to(dtype=torch.float32)  # file contains (N, 3) shape np-array -> 1st two cols for kp x,y 3rd for kp-score
-        keypoints = kp_file_content[:, [0, 1]]
+        keypoints = kp_file_content[:, [1, 0]]
         keypoint_scores = kp_file_content[:, 2]
         
         # scale points and create heatmap
@@ -264,8 +267,8 @@ class _Dataset(torch.utils.data.Dataset):
         heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
 
         ground_truth[heatmap_gt_key_name] = heatmap
-        ground_truth[kp_gt_key_name] = keypoints
-        ground_truth[kp_score_gt_key_name] = keypoint_scores
+        ground_truth[kp_gt_key_name] = keypoints[:self.max_num_gt_kp, :] if self.max_num_gt_kp is not None else keypoints
+        ground_truth[kp_score_gt_key_name] = keypoint_scores[:self.max_num_gt_kp] if self.max_num_gt_kp is not None else keypoint_scores
 
         return ground_truth
 
@@ -279,12 +282,14 @@ class _Dataset(torch.utils.data.Dataset):
         size_to_reshape_to = self.select_resize_shape(orig_shape)
         data = {
             "name": str(path),
-            "image": img if size_to_reshape_to == orig_shape else self.preprocessors[size_to_reshape_to](img),
         }  # add metadata, like transform, image_size etc...
+        if size_to_reshape_to == orig_shape:
+            data['image'] = img
+        else:
+            data = {**data, **self.preprocessors[size_to_reshape_to](img)}
         if self.conf.load_features.do:
             gt = self._read_groundtruth(path, None if size_to_reshape_to == orig_shape else size_to_reshape_to)
             data = {**data, **gt}
-
         return data
 
     def read_datasets_from_h5(self, keys, file):

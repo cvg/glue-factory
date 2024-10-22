@@ -53,6 +53,8 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
             "point_gt": {
                 "data_keys": ["superpoint_heatmap", "gt_keypoints", "gt_keypoints_scores"],
                 "use_score_heatmap": True,
+                "max_num_keypoints": 63 # the number of gt_keypoints used for training. The heatmap is generated using all kp. (IN KP GT KP ARE SORTED BY SCORE) 
+                                         # -> Can also be set to None to return all points but this can only be used when batchsize=1. Min num kp in oxparis: 63
             },
             "line_gt": {
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
@@ -62,9 +64,8 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         "img_list": "gluefactory/datasets/oxford_paris_images.txt",
         # img list path from repo root -> use checked in file list, it is similar to pold2 file
         "rand_shuffle_seed": None,  # seed to randomly shuffle before split in train and val
-        "val_size": 10,  # size of validation set given
-        "train_size": 100000,
-        "debug": False,  # if True also gives back original keypoint gt locations
+        "val_size": 500,  # size of validation set given
+        "train_size": 11500,
     }
 
     def _init(self, conf):
@@ -135,6 +136,7 @@ class _Dataset(torch.utils.data.Dataset):
         self.split = split
         self.conf = conf
         self.grayscale = bool(conf.grayscale)
+        self.max_num_gt_kp = conf.load_features.point_gt.max_num_keypoints
 
         # Initialize Image Preprocessors for square padding and resizing
         self.preprocessors = {} # stores preprocessor for each reshape size
@@ -282,8 +284,8 @@ class _Dataset(torch.utils.data.Dataset):
 
         features[heatmap_gt_key_name] = heatmap
         
-        features[kp_gt_key_name] = keypoints
-        features[kp_score_gt_key_name] = kps
+        features[kp_gt_key_name] = keypoints[:self.max_num_gt_kp, :] if self.max_num_gt_kp is not None else keypoints
+        features[kp_score_gt_key_name] = kps[:self.max_num_gt_kp] if self.max_num_gt_kp is not None else kps
 
         return features
 

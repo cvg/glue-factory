@@ -395,9 +395,10 @@ class JointPointLineDetectorDescriptor(BaseModel):
         return output
 
     def weighted_bce_loss(self, prediction, target):
-        return -self.lambda_valid_kp * target * torch.log(prediction) - (
+        epsilon = 1e-6
+        return -self.lambda_valid_kp * target * torch.log(prediction + epsilon) - (
             1 - target
-        ) * torch.log(1 - prediction)
+        ) * torch.log(1 - prediction + epsilon)
 
     def focal_loss(self, prediction, target):
         alpha = self.conf.training.loss.kp_loss_parameters.focal_alpha
@@ -434,7 +435,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         metrics = {}
 
         # define padding mask which is only ones if no padding is used -> makes loss compatible with any scaling technique and whether padding is used or not
-        padding_mask = data.get("padding_mask", torch.ones_like(data['image']))[:, 0, :, :]
+        padding_mask = data.get("padding_mask", torch.ones_like(data['image']))[:, 0, :, :].int()
         
         # Use Weighted BCE Loss for Point Heatmap
         keypoint_scoremap_loss = self.loss_fn(
