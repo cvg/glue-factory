@@ -236,12 +236,28 @@ for i in tqdm(rand_idx):
         deeplsd_lines = np.array(deeplsd_output["lines"][0]).astype(int)
         print(f"Num DeepLSD Lines: {len(deeplsd_lines)}")
 
-    c_img = show_points(c_img, points)
-    c_img = show_lines(c_img, deeplsd_lines, color='red')
-    c_img = cv2.putText(c_img, "DeepLSD", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+    d_img = c_img.copy()
+    d_img = show_points(d_img, points)
+    d_img = show_lines(d_img, deeplsd_lines, color='red')
+    d_img = cv2.putText(d_img, "DeepLSD", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+
+    # Use LSD on top of JPLDD DF and AF
+    lsd_lines = []
+    np_img = (inputs["image"].cpu().numpy()[:, 0] * 255).astype(np.uint8)
+    np_df = output_model["line_distancefield"].cpu().numpy()
+    np_ll = output_model["line_anglefield"].cpu().numpy()
+    for im, df, ll in zip(np_img, np_df, np_ll):
+        line = deeplsd_net.detect_afm_lines(
+            im, df, ll, **deeplsd_conf.line_detection_params
+        )
+        lsd_lines.append(line.astype(int))
+    l_img = c_img.copy()
+    l_img = show_points(l_img, points)
+    l_img = show_lines(l_img, lsd_lines[0], color='yellow')
+    l_img = cv2.putText(l_img, "JPLDD + LSD", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
 
     # Concatenate both images
-    img = np.concatenate([img, c_img], axis=1)
+    img = np.concatenate([img, d_img, l_img], axis=1)
 
     cv2.imwrite(f'{DEBUG_DIR}/{IDX}_lines.png', img)
 
