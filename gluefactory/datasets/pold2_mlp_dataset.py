@@ -69,6 +69,8 @@ class POLD2_MLP_Dataset(BaseDataset):
                 "checkpoint": None,
             },
             "glob": "revisitop1m/jpg/**/base_image.jpg",  # relative to DATA_PATH
+            
+            "debug": False, # debug the data generation (visualize positive and negative samples)
         },
     }
 
@@ -114,10 +116,27 @@ class POLD2_MLP_Dataset(BaseDataset):
         )
 
     def generate_data(self, conf: OmegaConf, data_dir: Path):
+
+        # DEBUG
+        self.gen_debug = False
+        if conf.generate.debug:
+            import os
+            from gluefactory.visualization.viz2d import show_lines, show_points
+
+            self.IMAGE = None
+            self.IDX = 0
+            self.gen_debug = True
+
+            if os.path.exists("tmp_dataset_debug"):
+                shutil.rmtree("tmp_dataset_debug")
+            os.makedirs("tmp_dataset_debug")
+
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         def get_line_from_image(file_path, deeplsd_net, jpldd_net):
             img = cv2.imread(file_path)[:, :, ::-1]
+            if self.gen_debug:
+                self.IMAGE = img
             gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
             inputs = {
@@ -183,7 +202,7 @@ class POLD2_MLP_Dataset(BaseDataset):
 
         if data_dir.exists():
             if conf.generate.regenerate:
-                logger.warning("Data directory already exists. Overwriting.")
+                logger.warning(f"Data directory already exists. Overwriting {data_dir}")
                 shutil.rmtree(data_dir)
             else:
                 logger.info("Found existing data. Not regenerating")
@@ -225,10 +244,19 @@ class POLD2_MLP_Dataset(BaseDataset):
             )
 
             lines = lines.astype(int)  # convert to int for indexing
-            lines = lines[: conf.generate.num_positive_per_image]
+            # DEBUG
+            if self.gen_debug:
+                dimg = show_lines(self.IMAGE[:,:,::-1], pos_lines.astype(int), color='green')
+                dimg = show_lines(dimg, neg_lines.astype(int), color='red')
+                dimg = show_points(dimg, pos_lines.reshape(-1, 2).astype(int))
+
+                global IDX
+                cv2.imwrite(f"tmp_dataset_debug/{self.IDX}.png", dimg)
+                self.IDX += 1
+
 
             # Generate positive samples
-            for line in lines:
+            for line in pos_lines:
                 positives.append(
                     datasetEntryFromPoints(
                         line[0], line[1], distance_map, angle_map, blend, img_shape
@@ -236,22 +264,10 @@ class POLD2_MLP_Dataset(BaseDataset):
                 )
 
             # Generate negative samples
-            for _ in range(conf.generate.num_negative_per_image):
-                p1 = np.array(
-                    [
-                        np.random.randint(0, img_shape[1]),
-                        np.random.randint(0, img_shape[0]),
-                    ]
-                )
-                p2 = np.array(
-                    [
-                        np.random.randint(0, img_shape[1]),
-                        np.random.randint(0, img_shape[0]),
-                    ]
-                )
+            for line in neg_lines:
                 negatives.append(
                     datasetEntryFromPoints(
-                        p1, p2, distance_map, angle_map, blend, img_shape
+                        line[0], line[1], distance_map, angle_map, blend, img_shape
                     )
                 )
 
