@@ -3,23 +3,24 @@ data:
     data_dir: "revisitop1m_POLD2/jpg"  # as subdirectory of DATA_PATH(defined in settings.py)
     grayscale: False
     num_workers: 6  # defines processes used in Dataloader
-    train_batch_size: 4  # per GPU
-    val_batch_size: 4
-    prefetch_factor: 8
-    reshape: null
-    square_pad: True
+    train_batch_size: 6  # per GPU
+    val_batch_size: 6
+    prefetch_factor: 6
+    reshape: 400  # new resizing keeps aspect ratio so quadratic image is not guaranteed
+    square_pad: True  # thus for a batchsize > 1 square padding needs to be activated for batching
+    multiscale_learning:
+        do: False  # to use multiscale training, reshape must be set to false
+        scales_list: [1000, 800, 600, 400]
+        scale_selection: 'random' # random or round-robin
     load_features:
         do: True
         check_exists: True
         point_gt:
-            data_keys: [ "superpoint_heatmap" ]
+            data_keys: [ "superpoint_heatmap", "gt_keypoints", "gt_keypoints_scores" ]
             use_score_heatmap: False
+            max_num_keypoints: 63  # how many gt keypoints are loaded (could be used for kp losses later on). The heatmap is generated with all kp anyway. max num is needed for batching.
         line_gt:
             data_keys: [ "deeplsd_distance_field", "deeplsd_angle_field" ]
-    multiscale_learning:
-        do: True
-        scales_list: [400, 600]
-        scale_selection: 'random'
     val_size: 500
     train_size: 11500
     
@@ -36,7 +37,7 @@ model:
             do: True # if train is True, initialize ALIKED Light model form OTF Descriptor GT
             gt_aliked_model: "aliked-n32"
         loss:
-            kp_loss_name: "focal_loss"
+            kp_loss_name: "weighted_bce"
             kp_loss_parameters:
                 lambda_weighted_bce: 200
                 focal_alpha: 0.25
@@ -53,17 +54,19 @@ model:
 train:
     load_experiment: null  # initialize the model from a previous experiment (take weights)
     seed: 7
-    epochs: 40
+    epochs: 60
     log_every_iter: 8
-    eval_every_iter: 5000 # automatically creates new checkpoint if new best eval metric is reached -> set > #batches to not eval except at the end of each epoch
+    eval_every_iter: 15000 # automatically creates new checkpoint if new best eval metric is reached -> set > #batches to not eval except at the end of each epoch
     save_every_iter: 10000
-    test_every_epoch: -1 # check if test deactivated
+    test_every_epoch: -1
     optimizer: "adam"
     best_key: "loss/total" # key used to determine best checkpoint and evaluation progress
     lr: 0.0001
-    scheduler: 'ReduceLROnPlateau'
-    patience: 10
+    lr_schedule:
+        type: 'ReduceLROnPlateau'
+        on_epoch: True
+        options:
+            patience: 5
     keep_last_checkpoints: 5
     submodules: []
-    timeit: False    # print jpldd model mean timings every epoch
 
