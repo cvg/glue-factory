@@ -80,6 +80,22 @@ jpldd_conf = {
     #"checkpoint": "/local/home/rkreft/shared_team_folder/outputs/training/rk_pold2gt_oxparis_base_hard_gt/checkpoint_best.tar"
 }
 
+dset_conf = {
+            "reshape": [400, 400], # ex [800, 800]
+            "load_features": {
+                "do": True,
+                "check_exists": True,
+                "point_gt": {
+                    "data_keys": ["superpoint_heatmap"],
+                    "use_score_heatmap": False,
+                },
+                "line_gt": {
+                    "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
+                },
+            },
+            "debug": True
+        }
+
 # Plotting functions
 def show_points(image, points):
     for point in points:
@@ -149,21 +165,6 @@ jpldd_model.eval()
 
 
 ## Dataset
-dset_conf = {
-            "reshape": [400, 400], # ex [800, 800]
-            "load_features": {
-                "do": True,
-                "check_exists": True,
-                "point_gt": {
-                    "data_keys": ["superpoint_heatmap"],
-                    "use_score_heatmap": False,
-                },
-                "line_gt": {
-                    "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
-                },
-            },
-            "debug": True
-        }
 oxpa_2 = get_dataset("oxford_paris_mini_1view_jpldd")(dset_conf)
 ds = oxpa_2.get_dataset(split="train")
 
