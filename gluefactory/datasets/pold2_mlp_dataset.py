@@ -15,6 +15,7 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 from tqdm import tqdm
+import enum
 
 from gluefactory.models.deeplsd_inference import DeepLSD
 from gluefactory.utils.image import load_image
@@ -25,6 +26,12 @@ from ..utils.tools import fork_rng
 from .base_dataset import BaseDataset
 
 logger = logging.getLogger(__name__)
+
+class NegativeType(enum.Enum):
+    RANDOM = "random"
+    DEEPLSD_RANDOM = "deeplsd_random"
+    DEEPLSD_NEIGHBOUR = "deeplsd_neighbour"
+    COMBINED = "combined"
 
 
 class POLD2_MLP_Dataset(BaseDataset):
@@ -43,6 +50,10 @@ class POLD2_MLP_Dataset(BaseDataset):
             "use_af": True,
             "num_images": 100,
             "num_negative_per_image": 10,
+            "negative_type": "random",  # random, deeplsd_random, deeplsd_neighbour, combined
+            "combined_ratio": 0.5,
+            "negative_neighbour_min_radius": 5,
+            "negative_neighbour_max_radius": 10,
             "num_positive_per_image": 10,  # -1 to use all
             "num_line_samples": 30,  # number of sampled points between line endpoints
             "num_bands": 1,  # number of bands to sample along the line
@@ -281,6 +292,44 @@ class POLD2_MLP_Dataset(BaseDataset):
             )
 
             lines = lines.astype(int)  # convert to int for indexing
+
+            # Postive samples
+            if gen_conf.num_positive_per_image == -1:
+                pos_idx = np.arange(len(lines))
+            else:
+                num_pos = min(gen_conf.num_positive_per_image, len(lines))
+                pos_idx = np.random.choice(len(lines), num_pos, replace=False)
+            pos_lines = lines[pos_idx]
+
+            # Negative samples
+            if gen_conf.negative_type == NegativeType.RANDOM.value:
+                neg_lines = generate_random_endpoints(img_shape, gen_conf)
+
+            elif gen_conf.negative_type == NegativeType.DEEPLSD_RANDOM.value:
+                neg_lines = generate_deeplsd_random_endpoints(lines)
+
+            elif gen_conf.negative_type == NegativeType.DEEPLSD_NEIGHBOUR.value:
+                neg_lines = generate_deeplsd_neighbour_endpoints(lines, img_shape, gen_conf)
+
+            elif gen_conf.negative_type == NegativeType.COMBINED.value:
+                neg_deeplsd_random = generate_deeplsd_random_endpoints(lines)
+                neg_deeplsd_neighbour = generate_deeplsd_neighbour_endpoints(lines, img_shape, gen_conf)
+
+                num_neg_neigh = int(gen_conf.combined_ratio * gen_conf.num_negative_per_image)
+                num_neg_rand = gen_conf.num_negative_per_image - num_neg_neigh
+
+                neigh_idx = np.random.choice(len(neg_deeplsd_neighbour), num_neg_neigh, replace=False)
+                rand_idx = np.random.choice(len(neg_deeplsd_random), num_neg_rand, replace=False)
+
+                neg_lines = np.concatenate([neg_deeplsd_neighbour[neigh_idx], neg_deeplsd_random[rand_idx]])
+
+            else:
+                raise ValueError(f"Unknown negative type: {gen_conf.negative_type}")
+            
+            num_neg = min(gen_conf.num_negative_per_image, len(neg_lines))
+            neg_idx = np.random.choice(len(neg_lines), num_neg, replace=False)
+            neg_lines = neg_lines[neg_idx]
+            
             # DEBUG
             if self.gen_debug:
                 dimg = show_lines(self.IMAGE[:,:,::-1], pos_lines.astype(int), color='green')
