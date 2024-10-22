@@ -199,6 +199,43 @@ class POLD2_MLP_Dataset(BaseDataset):
                 return af_val
             else:
                 return np.hstack([df_val, af_val])
+            
+        def generate_random_endpoints(img_shape, gen_conf):
+            # Randomly sample negative points and generate lines
+            neg_x = np.random.randint(0, img_shape[1], (2 * gen_conf.num_negative_per_image)).reshape(-1, 1)
+            neg_y = np.random.randint(0, img_shape[0], (2 * gen_conf.num_negative_per_image)).reshape(-1, 1)
+            neg_lines = np.stack([neg_x, neg_y], axis=1).reshape(-1, 2, 2)
+
+            return neg_lines
+        
+        def generate_deeplsd_random_endpoints(lines):
+            # Randomly pair up the deeplsd endpoints to generate negative samples
+            lines = lines.copy()
+            endpoints = lines.reshape(-1, 2)
+            np.random.shuffle(endpoints)
+            neg_lines = endpoints.reshape(-1, 2, 2)
+
+            return neg_lines
+        
+        def generate_deeplsd_neighbour_endpoints(lines, img_shape, gen_conf):
+            # Pairup points in the neighbourhood of the deeplsd endpoints to generate hard negative samples
+            neg_lines = []
+            min_radius = gen_conf.negative_neighbour_min_radius
+            max_radius = gen_conf.negative_neighbour_max_radius
+
+            for line in lines:
+                radius = np.random.randint(min_radius, max_radius)
+
+                p1, p2 = line
+                p1_neigh = p1 + np.random.randint(-radius, radius, 2)
+                p2_neigh = p2 + np.random.randint(-radius, radius, 2)
+                p1_neigh = np.clip(p1_neigh, 0, img_shape[::-1])
+                p2_neigh = np.clip(p2_neigh, 0, img_shape[::-1])
+                neg_lines.append(np.stack([p1_neigh, p2_neigh]))
+
+            neg_lines = np.array(neg_lines)
+
+            return neg_lines
 
         if data_dir.exists():
             if conf.generate.regenerate:
