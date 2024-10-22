@@ -104,7 +104,16 @@ def show_points(image, points):
     return image
 
 def show_lines(image, lines, color='green'):
-    cval = (0, 255, 0) if color == 'green' else (0, 0, 255)
+    if color == 'green':
+        cval = (0, 255, 0)
+    elif color == 'red':
+        cval = (0, 0, 255)
+    elif color == 'yellow':
+        cval = (0, 255, 255)
+    elif color == 'blue':
+        cval = (255, 0, 0)
+    else:
+        cval = (0, 255, 0)
     for pair_line in lines:
         cv2.line(image, pair_line[0], pair_line[1], cval, 3)
 
