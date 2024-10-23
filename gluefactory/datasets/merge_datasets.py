@@ -1,6 +1,7 @@
 import logging
 from random import shuffle
 import torch
+from omegaconf import OmegaConf
 
 
 from gluefactory.datasets import BaseDataset, get_dataset
@@ -76,9 +77,15 @@ class _Dataset(torch.utils.data.Dataset):
             # 1st check if mulitscale learning scale selection is random for all
             scale_selection = dset_conf['multiscale_learning']['scale_selection']
             assert scale_selection == 'random'
+            # 2nd set batch size of sub datasets to overall batch size so that sub datasets don't change scale mid loading
+            if OmegaConf.is_readonly(dset_conf):
+                OmegaConf.set_readonly(dset_conf, False)
+            OmegaConf.update(dset_conf, f'{split}_batch_size', self.relevant_batch_size, force_add=True)
+            OmegaConf.set_readonly(dset_conf, True)
+            assert dset_conf[f'{split}_batch_size'] == self.relevant_batch_size
             # Now initialize
             dset = get_dataset(dset_conf.name)(dset_conf)
-            dset_initialized = dset.get_dataset(conf.split)
+            dset_initialized = dset.get_dataset(split)
             self.datasets[key] = dset_initialized
             num_img = len(dset_initialized)
             self.img_index_collection += [(key, i) for i in range(num_img)]
