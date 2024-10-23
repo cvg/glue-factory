@@ -1,5 +1,6 @@
 import logging
 import shutil
+import random
 import zipfile
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import torch
 
 from gluefactory.datasets import BaseDataset
 from gluefactory.settings import DATA_PATH, root
-from gluefactory.utils.image import ImagePreprocessor, load_image
+from gluefactory.utils.image import load_image, ImagePreprocessor
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class MiniDepthDataset(BaseDataset):
     """
 
     default_conf = {
-        "data_dir": "minidepth/images",  # as subdirectory of DATA_PATH(defined in settings.py)
+        "data_dir": "minidepth",  # as subdirectory of DATA_PATH(defined in settings.py)
         "grayscale": False,
         "train_batch_size": 2,  # prefix must match split
         "test_batch_size": 1,
@@ -35,19 +36,26 @@ class MiniDepthDataset(BaseDataset):
         "seed": 0,
         "num_workers": 0,  # number of workers used by the Dataloader
         "prefetch_factor": None,
-        "preprocessing": {"resize": [800, 800]},
+        "reshape": None,  # ex 800  # if reshape is activated AND multiscale learning is activated -> reshape has prevalence
+        "square_pad": False,
+        "multiscale_learning": {
+            "do": False,
+            "scales_list": [1000, 800, 600, 400],
+            "scale_selection": 'random' # random or round-robin
+        },
         "load_features": {
             "do": False,
             "check_exists": True,
-            "check_nan": False,
             "device": None,  # choose device to move groundtruthdata to if None is given, just read, skip move to device
             "point_gt": {
-                "path": "outputs/results/superpoint_gt/minidepth",
-                "data_keys": ["superpoint_heatmap"],
+                "data_keys": ["superpoint_heatmap", "gt_keypoints", "gt_keypoints_scores"],  # heatmap is generated based on keypoints
+                "use_score_heatmap": False,
+                "max_num_keypoints": 76, # the number of gt_keypoints used for training. The heatmap is generated using all kp. (IN KP GT KP ARE SORTED BY SCORE) 
+                                          # -> Can also be set to None to return all points but this can only be used when batchsize=1. Min num kp in minidepth:  76
             },
             "line_gt": {
-                "path": "outputs/results/deeplsd_gt/minidepth",
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
+                "enforce_threshold": 5.0
             },
         },
         "train_scenes_file_path": "gluefactory/datasets/minidepth_train_scenes.txt",  # path to training scenes file where train scenes from megadepth1500 are excluded, based on repo root
@@ -73,7 +81,7 @@ class MiniDepthDataset(BaseDataset):
         torch.hub.download_url_to_file(url_base + zip_name, zip_path)
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
             zip_ref.extractall(tmp_dir)
-        shutil.move(tmp_dir / zip_name.split(".")[0], data_dir.split("/")[0])
+        shutil.move(tmp_dir / zip_name.split(".")[0], str(data_dir))
 
     def get_dataset(self, split):
         assert split in ["train", "val", "test", "all"]
@@ -82,17 +90,33 @@ class MiniDepthDataset(BaseDataset):
 
 class _Dataset(torch.utils.data.Dataset):
     def __init__(self, conf, split):
+        super().__init__()
         self.conf = conf
         self.grayscale = bool(conf.grayscale)
-        # self.conf is set in superclass
-        # set img preprocessor
-        self.preprocessor = ImagePreprocessor(conf.preprocessing)
+        self.max_num_gt_kp = conf.load_features.point_gt.max_num_keypoints
+
+        # Initialize Image Preprocessors for square padding and resizing
+        self.preprocessors = {} # stores preprocessor for each reshape size
+        if self.conf.reshape is not None:
+            self.register_image_preprocessor_for_size(self.conf.reshape)
+        if self.conf.multiscale_learning.do:
+            for scale in self.conf.multiscale_learning.scales_list:
+                self.register_image_preprocessor_for_size(scale)
+
+        if self.conf.multiscale_learning.do:
+            if self.conf.multiscale_learning.scale_selection == 'round-robin':
+                self.scale_selection_idx = 0
+            # Keep track uf how many selected with current scale for batching (all img in same batch need same size)
+            self.num_select_with_current_scale = 0
+            self.current_scale = None
+            # we need to make sure that the appropriate batch size for the dataset conf is set correctly.
+            self.relevant_batch_size = self.conf[f"{split}_batch_size"]
 
         # select split scenes
-        self.img_dir = DATA_PATH / conf.data_dir
-        scene_file_path = self.img_dir.parent
+        self.img_dir = DATA_PATH / conf.data_dir / "images"
+        self.line_gt_dir = DATA_PATH / conf.data_dir / "deeplsd_gt"
+        self.point_gt_dir = DATA_PATH / conf.data_dir / "keypoint_gt"
         # Extract the scenes corresponding to the right split
-        scenes_file = None
         if split == "train":
             scenes_file = root / conf.train_scenes_file_path
         elif split == "val":
@@ -121,30 +145,25 @@ class _Dataset(torch.utils.data.Dataset):
         logger.info(f"NUMBER OF IMAGES: {len(self.image_paths)}")
         # Load features
         if conf.load_features.do:
-            self.point_gt_location = DATA_PATH.parent / conf.load_features.point_gt.path
-            self.line_gt_location = DATA_PATH.parent / conf.load_features.line_gt.path
             # filter out where missing groundtruth
             new_img_path_list = []
             for img_path in self.image_paths:
                 h5_file_name = img_path.with_suffix(".hdf5").name
                 point_gt_file_path = (
-                    self.point_gt_location / img_path.parent / h5_file_name
+                    self.point_gt_dir / img_path.parent / img_path.stem / 'keypoints.npy'
                 )
                 line_gt_file_path = (
-                    self.line_gt_location / img_path.parent / h5_file_name
+                    self.line_gt_dir / img_path.parent / h5_file_name
                 )
                 # perform sanity checks if wanted
                 flag = True
                 if (
                     self.conf.load_features.check_exists
-                    or self.conf.load_features.check_nan
                 ):
                     flag = False
                     if self.conf.load_features.check_exists:
                         if point_gt_file_path.exists() and line_gt_file_path.exists():
                             flag = True
-                    if self.conf.load_features.check_nan:
-                        flag = not self.contains_any_gt_nan(img_path)
                 if flag:
                     new_img_path_list.append(img_path)
             self.image_paths = new_img_path_list
@@ -165,27 +184,47 @@ class _Dataset(torch.utils.data.Dataset):
         if self.conf.device is not None:
             img = img.to(self.conf.device)
         return img
+    
+    
+    def register_image_preprocessor_for_size(self, size: int) -> None:
+        """
+        We use image preprocessor to reshape images and square pad them. We resize keeping the aspect ratio of images.
+        Thus image sizes can be different even when long side scaled to same length. Thus square padding is needed so that
+        all images can be stuck together in a batch.
+        """
+        self.preprocessors[size] = ImagePreprocessor({
+                                                        "resize": size,
+                                                        "edge_divisible_by": None,
+                                                        "side": "long",
+                                                        "interpolation": "bilinear",
+                                                        "align_corners": None,
+                                                        "antialias": True,
+                                                        "square_pad": bool(self.conf.square_pad),
+                                                        "add_padding_mask": True,}
+                                                     )
+        
 
-    def _read_groundtruth(self, image_path, enforce_batch_dim=True):
+    def _read_groundtruth(self, image_path, shape: int = None) -> dict:
         """
         Reads groundtruth for points and lines from respective h5files.
         We can assume that gt files are existing at this point->filtered in init!
 
         image_path: path to image as relative to base directory(self.img_path)
         """
+        reshape_scales = None
+        heatmap_gt_key_name = self.conf.load_features.point_gt.data_keys[0]
+        kp_gt_key_name = self.conf.load_features.point_gt.data_keys[1]
+        kp_score_gt_key_name = self.conf.load_features.point_gt.data_keys[2]
+        df_gt_key = self.conf.load_features.line_gt.data_keys[0]
+        af_gt_key = self.conf.load_features.line_gt.data_keys[1]
+
         ground_truth = {}
         h5_file_name = image_path.with_suffix(".hdf5").name
-        point_gt_file_path = self.point_gt_location / image_path.parent / h5_file_name
-        line_gt_file_path = self.line_gt_location / image_path.parent / h5_file_name
-        # Read data for points
-        with h5py.File(point_gt_file_path, "r") as point_file:
-            ground_truth = {
-                **self.read_datasets_from_h5(
-                    self.conf.load_features.point_gt.data_keys, point_file
-                ),
-                **ground_truth,
-            }
-        # Read data for lines
+        npy_file_subpath = image_path.parent / image_path.stem / 'keypoints.npy'
+        point_gt_file_path = self.point_gt_dir / npy_file_subpath
+        line_gt_file_path = self.line_gt_dir / image_path.parent / h5_file_name
+
+        # Read data for lines -> stored as tensors
         with h5py.File(line_gt_file_path, "r") as line_file:
             ground_truth = {
                 **self.read_datasets_from_h5(
@@ -193,6 +232,44 @@ class _Dataset(torch.utils.data.Dataset):
                 ),
                 **ground_truth,
             }
+        # scale df and af
+        df_img = ground_truth[df_gt_key]
+        thres = self.conf.load_features.line_gt.enforce_threshold
+        if thres is not None:
+            df_img = np.where(df_img > thres, thres, df_img)
+        df = torch.from_numpy(df_img).to(dtype=torch.float32)
+
+        af_img = ground_truth[af_gt_key]
+        af = af_img.to(dtype=torch.float32)
+        # rescale df and af if wanted
+        if shape is not None:
+            preprocessor_df_out = self.preprocessors[shape](df.unsqueeze(0))
+            reshape_scales = preprocessor_df_out['scales']  # store reshape scales for keypoints later
+            df= preprocessor_df_out['image'].squeeze(0)
+            af = self.preprocessors[shape](af.unsqueeze(0))['image'].squeeze(0)
+        ground_truth[af_gt_key] = af
+        ground_truth[df_gt_key] = df
+
+        # Read data for points
+        kp_file_content = torch.from_numpy(np.load(point_gt_file_path)).to(dtype=torch.float32)  # file contains (N, 3) shape np-array -> 1st two cols for kp x,y 3rd for kp-score
+        keypoints = kp_file_content[:, [1, 0]]
+        keypoint_scores = kp_file_content[:, 2]
+        
+        # scale points and create heatmap
+        heatmap = np.zeros_like(df)  # df is potentioally already reshaped to new image size
+        keypoints = (keypoints * reshape_scales) if reshape_scales is not None else keypoints
+        coordinates = torch.round(keypoints).to(dtype=torch.int)
+
+        if self.conf.load_features.point_gt.use_score_heatmap:
+            heatmap[coordinates[:, 1], coordinates[:, 0]] = keypoint_scores
+        else:
+            heatmap[coordinates[:, 1], coordinates[:, 0]] = 1.0
+        heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
+
+        ground_truth[heatmap_gt_key_name] = heatmap
+        ground_truth[kp_gt_key_name] = keypoints[:self.max_num_gt_kp, :] if self.max_num_gt_kp is not None else keypoints
+        ground_truth[kp_score_gt_key_name] = keypoint_scores[:self.max_num_gt_kp] if self.max_num_gt_kp is not None else keypoint_scores
+
         return ground_truth
 
     def __getitem__(self, idx):
@@ -201,14 +278,18 @@ class _Dataset(torch.utils.data.Dataset):
         """
         path = self.image_paths[idx]
         img = self._read_image(self.img_dir / path)
+        orig_shape = img.shape[-1], img.shape[-2]
+        size_to_reshape_to = self.select_resize_shape(orig_shape)
         data = {
             "name": str(path),
-            **self.preprocessor(img),
         }  # add metadata, like transform, image_size etc...
+        if size_to_reshape_to == orig_shape:
+            data['image'] = img
+        else:
+            data = {**data, **self.preprocessors[size_to_reshape_to](img)}
         if self.conf.load_features.do:
-            gt = self._read_groundtruth(path)
+            gt = self._read_groundtruth(path, None if size_to_reshape_to == orig_shape else size_to_reshape_to)
             data = {**data, **gt}
-
         return data
 
     def read_datasets_from_h5(self, keys, file):
@@ -223,12 +304,96 @@ class _Dataset(torch.utils.data.Dataset):
                 data[key] = d
         return data
 
-    def contains_any_gt_nan(self, img_path):
-        gt = self._read_groundtruth(img_path)
-        for k, v in gt.items():
-            if isinstance(v, torch.Tensor) and torch.iszer(v).any():
-                return True
-        return False
-
     def __len__(self):
         return len(self.image_paths)
+    
+    
+    def do_change_size_now(self) -> bool:
+        """
+        Based on current state decides whether to change shape to reshape images to.
+        This decision is needed as all images in a batch need same shape. So we only potentially change shape
+        when a new batch is starting.
+
+        Returns:
+            bool: should shape be potentially changed?
+        """
+        # check if batch changes
+        if self.num_select_with_current_scale % self.relevant_batch_size == 0:
+            self.num_select_with_current_scale = 0  # if batch changes set counter to 0
+            return True
+        else:
+            return False
+        
+
+    def select_resize_shape(self, original_img_size: tuple):
+        """
+        Depending on whether resize or multiscale learning is activated the shape to resize the
+        image to is returned. If none of it is activated, the original image size will be returned.
+        Reshape has prevalence over multiscale learning!
+        """
+        do_reshape = self.conf.reshape is not None
+        do_ms_learning = self.conf.multiscale_learning.do
+        if not do_reshape and not do_ms_learning:
+            return original_img_size
+
+        if do_reshape:
+            return int(self.conf.reshape)
+
+        if do_ms_learning:
+            if self.do_change_size_now():
+                self.num_select_with_current_scale += 1
+                scales_list = self.conf.multiscale_learning.scales_list
+                scale_selection = self.conf.multiscale_learning.scale_selection
+                assert len(scales_list) > 1 # need more than one scale for multiscale learning to make sense
+
+                if scale_selection == "random":
+                    choice = int(random.choice(scales_list))
+                    self.current_scale = choice
+                    return choice
+                elif scale_selection == "round-robin":
+                    current_scale = scales_list[self.scale_selection_idx]
+                    self.current_scale = current_scale
+                    self.scale_selection_idx += 1
+                    self.scale_selection_idx = self.scale_selection_idx % len(scales_list)
+                    return int(current_scale)
+            else:
+                self.num_select_with_current_scale += 1
+                return self.current_scale
+
+        raise Exception("Shouldn't end up here!")
+    
+    
+    def set_num_selected_with_current_scale(self, value: int) -> None:
+        """
+        Sets the self.num_selected_with_current_scale variable to a certain value.
+        This method is implemented as interface for the MergedDataset to be able to deal with multiscale learning
+        on multiple datasets
+
+        Args:
+            value (int): new value for variable
+        """
+        self.num_select_with_current_scale = value
+
+
+    def get_current_scale(self) -> int:
+        """
+        Returns the current used scale to reshape images to. Returns None if multiscale learning is deactivated.
+        This method is implemented as interface for the MergedDataset to be able to deal with multiscale learning
+        on multiple datasets
+
+        Returns:
+            int: current scale used to reshape in multi-scale training. None if its deactivated
+        """
+        return self.current_scale
+    
+    
+    def set_current_scale(self, value):
+        """
+        Sets the current scale used for multiscale training. Used to set size of reshape of this dataset during batch.
+        This method is implemented as interface for the MergedDataset to be able to deal with multiscale learning
+        on multiple datasets.
+
+        Returns:
+            int: current scale used to reshape in multi-scale training. None if its deactivated
+        """
+        self.current_scale = value
