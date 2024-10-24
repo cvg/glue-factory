@@ -8,7 +8,7 @@ data:
     reseed: False
 
     generate:
-        regenerate: True
+        regenerate: False
         use_df: True
         use_af: True
         num_images: 1000
@@ -44,7 +44,7 @@ data:
     seed: 0
 
 model:
-    name: gluefactory.models.lines.pold2_mlp
+    name: gluefactory.models.lines.pold2_cnn
     has_angle_field: True
     has_distance_field: True
     num_line_samples: 30
