@@ -52,6 +52,7 @@ class MiniDepthDataset(BaseDataset):
                 "use_score_heatmap": False,
                 "max_num_keypoints": 76, # the number of gt_keypoints used for training. The heatmap is generated using all kp. (IN KP GT KP ARE SORTED BY SCORE) 
                                           # -> Can also be set to None to return all points but this can only be used when batchsize=1. Min num kp in minidepth:  76
+                "use_deeplsd_lineendpoints_as_kp_gt": False
             },
             "line_gt": {
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
@@ -94,6 +95,7 @@ class _Dataset(torch.utils.data.Dataset):
         self.conf = conf
         self.grayscale = bool(conf.grayscale)
         self.max_num_gt_kp = conf.load_features.point_gt.max_num_keypoints
+        self.use_dlsd_ep_as_kp_gt = conf.use_deeplsd_lineendpoints_as_kp_gt
 
         # Initialize Image Preprocessors for square padding and resizing
         self.preprocessors = {} # stores preprocessor for each reshape size
@@ -116,6 +118,7 @@ class _Dataset(torch.utils.data.Dataset):
         self.img_dir = DATA_PATH / conf.data_dir / "images"
         self.line_gt_dir = DATA_PATH / conf.data_dir / "deeplsd_gt"
         self.point_gt_dir = DATA_PATH / conf.data_dir / "keypoint_gt"
+        self.dlsd_kp_gt = DATA_PATH / conf.data_dir / "dlsd_keypoint_gt"
         # Extract the scenes corresponding to the right split
         if split == "train":
             scenes_file = root / conf.train_scenes_file_path
@@ -155,6 +158,7 @@ class _Dataset(torch.utils.data.Dataset):
                 line_gt_file_path = (
                     self.line_gt_dir / img_path.parent / h5_file_name
                 )
+                dlsd_kp_gt_file = self.dlsd_kp_gt / img_path.parent / f"{img_path.stem}.npy"
                 # perform sanity checks if wanted
                 flag = True
                 if (
@@ -163,7 +167,10 @@ class _Dataset(torch.utils.data.Dataset):
                     flag = False
                     if self.conf.load_features.check_exists:
                         if point_gt_file_path.exists() and line_gt_file_path.exists():
-                            flag = True
+                            if self.use_dlsd_ep_as_kp_gt:
+                                flag = dlsd_kp_gt_file.exists()
+                            else:
+                                flag = True
                 if flag:
                     new_img_path_list.append(img_path)
             self.image_paths = new_img_path_list
@@ -223,6 +230,7 @@ class _Dataset(torch.utils.data.Dataset):
         npy_file_subpath = image_path.parent / image_path.stem / 'keypoints.npy'
         point_gt_file_path = self.point_gt_dir / npy_file_subpath
         line_gt_file_path = self.line_gt_dir / image_path.parent / h5_file_name
+        dlsd_kp_gt_path = self.dlsd_kp_gt / image_path.parent / f"{image_path.stem}.npy"
 
         # Read data for lines -> stored as tensors
         with h5py.File(line_gt_file_path, "r") as line_file:
@@ -254,6 +262,10 @@ class _Dataset(torch.utils.data.Dataset):
         kp_file_content = torch.from_numpy(np.load(point_gt_file_path)).to(dtype=torch.float32)  # file contains (N, 3) shape np-array -> 1st two cols for kp x,y 3rd for kp-score
         keypoints = kp_file_content[:, [1, 0]]
         keypoint_scores = kp_file_content[:, 2]
+        if self.use_dlsd_ep_as_kp_gt:  # TODO: check if works
+            dlsd_kp_gt = torch.from_numpy(np.load(dlsd_kp_gt_path)).to(dtype=torch.float32)
+            keypoints = torch.vstack([keypoints, dlsd_kp_gt[:, [1,0]]])
+            keypoint_scores = torch.vstack([keypoint_scores, dlsd_kp_gt[:, 2]])
         
         # scale points and create heatmap
         heatmap = np.zeros_like(df)  # df is potentioally already reshaped to new image size
