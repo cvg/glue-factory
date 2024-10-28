@@ -52,7 +52,8 @@ class MiniDepthDataset(BaseDataset):
                 "use_score_heatmap": False,
                 "max_num_keypoints": 76, # the number of gt_keypoints used for training. The heatmap is generated using all kp. (IN KP GT KP ARE SORTED BY SCORE) 
                                           # -> Can also be set to None to return all points but this can only be used when batchsize=1. Min num kp in minidepth:  76
-                "use_deeplsd_lineendpoints_as_kp_gt": False
+                "use_deeplsd_lineendpoints_as_kp_gt": False,  # set true to use deep-lsd line endpoints as keypoint groundtruth
+                "use_superpoint_kp_gt": True  # set true to use default HA-Superpoint groundtruth
             },
             "line_gt": {
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
@@ -95,7 +96,10 @@ class _Dataset(torch.utils.data.Dataset):
         self.conf = conf
         self.grayscale = bool(conf.grayscale)
         self.max_num_gt_kp = conf.load_features.point_gt.max_num_keypoints
-        self.use_dlsd_ep_as_kp_gt = conf.use_deeplsd_lineendpoints_as_kp_gt
+        
+        # we can configure whether we want to load superpoint kp-gt, deeplsd_lineEP lp-gt or both
+        self.use_superpoint_kp_gt = conf.load_features.point_gt.use_superpoint_kp_gt
+        self.use_dlsd_ep_as_kp_gt = conf.load_features.point_gt.use_deeplsd_lineendpoints_as_kp_gt
 
         # Initialize Image Preprocessors for square padding and resizing
         self.preprocessors = {} # stores preprocessor for each reshape size
@@ -218,7 +222,10 @@ class _Dataset(torch.utils.data.Dataset):
 
         image_path: path to image as relative to base directory(self.img_path)
         """
+        # Load config and local variables
         reshape_scales = None
+        original_size = None
+        reshaped_size_unpadded = None
         heatmap_gt_key_name = self.conf.load_features.point_gt.data_keys[0]
         kp_gt_key_name = self.conf.load_features.point_gt.data_keys[1]
         kp_score_gt_key_name = self.conf.load_features.point_gt.data_keys[2]
@@ -240,38 +247,55 @@ class _Dataset(torch.utils.data.Dataset):
                 ),
                 **ground_truth,
             }
-        # scale df and af
+        # threshold df if wanted
         df_img = ground_truth[df_gt_key]
         thres = self.conf.load_features.line_gt.enforce_threshold
         if thres is not None:
             df_img = np.where(df_img > thres, thres, df_img)
         df = torch.from_numpy(df_img).to(dtype=torch.float32)
+        original_size = df.shape
 
         af_img = ground_truth[af_gt_key]
         af = af_img.to(dtype=torch.float32)
-        # rescale df and af if wanted
+        # reshape df and af if wanted
         if shape is not None:
             preprocessor_df_out = self.preprocessors[shape](df.unsqueeze(0))
             reshape_scales = preprocessor_df_out['scales']  # store reshape scales for keypoints later
+            reshaped_size_unpadded = preprocessor_df_out['image_size']
             df= preprocessor_df_out['image'].squeeze(0)
             af = self.preprocessors[shape](af.unsqueeze(0))['image'].squeeze(0)
         ground_truth[af_gt_key] = af
         ground_truth[df_gt_key] = df
-
+        
         # Read data for points
-        kp_file_content = torch.from_numpy(np.load(point_gt_file_path)).to(dtype=torch.float32)  # file contains (N, 3) shape np-array -> 1st two cols for kp x,y 3rd for kp-score
-        keypoints = kp_file_content[:, [1, 0]]
-        keypoint_scores = kp_file_content[:, 2]
-        if self.use_dlsd_ep_as_kp_gt:  # TODO: check if works
+        keypoints = None
+        keypoint_scores = None
+        if self.use_superpoint_kp_gt:
+            kp_file_content = torch.from_numpy(np.load(point_gt_file_path)).to(dtype=torch.float32)  # file contains (N, 3) shape np-array -> 1st two cols for kp x,y 3rd for kp-score
+            keypoints = kp_file_content[:, [1, 0]]
+            keypoint_scores = kp_file_content[:, 2]
+        if self.use_dlsd_ep_as_kp_gt:
+            # need to clamp values as deeplsd also predicts line endpoints outside the image
             dlsd_kp_gt = torch.from_numpy(np.load(dlsd_kp_gt_path)).to(dtype=torch.float32)
-            keypoints = torch.vstack([keypoints, dlsd_kp_gt[:, [1,0]]])
-            keypoint_scores = torch.vstack([keypoint_scores, dlsd_kp_gt[:, 2]])
+            dlsd_kp_gt = torch.stack([
+                torch.clamp(dlsd_kp_gt[:, 0], min=0, max=(original_size[1]-1)),
+                torch.clamp(dlsd_kp_gt[:, 1], min=0, max=(original_size[0]-1))
+            ], dim=1)
+            keypoints = torch.vstack([keypoints, dlsd_kp_gt[:, [0,1]]]) if keypoints is not None else dlsd_kp_gt[:, [0,1]]
+            # for dlsd line endpoints no scores are given thus setting all to one (recommend to not use score heatmap)
+            keypoint_scores = torch.hstack([keypoint_scores, torch.ones((dlsd_kp_gt.shape[0]))]) if keypoint_scores is not None else torch.ones((dlsd_kp_gt.shape[0]))
         
         # scale points and create heatmap
         heatmap = np.zeros_like(df)  # df is potentioally already reshaped to new image size
         keypoints = (keypoints * reshape_scales) if reshape_scales is not None else keypoints
         coordinates = torch.round(keypoints).to(dtype=torch.int)
-
+        if reshaped_size_unpadded is not None:
+            # if reshaping is done clamp of roundend coordinates is necessary (TODO: possibly only if dlsd line ep kp gt is used)
+            coordinates = torch.stack([
+                torch.clamp(coordinates[:, 0], min=0, max=(reshaped_size_unpadded[0]-1)),
+                torch.clamp(coordinates[:, 1], min=0, max=(reshaped_size_unpadded[1]-1))
+            ], dim=1)
+        # create heatmap
         if self.conf.load_features.point_gt.use_score_heatmap:
             heatmap[coordinates[:, 1], coordinates[:, 0]] = keypoint_scores
         else:
@@ -279,6 +303,7 @@ class _Dataset(torch.utils.data.Dataset):
         heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
 
         ground_truth[heatmap_gt_key_name] = heatmap
+        # choose max num keypoints if wanted. Attention: we dont sort by score here! If dlsd kp gt is used all scores of these are 1!
         ground_truth[kp_gt_key_name] = keypoints[:self.max_num_gt_kp, :] if self.max_num_gt_kp is not None else keypoints
         ground_truth[kp_score_gt_key_name] = keypoint_scores[:self.max_num_gt_kp] if self.max_num_gt_kp is not None else keypoint_scores
 
