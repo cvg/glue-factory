@@ -22,9 +22,12 @@ data:
                 do: True
                 check_exists: True
                 point_gt:
+                    # ATTENTION: if deeplsd line ep are used as kp gt, using score heatmap is discouraged, as deeplsd does not assign scores to line ep and thus we set all to one
                     data_keys: [ "superpoint_heatmap", "gt_keypoints", "gt_keypoints_scores" ]
                     use_score_heatmap: False
                     max_num_keypoints: 63  # this num must match the max num kp at other datasets (take minimum)
+                    use_deeplsd_lineendpoints_as_kp_gt: True  # set true to use deep-lsd line endpoints as keypoint groundtruth
+                    use_superpoint_kp_gt: True  # set true to use default HA-Superpoint groundtruth
                 line_gt:
                     data_keys: [ "deeplsd_distance_field", "deeplsd_angle_field" ]
             train_scenes_file_path: "gluefactory/datasets/minidepth_train_scenes.txt"
@@ -43,9 +46,12 @@ data:
                 do: True
                 check_exists: True
                 point_gt:
+                    # ATTENTION: if deeplsd line ep are used as kp gt, using score heatmap is discouraged, as deeplsd does not assign scores to line ep and thus we set all to one
                     data_keys: [ "superpoint_heatmap", "gt_keypoints", "gt_keypoints_scores" ]
                     use_score_heatmap: False
                     max_num_keypoints: 63
+                    use_deeplsd_lineendpoints_as_kp_gt: True  # set true to use deep-lsd line endpoints as keypoint groundtruth
+                    use_superpoint_kp_gt: True  # set true to use default HA-Superpoint groundtruth
                 line_gt:
                     data_keys: [ "deeplsd_distance_field", "deeplsd_angle_field" ]
             val_size: 500

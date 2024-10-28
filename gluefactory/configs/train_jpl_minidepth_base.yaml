@@ -15,10 +15,13 @@ data:
     load_features:
         do: True
         check_exists: True
-        point_gt:
+        point_gt:            
+            # ATTENTION: if deeplsd line ep are used as kp gt, using score heatmap is discouraged, as deeplsd does not assign scores to line ep and thus we set all to one
             data_keys: [ "superpoint_heatmap", "gt_keypoints", "gt_keypoints_scores" ]
             use_score_heatmap: False
             max_num_keypoints: 76  # how many gt keypoints are loaded (could be used for kp losses later on). The heatmap is generated with all kp anyway.
+            use_deeplsd_lineendpoints_as_kp_gt: True  # set true to use deep-lsd line endpoints as keypoint groundtruth
+            use_superpoint_kp_gt: True  # set true to use default HA-Superpoint groundtruth
         line_gt:
             data_keys: [ "deeplsd_distance_field", "deeplsd_angle_field" ]
     train_scenes_file_path: "gluefactory/datasets/minidepth_train_scenes.txt"  # path to training scenes file where train scenes from megadepth1500 are excluded, based on repo root
