@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# SCRIPT THAT RUNS SPECIFIED BENCHMARKS AND IS DESIGNED TO BE CONFIGURABLE
+# please adapt parameters below before you start!
+
+
 # script params
 conf="0"
 out_folder_path="0"
@@ -7,7 +11,7 @@ use_extended_bm=0
 
 # List benchmarks to run
 LIST_OF_NORMAL_BM_FILES=("hpathes" "megadepth1500")
-LIST_OF_EXTENDED_BM_FILES=("hpatches_extended" "megadepth1500_extended")
+LIST_OF_EXTENDED_BM_FILES=("hpatches_extended" "megadepth1500_extended")  # extended bm usually also contain line metrics besides the default point metrics
 LIST_OF_COMMON_BM_FILES=()
 
 # user specific settings
@@ -101,7 +105,7 @@ prompt_continue
 echo "> Activate venv at $environment..."
 source "$environment"
 echo "> Use/Enter repo at $path_to_repo"
-cd "$path_to_repo"
+cd "$path_to_repo" || exit
 
 
 # Run benchmarks
