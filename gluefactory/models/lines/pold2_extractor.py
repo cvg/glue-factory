@@ -23,7 +23,8 @@ from tqdm import tqdm
 
 from gluefactory.models.base_model import BaseModel
 from gluefactory.models.lines.line_refinement import merge_lines_torch
-from gluefactory.models.lines.pold2_mlp import POLD2_MLP
+#from gluefactory.models.lines.pold2_mlp import POLD2_MLP
+from gluefactory.models.lines.pold2_cnn import POLD2_CNN
 from gluefactory.settings import DATA_PATH, root
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ class LineExtractor(BaseModel):
             "max_accepted_mean_value": 0.4,     # Maximum accepted DF mean value along the line
         },
 
-        "mlp_conf": POLD2_MLP.default_conf,
+        "mlp_conf": POLD2_CNN.default_conf,
         "nms": True,
         "device": None,
         "debug": False,
@@ -89,7 +90,7 @@ class LineExtractor(BaseModel):
 
         # Import mlp
         if conf.mlp_conf is not None:
-            self.model = POLD2_MLP(conf.mlp_conf)
+            self.model = POLD2_CNN(conf.mlp_conf)
             self.model.to(self.device)
             self.model.eval()
             
@@ -258,12 +259,14 @@ class LineExtractor(BaseModel):
             
         # Prepare input for MLP
         if use_df and use_af:
-            inp_vals = torch.cat((df_vals, af_vals), dim=1)
+            df_vals = df_vals.view(-1,num_bands,self.num_samples_mlp)
+            af_vals = af_vals.view(-1,num_bands,self.num_samples_mlp)
+            inp_vals = torch.cat((df_vals, af_vals), dim=2)
         elif use_df:
             inp_vals = df_vals
         elif use_af:
             inp_vals = af_vals
-
+        print(inp_vals.shape)
         # Return estimated probabilities
         predictions = self.model(
             {

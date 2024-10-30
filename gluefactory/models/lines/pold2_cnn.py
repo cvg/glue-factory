@@ -52,9 +52,11 @@ class POLD2_CNN(BaseModel):
             raise ValueError("No input features selected for CNN")
 
         cnn_layers = []
-        cnn_layers.append(nn.Conv1d(1,5,3,1,1))
+        #cnn_layers.append(nn.Conv1d(1,5,3,1,1))
+        cnn_layers.append(nn.Conv2d(1,5,3,1,1))
         cnn_layers.append(nn.ReLU())
-        cnn_layers.append(nn.Conv1d(5,5,3,1,1))
+        #cnn_layers.append(nn.Conv1d(5,5,3,1,1))
+        cnn_layers.append(nn.Conv2d(5,5,3,1,1))
         cnn_layers.append(nn.ReLU())
         cnn_layers.append(nn.Flatten())
         cnn_layers.append(nn.Linear(5*input_dim, conf.cnn_hidden_dims[0]))
@@ -78,7 +80,8 @@ class POLD2_CNN(BaseModel):
 
     def _forward(self, data: torch.Tensor):
         x = data["input"]
-        if x.ndim == 2:
+        #print(x.shape)
+        if x.ndim == 3:
             x = x.unsqueeze(1)
         return {"line_probs": torch.sigmoid(self.cnn(x))}
 

@@ -1,6 +1,6 @@
 data:
     name: gluefactory.datasets.pold2_mlp_dataset
-    data_dir: "pold2_mlp_dataset_HARD_NEGATIVE"
+    data_dir: "pold2_cnn_dataset_HARD_NEGATIVE"
 
     train_size: 85000
     val_size: 15000
@@ -8,7 +8,7 @@ data:
     reseed: False
 
     generate:
-        regenerate: True
+        regenerate: False
         use_df: True
         use_af: True
         num_images: 1000
@@ -18,7 +18,7 @@ data:
         negative_neighbour_max_radius: 20
         num_negative_per_image: 60  
         num_positive_per_image: 60
-        num_line_samples: 150
+        num_line_samples: 30
         num_bands: 3
         band_width: 1
 
@@ -52,10 +52,10 @@ data:
     seed: 0
 
 model:
-    name: gluefactory.models.lines.pold2_mlp
+    name: gluefactory.models.lines.pold2_cnn
     has_angle_field: True
     has_distance_field: True
-    num_line_samples: 150
+    num_line_samples: 30
     num_bands: 3
     band_width: 1
     mlp_hidden_dims: [256, 128, 128, 64, 32]

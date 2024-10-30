@@ -201,15 +201,17 @@ class POLD2_MLP_Dataset(BaseDataset):
                 cur_points = getPointsOnLine(p1+i, p2+i, blend, image_shape)
                 points = np.vstack([points, cur_points])
 
-            df_val = distance_map[points[:, 1], points[:, 0]].reshape(-1)
-            af_val = angle_map[points[:, 1], points[:, 0]].reshape(-1)
+            df_val = distance_map[points[:, 1], points[:, 0]].reshape(3,-1)
+            af_val = angle_map[points[:, 1], points[:, 0]].reshape(3,-1)
+
 
             if conf.generate.use_df and not conf.generate.use_af:
                 return df_val
             elif conf.generate.use_af and not conf.generate.use_df:
                 return af_val
             else:
-                return np.hstack([df_val, af_val])
+                ret = np.hstack([df_val, af_val])
+                return ret
             
         def generate_random_endpoints(img_shape, gen_conf):
             # Randomly sample negative points and generate lines
