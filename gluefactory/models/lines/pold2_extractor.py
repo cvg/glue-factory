@@ -51,12 +51,12 @@ class LineExtractor(BaseModel):
         "mlp_conf": POLD2_MLP.default_conf,
         "nms": True,
         "device": None,
+        "coeff_dir": "line_extraction_coeffs",
         "debug": False,
         "debug_dir": 'tmp',
     }
 
-    def _init(self, conf: dict):
-
+    def _init(self, conf: OmegaConf):
         self.max_point_size = conf.max_point_size
 
         if conf.device is not None:
@@ -93,9 +93,68 @@ class LineExtractor(BaseModel):
             self.model.to(self.device)
             self.model.eval()
             
+            self.brute_force_samples = conf.mlp_conf.brute_force_samples
             self.num_samples_mlp = conf.mlp_conf.num_line_samples
-            self.coeffs_mlp = torch.arange(0, 1, 1 / self.num_samples_mlp).to(self.device).view(-1, 1)
-            self.coeffs_mlp_second = (1 - torch.arange(0, 1, 1 / self.num_samples_mlp)).to(self.device).view(-1, 1)
+
+            if self.brute_force_samples:
+                # For brute force sampling, we sample all points between line endpoints
+                # For all possible line distances, generate coefficients with a step of 1 / num_samples, and pad with 0s
+
+                image_size = conf.mlp_conf.image_size
+                if image_size is None:
+                    raise ValueError("Image size must be provided for brute force sampling")
+                max_line_length = self.model.num_line_samples
+                self.num_samples_mlp = max_line_length
+
+                coeff_file_path = os.path.join(DATA_PATH, conf.coeff_dir, f"coeffs_{image_size}.npy")
+                coeff_second_file_path = os.path.join(DATA_PATH, conf.coeff_dir, f"coeffs_second_{image_size}.npy")
+
+                if os.path.exists(coeff_file_path) and os.path.exists(coeff_second_file_path):
+                    self.all_coeffs_mlp = torch.from_numpy(np.load(coeff_file_path)).to(self.device)
+                    self.all_coeffs_mlp_second = torch.from_numpy(np.load(coeff_second_file_path)).to(self.device)
+                else:
+                    # Generate coefficients
+                    self.all_coeffs_mlp = torch.zeros((0, max_line_length))
+                    self.all_coeffs_mlp_second = torch.zeros((0, max_line_length))
+                    for i in range(1, max_line_length + 1):
+                        c1 = torch.arange(0, 1, 1 / i).to(self.device).view(-1, 1)[:i]
+                        c2 = (1 - torch.arange(0, 1, 1 / i)).to(self.device).view(-1, 1)[:i]
+
+                        # Pad with 0s to match the maximum line length from both sides
+                        pad = max_line_length - i
+                        left_pad = torch.zeros(pad//2, 1).to(self.device)
+                        right_pad = torch.zeros(pad - pad//2, 1).to(self.device)
+
+                        print(f"i: {i}")
+                        print(f"left_pad: {left_pad.shape}, c1: {c1.shape}, right_pad: {right_pad.shape}")
+                        print(f"all_coeffs_mlp: {self.all_coeffs_mlp.shape}, cat: {torch.cat((left_pad, c1, right_pad), dim=0).view(1,-1).shape}")
+
+                        self.all_coeffs_mlp = torch.cat(
+                            (
+                                self.all_coeffs_mlp,
+                                torch.cat((left_pad, c1, right_pad), dim=0).view(1, -1),
+                            ), 
+                            dim=0
+                        )
+                        self.all_coeffs_mlp_second = torch.cat(
+                            (
+                                self.all_coeffs_mlp_second,
+                                torch.cat((left_pad, c2, right_pad), dim=0).view(1, -1),
+                            ),
+                            dim=0
+                        )
+
+                    # Save coefficients
+                    if not os.path.exists(os.path.join(DATA_PATH, conf.coeff_dir)):
+                        os.makedirs(os.path.join(DATA_PATH, conf.coeff_dir))
+                    np.save(coeff_file_path, self.all_coeffs_mlp.cpu().numpy())
+                    np.save(coeff_second_file_path, self.all_coeffs_mlp_second.cpu().numpy())
+
+            else:
+                # For normal sampling, we sample num_samples points between line endpoints
+                # Generate coefficients with a step of 1 / num_samples
+                self.coeffs_mlp = torch.arange(0, 1, 1 / self.num_samples_mlp).to(self.device).view(-1, 1)
+                self.coeffs_mlp_second = (1 - torch.arange(0, 1, 1 / self.num_samples_mlp)).to(self.device).view(-1, 1)
 
     # Distance map processing
     def process_distance_map(self, distance_map):
@@ -126,6 +185,30 @@ class LineExtractor(BaseModel):
         # ==> p2 = 0.5 * first + 0.5 * second
         # ==> p3 = 0.0 * first + 1.0 * second
         return (first_point_position + second_point_position).view(-1, 2).int()
+
+    def get_coordinates_brute_force(self, points, indices, coeffs, coeffs_second):
+        """
+        Get the coordinates of the points along the line.
+
+        Args:
+            points (torch.Tensor): All keypoints, Shape: (N_pts, 2)
+            indices (torch.Tensor): Indices of the candiate line endpoints, Shape: (N_lines, 2)
+            coeffs (torch.Tensor): Coefficients for the first point, Shape: (N_lines, max_line_length, 1)
+        """
+
+        first_point_position = points[indices[:, 0]][:, None, :]        # Shape: (num_lines, 1, 2)
+        first_point_position = coeffs * first_point_position            # Shape: (num_lines, num_samples, 2)
+
+        second_point_position = points[indices[:, 1]][:, None, :]       # Shape: (num_lines, 1, 2)
+        second_point_position = coeffs_second * second_point_position   # Shape: (num_lines, num_samples, 2)
+
+        # Compute the points along the line
+        # If we have 3 points for example
+        # ==> p1 = 1.0 * first + 0.0 * second
+        # ==> p2 = 0.5 * first + 0.5 * second
+        # ==> p3 = 0.0 * first + 1.0 * second
+        coords = (first_point_position + second_point_position).permute(1, 0, 2).int()  # Shape: (num_samples, num_lines, 2)
+        return coords.reshape(-1, 2)
 
     def sample_map(self, points, map):
         return map[points[:, 1], points[:, 0]]
@@ -210,7 +293,7 @@ class LineExtractor(BaseModel):
 
 
     # MLP filter
-    def mlp_filter(self, points: torch.Tensor, indices_image: torch.Tensor, distance_map: torch.Tensor, angle_map: torch.Tensor) -> torch.Tensor:
+    def mlp_input_prep(self, points: torch.Tensor, indices_image: torch.Tensor, distance_map: torch.Tensor, angle_map: torch.Tensor) -> torch.Tensor:
         """
         Uses a small Fully Connected NN (MLP) to predict the probabilities of all given line candidates to really be a line!
         This probability is then used to filter out line candidates whose predicted probability is below a certain threshhold.
@@ -230,25 +313,60 @@ class LineExtractor(BaseModel):
         # Sample coordinates (sample line points for each pair of kp representing a line candidate)
         points_coordinates = torch.zeros(len(indices_image), 0, 2).int().to(self.device)
 
+        coord_func = self.get_coordinates if not self.brute_force_samples else self.get_coordinates_brute_force
+
+        # Prepare the coefficients for brute force sampling
+        if self.brute_force_samples:
+
+            # get distances between candidate end points
+            distances = torch.norm((points[indices_image[:, 0]] - points[indices_image[:, 1]]).float(), dim=1)
+            distances = distances.int() - 1
+
+            self.coeffs_mlp = self.all_coeffs_mlp[distances][:,:, None]                 # Shape: (num_lines, max_line_length, 1)
+            self.coeffs_mlp_second = self.all_coeffs_mlp_second[distances][:,:, None]   # Shape: (num_lines, max_line_length, 1)
+
+            # Padded coeffs will sample the DF and AF at (0,0)
+            # Hardcode DF[0,0] and AF[0,0]
+            distance_map[0,0] = 0
+            angle_map[0,0] = 0
+
         num_bands = self.conf.mlp_conf.num_bands
         band_width = self.conf.mlp_conf.band_width
         band_ids = np.arange(0, num_bands) - num_bands // 2
         band_ids *= band_width
+
+        # Get direction vectors and main coordinates for each line candidate
+        main_coords = coord_func(
+            points, indices_image, self.coeffs_mlp, self.coeffs_mlp_second
+        ).reshape(self.num_samples_mlp, -1, 2).permute(1, 0, 2)
+        dir_vecs = points[indices_image[:, 1]] - points[indices_image[:, 0]]
+        dir_vecs = dir_vecs / torch.norm(dir_vecs.float(), dim=1)[: , None]
+
         for i in band_ids:
-            band_pts = points + i
-            band_pts = band_pts.int()
+            cur_coords = main_coords + i * dir_vecs[:, None, :]
+            cur_coords[:, :, 0] = torch.clamp(cur_coords[:, :, 0], 0, distance_map.shape[1] - 1)
+            cur_coords[:, :, 1] = torch.clamp(cur_coords[:, :, 1], 0, distance_map.shape[0] - 1)
+            cur_coords = cur_coords.int()
 
-            cur_coords = self.get_coordinates(
-                band_pts, indices_image, self.coeffs_mlp, self.coeffs_mlp_second
-            )
-            cur_coords[:, 0] = torch.clamp(cur_coords[:, 0], 0, distance_map.shape[1] - 1)
-            cur_coords[:, 1] = torch.clamp(cur_coords[:, 1], 0, distance_map.shape[0] - 1)
-
-            cur_coords = cur_coords.reshape(self.num_samples_mlp, -1, 2).permute(1, 0, 2)
             points_coordinates = torch.cat((points_coordinates, cur_coords), dim=1)
 
-        points_coordinates = points_coordinates.reshape(-1, 2)
+        # Shape: (num_lines, num_bands * num_samples, 2)
+        points_coordinates = points_coordinates.reshape(-1, 2)  # Shape: (num_lines * num_bands * num_samples, 2)
 
+        ## DEBUG
+        """
+        # plot sampled points to verify band sampling
+        if self.conf.debug:
+            global IDX
+            # global IMAGE
+            # img = IMAGE.cpu().numpy()
+            # img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            img = (distance_map.cpu().numpy() * 255).astype(np.uint8)
+            for point in points_coordinates:
+                point = point.cpu().numpy().astype(int)
+                cv2.circle(img, (point[0], point[1]), 1, (255, 0, 0), -1)
+            cv2.imwrite(f"{self.conf.debug_dir}/{IDX-1}_sampled_points.jpg", img)
+        """
         # Sample points
         if use_df:
             df_vals = self.sample_map(points_coordinates, distance_map).view(-1, self.num_samples_mlp * num_bands)
@@ -258,16 +376,22 @@ class LineExtractor(BaseModel):
             
         # Prepare input for MLP
         if use_df and use_af:
-            inp_vals = torch.cat((df_vals, af_vals), dim=1)
+            inp_vals = torch.cat((df_vals, af_vals), dim=1) # Shape: (num_lines, num_samples * num_bands * 2)
         elif use_df:
-            inp_vals = df_vals
+            inp_vals = df_vals  # Shape: (num_lines, num_samples * num_bands)
         elif use_af:
-            inp_vals = af_vals
+            inp_vals = af_vals  # Shape: (num_lines, num_samples * num_bands)
 
+        return inp_vals
+
+    def mlp_filter(self, points: torch.Tensor, indices_image: torch.Tensor, distance_map: torch.Tensor, angle_map: torch.Tensor) -> torch.Tensor:
+        
+        mlp_input = self.mlp_input_prep(points, indices_image, distance_map, angle_map)
+        
         # Return estimated probabilities
         predictions = self.model(
             {
-                "input": inp_vals,
+                "input": mlp_input,
             }
         )["line_probs"]
         mlp_output = (predictions > self.conf.mlp_conf.pred_threshold).reshape(-1)
@@ -356,6 +480,9 @@ class LineExtractor(BaseModel):
             lines = torch.cat([lines.reshape(-1,2), filtered_idx.reshape(-1,1)], axis=-1).reshape(-1, 2, 3)
             filtered_idx = merge_lines_torch(lines, return_indices=True).int()
 
+            if self.conf.debug:
+                print(f"Number of lines after NMS: {len(filtered_idx)}")
+
         # Prepare output
         lines = points[filtered_idx]
         line_descriptors = torch.stack(
@@ -421,6 +548,19 @@ def test_extractor(extractor, folder_path, device, show=False):
     # Load keypoints
     points_np = np.load(f"{folder_path}/keypoints.npy", allow_pickle=True)
     points = torch.from_numpy(points_np).to(device).int()
+
+    # DEBUG
+    """
+    # harcoded points - 4 points in the center of the image
+    # Used to visualize the extractor on a small subset of points
+    h, w = distance_map.shape
+    points = torch.tensor([
+        [w//4, h//4],
+        [3*w//4, h//4],
+        [w//4, 3*h//4],
+        [3*w//4, 3*h//4],
+    ]).to(device)
+    """
 
     # Start counter
     start_time = time.perf_counter()
