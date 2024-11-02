@@ -1,5 +1,5 @@
 max_point_size: 1500
-samples: [8, 16, 32, 64, 128, 256, 512]
+samples: [8]
 
 distance_map:
     max_value: 5
@@ -15,12 +15,27 @@ mlp_conf:
     name: gluefactory.models.lines.pold2_mlp
     has_angle_field: True
     has_distance_field: True
-    num_bands: 1
-    band_width: 2
+
+    num_bands: 5
+    band_width: 1
+
     num_line_samples: 150
+    brute_force_samples: True
+    image_size: 800
+
     mlp_hidden_dims: [256, 128, 128, 64, 32]
+    
+    cnn_1d:              
+        mode: shared    # shared, disjoint  
+        merge_mode: concat      # concat, add
+        kernel_size: 3
+        stride: 1
+        padding: same
+        channels: [3, 3, 1]
+
     pred_threshold: 0.95
-    weights: /local/home/Point-Line/outputs/training/pold2_mlp_gen+train_run1/checkpoint_best.tar
+    weights: null
+    # weights: /local/home/Point-Line/outputs/training/pold2_mlp_gen+train_Bands-3-1_1kimg_50pimg/checkpoint_best.tar
 
 device: cpu
 debug: True
