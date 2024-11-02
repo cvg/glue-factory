@@ -9,8 +9,7 @@ reseed: False
 # data generation (None to skip)
 generate:
     regenerate: True
-    use_df: True
-    use_af: True
+    
     num_images: 100
     negative_type: combined
     combined_ratio: 0.8
@@ -18,9 +17,18 @@ generate:
     negative_neighbour_max_radius: 10
     num_negative_per_image: 40
     num_positive_per_image: -1
-    num_line_samples: 30
-    num_bands: 3
-    band_width: 1
+
+    mlp_config:
+        has_angle_field: True
+        has_distance_field: True 
+        
+        num_line_samples: 30    # number of sampled points between line endpoints
+        brute_force_samples: True  # sample all points between line endpoints
+        image_size: 800         # size of the input image relevant only if brute_force_samples is True
+
+        num_bands: 5            # number of bands to sample along the line
+        band_width: 1           # width of the band to sample along the line
+
     deeplsd_config:
         detect_lines: True
         line_detection_params:
