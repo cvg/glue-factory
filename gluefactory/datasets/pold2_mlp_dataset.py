@@ -20,6 +20,7 @@ import enum
 from gluefactory.models.deeplsd_inference import DeepLSD
 from gluefactory.utils.image import load_image
 from gluefactory.models.extractors.joint_point_line_extractor import JointPointLineDetectorDescriptor
+from gluefactory.models.lines.pold2_extractor import LineExtractor
 
 from ..settings import DATA_PATH
 from ..utils.tools import fork_rng
@@ -46,8 +47,7 @@ class POLD2_MLP_Dataset(BaseDataset):
         # data generation (None to skip)
         "generate": {
             "regenerate": False,
-            "use_df": True,
-            "use_af": True,
+
             "num_images": 100,
             "num_negative_per_image": 10,
             "negative_type": "random",  # random, deeplsd_random, deeplsd_neighbour, combined
@@ -55,9 +55,19 @@ class POLD2_MLP_Dataset(BaseDataset):
             "negative_neighbour_min_radius": 5,
             "negative_neighbour_max_radius": 10,
             "num_positive_per_image": 10,  # -1 to use all
-            "num_line_samples": 30,  # number of sampled points between line endpoints
-            "num_bands": 1,  # number of bands to sample along the line
-            "band_width": 1,  # width of the band
+
+            "mlp_config": {
+                "has_angle_field": True,
+                "has_distance_field": True, 
+                
+                "num_line_samples": 30,    # number of sampled points between line endpoints
+                "brute_force_samples": False,  # sample all points between line endpoints
+                "image_size": 800,         # size of the input image, relevant only if brute_force_samples is True
+
+                "num_bands": 1,            # number of bands to sample along the line
+                "band_width": 1,           # width of the band to sample along the line
+            },
+
             "deeplsd_config": {
                 "detect_lines": True,
                 "line_detection_params": {
@@ -68,6 +78,7 @@ class POLD2_MLP_Dataset(BaseDataset):
                 },
                 "weights": None,  # path to the weights of the DeepLSD model (relative to DATA_PATH)
             },
+
             "jpldd_config" : {
                 "name": "joint_point_line_extractor",
                 "max_num_keypoints": 500,  # setting for training, for eval: -1
@@ -103,6 +114,7 @@ class POLD2_MLP_Dataset(BaseDataset):
         labels = torch.cat(
             (torch.ones(positives.shape[0]), torch.zeros(negatives.shape[0])), axis=0
         )
+        logger.info(f"Loaded POLD2-MLP dataset with {positives.shape} positives and {negatives.shape} negatives")
 
         if conf.shuffle_seed is not None:
             idxs = torch.randperm(
@@ -144,11 +156,15 @@ class POLD2_MLP_Dataset(BaseDataset):
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        def get_line_from_image(file_path, deeplsd_net, jpldd_net):
+        def get_line_from_image(file_path, deeplsd_net, jpldd_net, reshape_image=None):
             img = cv2.imread(file_path)[:, :, ::-1]
             if self.gen_debug:
                 self.IMAGE = img
             gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+
+            if reshape_image is not None:
+                gray_img = cv2.resize(gray_img, (reshape_image, reshape_image))
+                img = cv2.resize(img, (reshape_image, reshape_image))
 
             inputs = {
                 "image": torch.tensor(gray_img, dtype=torch.float, device=device)[
@@ -157,7 +173,7 @@ class POLD2_MLP_Dataset(BaseDataset):
                 / 255.0
             }
             inputs_jpldd = {
-                "image": load_image(file_path).to(device).unsqueeze(0)
+                "image": torch.tensor(img, dtype=torch.float, device=device)[None].permute(0, 3, 1, 2)/255.0
             }
 
             with torch.no_grad():
@@ -168,48 +184,14 @@ class POLD2_MLP_Dataset(BaseDataset):
             # distance field
             distances = out_jpldd["line_distancefield"][0]
             distances /= deeplsd_net.conf.line_neighborhood
-            distances = distances.cpu().numpy()
 
             # angle field
             angles = out_jpldd["line_anglefield"][0]
-            angles = angles.cpu().numpy() / np.pi
+            angles = angles / np.pi
 
             lines = np.array(out_deeplsd["lines"][0])
 
             return distances, angles, lines, gray_img.shape
-        
-        def getPointsOnLine(p1, p2, blend, image_shape):
-            v1 = blend * p1
-            v2 = (1 - blend) * p2
-
-            points = (v1 + v2).round().astype(int)
-
-            points[:, 1] = np.clip(points[:, 1], 0, image_shape[0] - 1)
-            points[:, 0] = np.clip(points[:, 0], 0, image_shape[1] - 1)
-
-            return points
-
-        def datasetEntryFromPoints(p1, p2, distance_map, angle_map, blend, image_shape):
-
-            num_bands = conf.generate.num_bands
-            band_width = conf.generate.band_width
-            band_ids = np.arange(0, num_bands) - num_bands // 2
-            band_ids *= band_width
-
-            points = np.zeros((0, 2), dtype=int)
-            for i in band_ids:
-                cur_points = getPointsOnLine(p1+i, p2+i, blend, image_shape)
-                points = np.vstack([points, cur_points])
-
-            df_val = distance_map[points[:, 1], points[:, 0]].reshape(-1)
-            af_val = angle_map[points[:, 1], points[:, 0]].reshape(-1)
-
-            if conf.generate.use_df and not conf.generate.use_af:
-                return df_val
-            elif conf.generate.use_af and not conf.generate.use_df:
-                return af_val
-            else:
-                return np.hstack([df_val, af_val])
             
         def generate_random_endpoints(img_shape, gen_conf):
             # Randomly sample negative points and generate lines
@@ -262,11 +244,6 @@ class POLD2_MLP_Dataset(BaseDataset):
         if gen_conf is None:
             raise ValueError("No data generation configuration found.")
 
-        if not gen_conf.use_df and not gen_conf.use_af:
-            raise ValueError(
-                "At least one of the fields (distance or angle) must be used."
-            )
-
         # Load the DeepLSD model
         ckpt_path = DATA_PATH / gen_conf.deeplsd_config.weights
         ckpt = torch.load(str(ckpt_path), map_location=device, weights_only=False)
@@ -275,8 +252,14 @@ class POLD2_MLP_Dataset(BaseDataset):
         deeplsd_net = deeplsd_net.to(device).eval()
         jpldd_net = JointPointLineDetectorDescriptor(gen_conf.jpldd_config)
         jpldd_net = jpldd_net.to(device).eval()
-
-        blend = np.linspace(0, 1, conf.generate.num_line_samples).reshape(-1, 1)
+        
+        extractor = LineExtractor(
+            OmegaConf.create(
+                {
+                    "mlp_conf": gen_conf.mlp_config,
+                }
+            )
+        )
 
         # Generate the data
         positives = []
@@ -288,7 +271,7 @@ class POLD2_MLP_Dataset(BaseDataset):
 
         for file_path in tqdm(fps, desc="Generating data"):
             distance_map, angle_map, lines, img_shape = get_line_from_image(
-                file_path, deeplsd_net, jpldd_net
+                file_path, deeplsd_net, jpldd_net, gen_conf.mlp_config.image_size
             )
 
             lines = lines.astype(int)  # convert to int for indexing
@@ -340,26 +323,37 @@ class POLD2_MLP_Dataset(BaseDataset):
                 cv2.imwrite(f"tmp_dataset_debug/{self.IDX}.png", dimg)
                 self.IDX += 1
 
+            # convert to torch tensors
+            device = extractor.device
+            pos_lines = torch.tensor(pos_lines, dtype=torch.int, device=device)
+            neg_lines = torch.tensor(neg_lines, dtype=torch.int, device=device)
 
             # Generate positive samples
-            for line in pos_lines:
-                positives.append(
-                    datasetEntryFromPoints(
-                        line[0], line[1], distance_map, angle_map, blend, img_shape
-                    )
-                )
+            positives.append(
+                extractor.mlp_input_prep(
+                    pos_lines.reshape(-1, 2),
+                    torch.arange(len(pos_lines)*2).reshape(-1, 2),
+                    distance_map,
+                    angle_map
+                ).cpu().numpy()
+            )
 
             # Generate negative samples
-            for line in neg_lines:
-                negatives.append(
-                    datasetEntryFromPoints(
-                        line[0], line[1], distance_map, angle_map, blend, img_shape
-                    )
-                )
+            negatives.append(
+                extractor.mlp_input_prep(
+                    neg_lines.reshape(-1, 2),
+                    torch.arange(len(neg_lines)*2).reshape(-1, 2),
+                    distance_map,
+                    angle_map
+                ).cpu().numpy()
+            )
+
+        positives = np.concatenate(positives)
+        negatives = np.concatenate(negatives)
 
         # Save the data
-        np.save(data_dir / "positives.npy", np.array(positives))
-        np.save(data_dir / "negatives.npy", np.array(negatives))
+        np.save(data_dir / "positives.npy", positives)
+        np.save(data_dir / "negatives.npy", negatives)
 
     def get_dataset(self, split):
         return _Dataset(self.conf, self.split_data[split], split)
