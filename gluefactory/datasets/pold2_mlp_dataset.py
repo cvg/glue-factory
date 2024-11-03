@@ -146,15 +146,15 @@ class POLD2_MLP_Dataset(BaseDataset):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         def get_line_from_image(file_path, deeplsd_net, jpldd_net):
-
-            if file_path[-4] != '.pkl':
+            if file_path[-4:] != '.pkl':
                 img = cv2.imread(file_path)[:, :, ::-1]
                 if self.gen_debug:
                     self.IMAGE = img
                 gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+                jpldd_img = load_image(file_path).to(device).unsqueeze(0)
             else:
                 file = {}
-                with open(self.root / file_path, 'rb') as f:
+                with open(file_path, 'rb') as f:
                     fileread = pickle.load(f)
                     file['img'] = fileread['img']
                     file['lines'] = fileread['lines']
@@ -163,6 +163,7 @@ class POLD2_MLP_Dataset(BaseDataset):
                 
                 del fileread
                 gray_img = cv2.cvtColor(file['img'], cv2.COLOR_RGB2GRAY)
+                jpldd_img = torch.from_numpy(file["img"].astype(np.float32)).permute(2,0,1).to(device).unsqueeze(0)
 
             def get_lines(lines: np.ndarray, points: np.ndarray):
 
@@ -180,7 +181,7 @@ class POLD2_MLP_Dataset(BaseDataset):
                 / 255.0
             }
             inputs_jpldd = {
-                "image": load_image(file_path).to(device).unsqueeze(0)
+                "image": jpldd_img
             }
 
             with torch.no_grad():
@@ -197,7 +198,7 @@ class POLD2_MLP_Dataset(BaseDataset):
             angles = out_jpldd["line_anglefield"][0]
             angles = angles.cpu().numpy() / np.pi
 
-            if file_path[-4] != '.pkl':
+            if file_path[-4:] != '.pkl':
                 lines = np.array(out_deeplsd["lines"][0])
             else:
                 lines = get_lines(file["lines"], file["points"])
@@ -345,8 +346,8 @@ class POLD2_MLP_Dataset(BaseDataset):
                 num_neg_neigh = int(gen_conf.combined_ratio * gen_conf.num_negative_per_image)
                 num_neg_rand = gen_conf.num_negative_per_image - num_neg_neigh
 
-                neigh_idx = np.random.choice(len(neg_deeplsd_neighbour), num_neg_neigh, replace=False)
-                rand_idx = np.random.choice(len(neg_deeplsd_random), num_neg_rand, replace=False)
+                neigh_idx = np.random.choice(len(neg_deeplsd_neighbour), min(num_neg_neigh,len(neg_deeplsd_neighbour)), replace=False)
+                rand_idx = np.random.choice(len(neg_deeplsd_random), min(num_neg_rand,len(neg_deeplsd_random)), replace=False)
 
                 neg_lines = np.concatenate([neg_deeplsd_neighbour[neigh_idx], neg_deeplsd_random[rand_idx]])
 

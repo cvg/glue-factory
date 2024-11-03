@@ -16,8 +16,8 @@ data:
         combined_ratio: 0.8
         negative_neighbour_min_radius: 5
         negative_neighbour_max_radius: 20
-        num_negative_per_image: 60  
-        num_positive_per_image: 60
+        num_negative_per_image: 100  
+        num_positive_per_image: 100
         num_line_samples: 30
         num_bands: 3
         band_width: 1
@@ -43,6 +43,8 @@ data:
             checkpoint: /local/home/Point-Line/outputs/training/focal_loss_experiments/rk_focal_threshDF_focal/checkpoint_best.tar
 
         glob: "revisitop1m_POLD2/jpg/**/base_image.jpg"
+        #glob: "wireframe-pointline/*.pkl"
+
 
         debug: False
     
