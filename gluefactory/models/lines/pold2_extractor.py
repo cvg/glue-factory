@@ -48,8 +48,21 @@ class LineExtractor(BaseModel):
             "max_accepted_mean_value": 0.4,     # Maximum accepted DF mean value along the line
         },
 
+        "angle_map": {
+            "threshold": 0.1,                   # Threshold for deciding if a line angle is correct
+            "inlier_ratio": 1.0,                # Ratio of inliers
+            "max_accepted_mean_value": 0.4,     # Maximum difference in AF mean value with line angle
+        },
+
         "mlp_conf": POLD2_MLP.default_conf,
         "nms": True,
+
+        "filters": {
+            "distance_field": True,
+            "angle_field": True,
+            "mlp": True,
+        },
+
         "device": None,
         "coeff_dir": "line_extraction_coeffs",
         "debug": False,
@@ -285,9 +298,73 @@ class LineExtractor(BaseModel):
         detected_line_float = torch.mean(df_sampled.float(), dim=0) <= max_accepted_mean_value
 
         if self.conf.debug:
+            print(f"=============== Distance Filter =================")
             print(f"Decision pos lines binary df: {torch.sum(detected_line_indices)}")
             print(f"Decision pos lines df: {torch.sum(detected_line_float)}")
             print(f"Decision overall num lines: {torch.sum(detected_line_indices & detected_line_float)}")
+            print(f"===============================================")
+
+        # Finally we can filter the indices
+        return indices[detected_line_indices & detected_line_float]
+    
+
+    def filter_with_angle_field(self, points: torch.Tensor, angle_map: torch.Tensor, indices: torch.Tensor, sample_idx: int) -> torch.Tensor:
+        """
+        Heuristic filtering of line candidates given each as 2 line endpoints, by sampling equidistant points
+        in between line endpoints. It then checks:
+            1. Is the mean AF value of samples for a line is within a certain range of the angle of the line candidate
+            2. How many AF values of samples for a line are within a certain range of the angle of the line candidate
+
+        If both conditions are True for a line candidate it is considered a valid line by this filter.
+        
+        Args:
+            points (torch.Tensor): all keypoints
+            angle_map (torch.Tensor): angle field as in DeepLSD, normalized to [0, 1]
+            indices (torch.Tensor): indices of line endpoints
+            sample_idx (int): index of the samples to use, i.e. how many samples to take along the line
+        Return:
+            Indices of valid line candidates
+        """
+
+        candidates = points[indices]
+        candidate_angles = torch.atan2(
+            candidates[:, 1, 1] - candidates[:, 0, 1],
+            candidates[:, 1, 0] - candidates[:, 0, 0],
+        ) % torch.pi
+
+        num_sample = self.samples[sample_idx]
+
+        threshold = self.conf.angle_map.threshold
+        inlier_ratio = self.conf.angle_map.inlier_ratio
+        max_accepted_mean_value = self.conf.angle_map.max_accepted_mean_value
+
+        # Get coordinates
+        points_coordinates = self.get_coordinates(
+            points, indices, self.coeffs_list[sample_idx], self.coeffs_second_list[sample_idx]
+        )
+
+        # Sample points
+        af_sampled = self.sample_map(points_coordinates, angle_map).view(num_sample, -1)
+
+        # We reduce the values along the line
+        angle_diffs = torch.abs(af_sampled - candidate_angles[None, :])
+        angle_diffs = torch.min(angle_diffs, 1 - angle_diffs)
+        detected_line_indices = (
+            torch.sum(angle_diffs < threshold, dim=0) >= num_sample * inlier_ratio
+        )
+
+        af_mean = torch.mean(af_sampled, dim=0)
+        mean_angle_diff = torch.abs(af_mean - candidate_angles)
+        mean_angle_diff = torch.min(mean_angle_diff, 1 - mean_angle_diff)
+        detected_line_float = mean_angle_diff <= max_accepted_mean_value
+
+        if self.conf.debug:
+            print(f"=============== Angle Filter =================")
+            print(f"Decision pos lines angle: {torch.sum(detected_line_indices)}")
+            print(f"Decision pos lines angle mean: {torch.sum(detected_line_float)}")
+            print(f"Decision overall num lines: {torch.sum(detected_line_indices & detected_line_float)}")
+            print(f"===============================================")
+
         # Finally we can filter the indices
         return indices[detected_line_indices & detected_line_float]
 
@@ -400,24 +477,34 @@ class LineExtractor(BaseModel):
         return indices_image[mlp_output]
 
     # Post processing step
-    def two_stage_filter(
+    def multi_stage_filter(
         self, points, binary_distance_map, distance_map, angle_map, indices_image
     ):
 
         # Filter out small lines
         indices_image = self.filter_small_lines(points, indices_image)
         indices_image = self.filter_large_lines(points, indices_image)
-
-        # Weak filter - Handcrafted heuristic
+  
         for i in range(len(self.samples)):
-            indices_image = self.filter_with_distance_field(
-                points, binary_distance_map, distance_map, indices_image, i
-            )
-            if self.conf.debug:
-                print(f"Num lines after stage {i}: {indices_image.shape[0]}")
+
+             # Weak filter - Handcrafted heuristic on distance field
+            if self.conf.filters.distance_field:
+                indices_image = self.filter_with_distance_field(
+                    points, binary_distance_map, distance_map, indices_image, i
+                )
+                if self.conf.debug:
+                    print(f"Num lines after stage {i} [Distance Filtering]: {indices_image.shape[0]}")
+        
+            # Weak filter - Handcrafted heuristic on angle field
+            if self.conf.filters.angle_field:
+                indices_image = self.filter_with_angle_field(
+                    points, angle_map, indices_image, i
+                )
+                if self.conf.debug:
+                    print(f"Num lines after stage {i} [Angle Filtering]: {indices_image.shape[0]}")
 
         # Second pass - strong filer - MLP filter
-        if self.conf.mlp_conf is not None:
+        if self.conf.mlp_conf is not None and self.conf.filters.mlp:
             indices_image = self.mlp_filter(points, indices_image, distance_map, angle_map)
 
             if self.conf.debug:
@@ -467,7 +554,7 @@ class LineExtractor(BaseModel):
             IDX += 1
 
         # Apply two stage filter
-        filtered_idx = self.two_stage_filter(points, binary_distance_map, distance_map, angle_map, indices_image)
+        filtered_idx = self.multi_stage_filter(points, binary_distance_map, distance_map, angle_map, indices_image)
 
         # Apply NMS
         if self.conf.nms:

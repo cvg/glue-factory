@@ -1,5 +1,5 @@
 max_point_size: 1500
-samples: [8]
+samples: [8, 16, 32, 64, 128, 256, 512, 1024]
 
 distance_map:
     max_value: 5
@@ -8,8 +8,13 @@ distance_map:
     avg_filter_size: 13
     avg_filter_padding: 6
     avg_filter_stride: 1
-    inlier_ratio: 1.0
+    inlier_ratio: 0.8
     max_accepted_mean_value: 0.5
+
+angle_map:
+    threshold: 0.05                      # Threshold for deciding if a line angle is correct
+    inlier_ratio: 0.8                    # Ratio of inliers
+    max_accepted_mean_value: 0.05        # Maximum difference in AF mean value with line angle
 
 mlp_conf:
     name: gluefactory.models.lines.pold2_mlp
@@ -36,6 +41,11 @@ mlp_conf:
     pred_threshold: 0.95
     weights: null
     # weights: /local/home/Point-Line/outputs/training/pold2_mlp_gen+train_Bands-3-1_1kimg_50pimg/checkpoint_best.tar
+
+filters:
+    distance_field: True
+    angle_field: True
+    mlp: False
 
 device: cpu
 debug: True
