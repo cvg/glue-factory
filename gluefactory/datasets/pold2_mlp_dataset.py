@@ -15,6 +15,7 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 from tqdm import tqdm
+import pickle
 import enum
 
 from gluefactory.models.deeplsd_inference import DeepLSD
@@ -145,10 +146,32 @@ class POLD2_MLP_Dataset(BaseDataset):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         def get_line_from_image(file_path, deeplsd_net, jpldd_net):
-            img = cv2.imread(file_path)[:, :, ::-1]
-            if self.gen_debug:
-                self.IMAGE = img
-            gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+
+            if file_path[-4] != '.pkl':
+                img = cv2.imread(file_path)[:, :, ::-1]
+                if self.gen_debug:
+                    self.IMAGE = img
+                gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            else:
+                file = {}
+                with open(self.root / file_path, 'rb') as f:
+                    fileread = pickle.load(f)
+                    file['img'] = fileread['img']
+                    file['lines'] = fileread['lines']
+                    file['points'] = fileread['points']
+                    file['imgname'] = fileread['imgname']
+                
+                del fileread
+                gray_img = cv2.cvtColor(file['img'], cv2.COLOR_RGB2GRAY)
+
+            def get_lines(lines: np.ndarray, points: np.ndarray):
+
+                lines_xy = []
+                for line in lines:
+                    lines_xy.append([points[line[0]], points[line[1]]])
+
+                return np.array(lines_xy)
+            
 
             inputs = {
                 "image": torch.tensor(gray_img, dtype=torch.float, device=device)[
@@ -174,7 +197,10 @@ class POLD2_MLP_Dataset(BaseDataset):
             angles = out_jpldd["line_anglefield"][0]
             angles = angles.cpu().numpy() / np.pi
 
-            lines = np.array(out_deeplsd["lines"][0])
+            if file_path[-4] != '.pkl':
+                lines = np.array(out_deeplsd["lines"][0])
+            else:
+                lines = get_lines(file["lines"], file["points"])
 
             return distances, angles, lines, gray_img.shape
         
