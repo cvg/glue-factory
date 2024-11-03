@@ -10,7 +10,7 @@ from torch import nn
 
 from gluefactory.models.backbones.vgg_unet import VGGUNet
 from gluefactory.models.base_model import BaseModel
-from gluefactory.models.lines.line_refinement import filter_outlier_lines, merge_lines
+from gluefactory.models.lines.line_refinement import filter_outlier_lines, merge_lines_torch
 from gluefactory.models.lines.line_utils import preprocess_angle
 
 
@@ -171,7 +171,7 @@ class DeepLSD(BaseModel):
 
         # Merge close-by lines together
         if merge:
-            lines = merge_lines(lines, thresh=4, overlap_thresh=0).astype(np.float32)
+            lines = merge_lines_torch(torch.from_numpy(lines).to(img.device), thresh=4, overlap_thresh=0).cpu().numpy()
 
         return lines
 

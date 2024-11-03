@@ -266,7 +266,6 @@ class LineExtractor(BaseModel):
             inp_vals = df_vals
         elif use_af:
             inp_vals = af_vals
-        print(inp_vals.shape)
         # Return estimated probabilities
         predictions = self.model(
             {
