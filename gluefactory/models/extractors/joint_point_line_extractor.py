@@ -46,6 +46,8 @@ class JointPointLineDetectorDescriptor(BaseModel):
         "line_af_decoder_channels": 32,
         "max_num_keypoints": 1000,  # setting for training, for eval: -1
         "detection_threshold": -1,  # setting for training, for eval: 0.2
+        "nms_radius": 3,
+        "subpixel_refinement": True, # perform subpixel refinement after detection
         "force_num_keypoints": False,
         "training": {  # training settings
             "do": False,  # switch to turn off other settings regarding training = "training mode"
@@ -76,7 +78,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
             "conf": LineExtractor.default_conf,
         },
         "checkpoint": None,  # if given and non-null, load model checkpoint if local path load locally if standard url download it.
-        "nms_radius": 3,
         "line_neighborhood": 5,  # used to normalize / denormalize line distance field
         "timeit": True,  # override timeit: False from BaseModel
     }
@@ -283,8 +284,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 keypoint_and_junction_score_map.squeeze()
             )  # B x H x W
 
-        # TODO: do remove keypoints in padded area and around border?
-
         # Line AF Decoder
         if self.conf.timeit:
             start_line_af = sync_and_time()
@@ -320,9 +319,10 @@ class JointPointLineDetectorDescriptor(BaseModel):
         if self.conf.timeit:
             start_keypoints = sync_and_time()
 
+        # Keypoint detection also removes kp at border. it can return topk keypoints or threshold.
         keypoints, kpt_dispersities, kptscores = self.dkd(
             keypoint_and_junction_score_map,
-            sub_pixel=True
+            sub_pixel=bool(self.conf.subpixel_refinement)
         )
         if self.conf.timeit:
             self.timings["keypoint-detection"].append(sync_and_time() - start_keypoints)

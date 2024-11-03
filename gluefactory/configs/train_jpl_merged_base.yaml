@@ -62,6 +62,7 @@ model:
     model_name: "aliked-n16"
     line_neighborhood: 5
     max_num_keypoints: 1000  # setting for training, for eval: -1
+    subpixel_refinement: True
     training:
         do: True
         aliked_pretrained: True

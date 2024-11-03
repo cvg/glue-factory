@@ -6,6 +6,7 @@ model:
     max_num_keypoints: 2048  # setting for training, for eval: -1
     detection_threshold: 0.0
     nms_radius: 3
+    subpixel_refinement: True
     training:
       do: False
     checkpoint: /local/home/rkreft/shared_team_folder/outputs/training/focal_loss_experiments/rk_focal_threshDF_focal/checkpoint_best.tar
