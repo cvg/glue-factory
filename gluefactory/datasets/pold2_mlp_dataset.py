@@ -158,13 +158,15 @@ class POLD2_MLP_Dataset(BaseDataset):
 
         def get_line_from_image(file_path, deeplsd_net, jpldd_net, reshape_image=None):
             img = cv2.imread(file_path)[:, :, ::-1]
-            if self.gen_debug:
-                self.IMAGE = img
             gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
             if reshape_image is not None:
                 gray_img = cv2.resize(gray_img, (reshape_image, reshape_image))
                 img = cv2.resize(img, (reshape_image, reshape_image))
+
+            if self.gen_debug:
+                from copy import deepcopy
+                self.IMAGE = np.ascontiguousarray(deepcopy(img), dtype=np.uint8)
 
             inputs = {
                 "image": torch.tensor(gray_img, dtype=torch.float, device=device)[
@@ -315,7 +317,7 @@ class POLD2_MLP_Dataset(BaseDataset):
             
             # DEBUG
             if self.gen_debug:
-                dimg = show_lines(self.IMAGE[:,:,::-1], pos_lines.astype(int), color='green')
+                dimg = show_lines(self.IMAGE[:,:,::-1].copy(), pos_lines.astype(int), color='green')
                 dimg = show_lines(dimg, neg_lines.astype(int), color='red')
                 dimg = show_points(dimg, pos_lines.reshape(-1, 2).astype(int))
 
