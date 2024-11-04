@@ -47,7 +47,7 @@ benchmarks:
       ransac_th: -1
     model:
       extractor:
-        max_num_keypoints: 1024
+        max_num_keypoints: 2048
   megadepth1500_extended:
     data:
     preprocessing:
@@ -58,7 +58,7 @@ benchmarks:
       ransac_th: -1
     model:
       extractor:
-        max_num_keypoints: 1024 # max num should be larger?
+        max_num_keypoints: 2048
   hpatches:
     eval:
       estimator: poselib
