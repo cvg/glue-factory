@@ -8,16 +8,16 @@ data:
     reseed: False
 
     generate:
-        regenerate: False
+        regenerate: True
         use_df: True
         use_af: True
-        num_images: 1000
+        num_images: 500
         negative_type: combined
         combined_ratio: 0.8
         negative_neighbour_min_radius: 5
         negative_neighbour_max_radius: 20
-        num_negative_per_image: 100  
-        num_positive_per_image: 100
+        num_negative_per_image: 200  
+        num_positive_per_image: 200
         num_line_samples: 30
         num_bands: 3
         band_width: 1
@@ -67,11 +67,11 @@ model:
 train:
     epochs: 100
     lr: 0.001
-    lr_schedule: 
-        type: 'ReduceLROnPlateau'
-        on_epoch: True
-        options:
-            patience: 3
+    # lr_schedule: 
+    #     type: 'ReduceLROnPlateau'
+    #     on_epoch: True
+    #     options:
+    #         patience: 3
     patience: 10
     log_every_iter: 500
     eval_every_iter: 1500
