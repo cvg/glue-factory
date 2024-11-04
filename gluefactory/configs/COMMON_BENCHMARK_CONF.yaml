@@ -6,9 +6,10 @@ model:  # TODO: REPLACE MODEL WITH YOU MODEL CFG YOU WANT TO BENCHMARK
     max_num_keypoints: 2048  # setting for training, for eval: -1
     detection_threshold: 0.0 # set to <= 0 for training, for eval without fixed num of kp, do set to a good value
     nms_radius: 3
+    subpixel_refinement: True
     training:
       do: False
-    checkpoint: /local/home/rkreft/shared_team_folder/outputs/training/wrong_trained_dist_field_but_points_correct/rk_pold2gt_oxparis_bce_hard_gt/checkpoint_best.tar  # if given load model weights from this checkpoint
+    checkpoint: /local/home/rkreft/shared_team_folder/outputs/training/oxparis_800_focal/checkpoint_best.tar  # if given load model weights from this checkpoint
     timeit: False  # override timeit: False from BaseModel
     line_detection: # default conf is the one from POLD 2 Line Detector
       do: True
@@ -44,6 +45,9 @@ benchmarks:
     eval:
       estimator: poselib
       ransac_th: -1
+    model:
+      extractor:
+        max_num_keypoints: 2048
   megadepth1500_extended:
     data:
     preprocessing:
@@ -54,18 +58,18 @@ benchmarks:
       ransac_th: -1
     model:
       extractor:
-        max_num_keypoints: 500 # max num should be larger?
+        max_num_keypoints: 2048
   hpatches:
     eval:
       estimator: poselib
       ransac_th: -1
     model:
       extractor:
-        max_num_keypoints: 500
+        max_num_keypoints: 1024
   hpatches_extended:
     eval:
       estimator: poselib
       ransac_th: -1
     model:
       extractor:
-        max_num_keypoints: 500
+        max_num_keypoints: 1024
