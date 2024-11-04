@@ -1,0 +1,71 @@
+model:  # TODO: REPLACE MODEL WITH YOU MODEL CFG YOU WANT TO BENCHMARK
+  name: two_view_pipeline
+  extractor:
+    name: extractors.joint_point_line_extractor
+    aliked_model_name: "aliked-n16"
+    max_num_keypoints: 2048  # setting for training, for eval: -1
+    detection_threshold: 0.0 # set to <= 0 for training, for eval without fixed num of kp, do set to a good value
+    nms_radius: 3
+    training:
+      do: False
+    checkpoint: /local/home/rkreft/shared_team_folder/outputs/training/wrong_trained_dist_field_but_points_correct/rk_pold2gt_oxparis_bce_hard_gt/checkpoint_best.tar  # if given load model weights from this checkpoint
+    timeit: False  # override timeit: False from BaseModel
+    line_detection: # default conf is the one from POLD 2 Line Detector
+      do: True
+      conf:
+        num_sample: 8
+        num_sample_strong: 150
+        max_point_size: 1500
+        distance_map:
+          threshold: 0.5
+          avg_filter_size: 13
+          avg_filter_padding: 6
+          avg_filter_stride: 1
+          max_value: 2
+          inlier_ratio: 0.8
+          mean_value_ratio: 0.8
+
+        mlp_conf:
+          name: gluefactory.models.lines.pold2_mlp
+          has_angle_field: True
+          has_distance_field: True
+          num_line_samples: 150
+          mlp_hidden_dims: [ 256, 128, 128, 64, 32 ]
+          pred_threshold: 0.9
+          weights: /local/home/Point-Line/outputs/training/pold2_mlp_gen+train_run1/checkpoint_best.tar
+  matcher:
+    name: matchers.nn_point_line
+benchmarks:
+  megadepth1500:
+    data:
+    preprocessing:
+      side: long
+      resize: 1600
+    eval:
+      estimator: poselib
+      ransac_th: -1
+  megadepth1500_extended:
+    data:
+    preprocessing:
+      side: long
+      resize: 1600
+    eval:
+      estimator: poselib
+      ransac_th: -1
+    model:
+      extractor:
+        max_num_keypoints: 500 # max num should be larger?
+  hpatches:
+    eval:
+      estimator: poselib
+      ransac_th: -1
+    model:
+      extractor:
+        max_num_keypoints: 500
+  hpatches_extended:
+    eval:
+      estimator: poselib
+      ransac_th: -1
+    model:
+      extractor:
+        max_num_keypoints: 500

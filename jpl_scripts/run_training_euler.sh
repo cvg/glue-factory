@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cmd params 'run_training.sh [exp_name] [path to conf]'
+# Cmd params 'run_training_euler.sh [exp_name] [path to conf]'
 
 #SBATCH --time=2000
 #SBATCH --cpus-per-task=4
@@ -17,7 +17,7 @@ echo "Exp-Name: $1"
 echo "Conf-Path: $2"
 
 source /cluster/home/rkreft/jpl_venv/bin/activate
-cd /cluster/home/rkreft/glue-factory
+cd ~/glue-factory || exit
 
 # !! if copying this script as a template, change experiment name and path to config(create new config) !!
 # Run script (adapt distributed and restore if needed)
