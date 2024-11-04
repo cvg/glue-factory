@@ -6,6 +6,7 @@ model:  # TODO: REPLACE MODEL WITH YOU MODEL CFG YOU WANT TO BENCHMARK
     max_num_keypoints: 2048  # setting for training, for eval: -1
     detection_threshold: 0.0 # set to <= 0 for training, for eval without fixed num of kp, do set to a good value
     nms_radius: 3
+    subpixel_refinement: True
     training:
       do: False
     checkpoint: /local/home/rkreft/shared_team_folder/outputs/training/oxparis_800_focal/checkpoint_best.tar  # if given load model weights from this checkpoint
