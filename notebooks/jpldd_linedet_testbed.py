@@ -61,6 +61,12 @@ jpldd_conf = {
                 "max_accepted_mean_value": 0.4,
             },
 
+            "angle_map": {
+                "threshold": 0.1,                   # Threshold for deciding if a line angle is correct
+                "inlier_ratio": 1.0,                # Ratio of inliers
+                "max_accepted_mean_value": 0.1,     # Maximum difference in AF mean value with line angle
+            },
+
             "mlp_conf": {
                 "has_angle_field": True,
                 "has_distance_field": True, 
@@ -87,6 +93,13 @@ jpldd_conf = {
                 "weights": "/local/home/Point-Line/outputs/training/pold2_mlp_gen+train_Bands-5-1_1kimg_70pimg_NEG-Combined_LargeMLP[512]_CNN[16841]_lr1e-4_Patience8-ADD-KS11-SHARED-PAD00/checkpoint_best.tar",
                 # "device": "cpu",
             },
+
+            "filters": {
+                "distance_field": True,
+                "angle_field": True,
+                "mlp": True,
+            },
+
             "nms": True,
             "debug": True,
             "debug_dir": DEBUG_DIR,
@@ -321,7 +334,7 @@ for i in tqdm(rand_idx):
             "angle_map": output_model["line_anglefield"][0].clone(),
             "descriptors": torch.zeros(dpoints.shape[0], 128).to(device),
         }
-        pold2_lines = line_extractor(line_extractor_input)["lines"]
+        pold2_lines = line_extractor(line_extractor_input)["lines"].cpu()
         pold2_lines = np.array(pold2_lines).astype(int)
 
         p_img = c_img.copy()
@@ -351,7 +364,7 @@ for i in tqdm(rand_idx):
             "descriptors": torch.zeros(hpoints.shape[0] + points.shape[0], 128).to(device),
             # "descriptors": torch.zeros(hpoints.shape[0], 128).to(device),
         }
-        pold2_lines = line_extractor(line_extractor_input)["lines"]
+        pold2_lines = line_extractor(line_extractor_input)["lines"].cpu()
         pold2_lines = np.array(pold2_lines).astype(int)
         print(f"Num Harris Lines: {len(pold2_lines)}")
 
