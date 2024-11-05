@@ -197,8 +197,8 @@ class POLD2_MLP_Dataset(BaseDataset):
             
         def generate_random_endpoints(img_shape, gen_conf):
             # Randomly sample negative points and generate lines
-            neg_x = np.random.randint(0, img_shape[1], (2 * gen_conf.num_negative_per_image)).reshape(-1, 1)
-            neg_y = np.random.randint(0, img_shape[0], (2 * gen_conf.num_negative_per_image)).reshape(-1, 1)
+            neg_x = np.random.randint(0, img_shape[1], (2 * self.num_negative)).reshape(-1, 1)
+            neg_y = np.random.randint(0, img_shape[0], (2 * self.num_negative)).reshape(-1, 1)
             neg_lines = np.stack([neg_x, neg_y], axis=1).reshape(-1, 2, 2)
 
             return neg_lines
@@ -278,11 +278,19 @@ class POLD2_MLP_Dataset(BaseDataset):
 
             lines = lines.astype(int)  # convert to int for indexing
 
+            self.num_positive = gen_conf.num_positive_per_image
+            self.num_negative = gen_conf.num_negative_per_image
+
+            self.num_positive = min(self.num_positive, self.num_negative)
+            self.num_negative = min(self.num_negative, self.num_positive)
+
             # Postive samples
-            if gen_conf.num_positive_per_image == -1:
+            if self.num_positive == -1:
                 pos_idx = np.arange(len(lines))
+                self.num_positive = len(lines)
+                self.num_negative = len(lines)
             else:
-                num_pos = min(gen_conf.num_positive_per_image, len(lines))
+                num_pos = min(self.num_positive, len(lines))
                 pos_idx = np.random.choice(len(lines), num_pos, replace=False)
             pos_lines = lines[pos_idx]
 
@@ -300,8 +308,8 @@ class POLD2_MLP_Dataset(BaseDataset):
                 neg_deeplsd_random = generate_deeplsd_random_endpoints(lines)
                 neg_deeplsd_neighbour = generate_deeplsd_neighbour_endpoints(lines, img_shape, gen_conf)
 
-                num_neg_neigh = int(gen_conf.combined_ratio * gen_conf.num_negative_per_image)
-                num_neg_rand = gen_conf.num_negative_per_image - num_neg_neigh
+                num_neg_neigh = int(gen_conf.combined_ratio * self.num_negative)
+                num_neg_rand = self.num_negative - num_neg_neigh
 
                 neigh_idx = np.random.choice(len(neg_deeplsd_neighbour), num_neg_neigh, replace=False)
                 rand_idx = np.random.choice(len(neg_deeplsd_random), num_neg_rand, replace=False)
@@ -311,7 +319,7 @@ class POLD2_MLP_Dataset(BaseDataset):
             else:
                 raise ValueError(f"Unknown negative type: {gen_conf.negative_type}")
             
-            num_neg = min(gen_conf.num_negative_per_image, len(neg_lines))
+            num_neg = min(self.num_negative, len(neg_lines))
             neg_idx = np.random.choice(len(neg_lines), num_neg, replace=False)
             neg_lines = neg_lines[neg_idx]
             
