@@ -404,8 +404,10 @@ class LineExtractor(BaseModel):
 
             # Padded coeffs will sample the DF and AF at (0,0)
             # Hardcode DF[0,0] and AF[0,0]
-            distance_map[0,0] = 0
-            angle_map[0,0] = 0
+            distance_map[0,0] = -1
+            angle_map[0,0] = -1
+            # distance_map[0,0] = 0
+            # angle_map[0,0] = 0
 
         num_bands = self.conf.mlp_conf.num_bands
         band_width = self.conf.mlp_conf.band_width
