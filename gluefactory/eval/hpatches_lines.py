@@ -29,7 +29,7 @@ class HPatchesPipeline(EvalPipeline):
             "name": "hpatches",
             "num_workers": 2,
             "preprocessing": {
-                "resize": 800,  # we also resize during eval to have comparable metrics
+                "resize": 480,  # we also resize during eval to have comparable metrics
                 "side": "short",
             },
         },
@@ -45,7 +45,7 @@ class HPatchesPipeline(EvalPipeline):
         "use_points": False,
         "use_lines": True,
         "repeatability_th": [1, 3, 5],
-        "num_lines_th": [10, 50, 300],
+        "num_lines_th": [1, 3, 5],
     }
     export_keys = []
 

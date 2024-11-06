@@ -10,7 +10,7 @@ class LineMatcher(BaseModel):
         "line_dist": "orth",
         "angular_th": (30 * np.pi / 180),
         "overlap_th": 0.5,
-        "dist_thresh": 5,
+        "dist_thresh": 10,
         "min_length": 20,
     }
 
@@ -24,15 +24,13 @@ class LineMatcher(BaseModel):
         device = data["lines0"][0].device
         img_size = data["view0"]["image"].shape[2], data["view0"]["image"].shape[3]
         result = {}
-        lines0 = data["lines0"][0].cpu()
-        #[:, :, [1, 0]]
-        lines1 = data["lines1"][0].cpu()
-        #[:, :, [1, 0]]
+        lines0 = data["lines0"][0][:, :, [1, 0]].cpu()
+        lines1 = data["lines1"][0][:, :, [1, 0]].cpu()
         lines0 = lines0[
-            np.linalg.norm(lines0[:, 1] - lines0[:, 0], axis=1) > self.conf.min_length
+            torch.linalg.norm(lines0[:, 1] - lines0[:, 0], axis=1) > self.conf.min_length
         ]
         lines1 = lines1[
-            np.linalg.norm(lines1[:, 1] - lines1[:, 0], axis=1) > self.conf.min_length
+            torch.linalg.norm(lines1[:, 1] - lines1[:, 0], axis=1) > self.conf.min_length
         ]
         # The data elements come in lists and therefore they are unpacked
         segs1, segs2, matched_idx1, matched_idx2, distances = match_segments_1_to_1(
@@ -45,6 +43,9 @@ class LineMatcher(BaseModel):
             self.conf.overlap_th,
             self.conf.dist_thresh,
         )
+        # print(f'{len(data["lines0"][0]): {len(matched_idx1)}}')
+        result["orig_lines0"] = torch.Tensor(lines0).unsqueeze(0).to(device)
+        result["orig_lines1"] = torch.Tensor(lines1).unsqueeze(0).to(device)
         result["lines0"] = torch.Tensor(segs1).unsqueeze(0).to(device)
         result["lines1"] = torch.Tensor(segs2).unsqueeze(0).to(device)
         result["line_matches0"] = torch.Tensor(matched_idx1).unsqueeze(0).to(device)

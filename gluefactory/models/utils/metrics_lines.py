@@ -158,7 +158,7 @@ def compute_repeatability(
     if isinstance(thresholds, int):
         thresholds = [thresholds]
 
-    n1, n2 = len(segs1), len(segs2)
+    n1, n2 = len(matched_idx1), len(matched_idx2)
     if n1 == 0 or n2 == 0:
         return [0] * len(thresholds)
 
@@ -166,7 +166,7 @@ def compute_repeatability(
     for t in thresholds:
         correct = distances <= t
         if rep_type == "num":
-            rep = (torch.sum(correct) / min(n1, n2)).cpu().numpy()
+            rep = (torch.sum(correct) / min(n1, n2))
         elif rep_type == "length":
             len1 = torch.linalg.norm(segs1[:, 0] - segs1[:, 1], axis=1)
             len2 = torch.linalg.norm(segs2[:, 0] - segs2[:, 1], axis=1)
@@ -196,11 +196,12 @@ def compute_loc_error(
 
     loc_errors = []
     for t in thresholds:
-        valid_distances = distances[:t]
+        valid_distances = distances < t
+        valid_distances = distances[valid_distances]
         if len(valid_distances) == 0:
             loc_errors.append(0)
         else:
-            loc_errors.append(torch.mean(valid_distances).cpu().numpy())
+            loc_errors.append(torch.mean(valid_distances))
     return loc_errors
 
 

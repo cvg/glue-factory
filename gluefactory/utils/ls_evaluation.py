@@ -294,11 +294,5 @@ def compute_loc_error(distances, thresholds):
         thresholds = [thresholds]
 
     loc_errors = []
-    for t in thresholds:
-        valid_distances = distances < t
-        valid_distances = distances[valid_distances]
-        if len(valid_distances) == 0:
-            loc_errors.append(0)
-        else:
-            loc_errors.append(np.mean(valid_distances))
+     
     return loc_errors
