@@ -2,11 +2,6 @@ import numpy as np
 import torch
 
 from gluefactory.models.utils.metrics_lines import match_segments_1_to_1
-
-from ...geometry.gt_generation import (
-    gt_line_matches_from_homography,
-    gt_matches_from_homography,
-)
 from ..base_model import BaseModel
 
 
@@ -29,8 +24,10 @@ class LineMatcher(BaseModel):
         device = data["lines0"][0].device
         img_size = data["view0"]["image"].shape[2], data["view0"]["image"].shape[3]
         result = {}
-        lines0 = data["lines0"][0].cpu().numpy()[:, :, [1, 0]]
-        lines1 = data["lines1"][0].cpu().numpy()[:, :, [1, 0]]
+        lines0 = data["lines0"][0].cpu()
+        #[:, :, [1, 0]]
+        lines1 = data["lines1"][0].cpu()
+        #[:, :, [1, 0]]
         lines0 = lines0[
             np.linalg.norm(lines0[:, 1] - lines0[:, 0], axis=1) > self.conf.min_length
         ]
@@ -41,7 +38,7 @@ class LineMatcher(BaseModel):
         segs1, segs2, matched_idx1, matched_idx2, distances = match_segments_1_to_1(
             lines0,
             lines1,
-            data["H_0to1"][0].cpu().numpy(),
+            data["H_0to1"][0].cpu(),
             img_size,
             self.conf.line_dist,
             self.conf.angular_th,
