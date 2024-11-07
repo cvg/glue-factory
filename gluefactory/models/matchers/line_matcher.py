@@ -10,7 +10,7 @@ class LineMatcher(BaseModel):
         "line_dist": "orth",
         "angular_th": (30 * np.pi / 180),
         "overlap_th": 0.5,
-        "dist_thresh": 10,
+        "dist_thresh": 5,
         "min_length": 20,
     }
 

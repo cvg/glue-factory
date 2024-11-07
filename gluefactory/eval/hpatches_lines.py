@@ -45,7 +45,7 @@ class HPatchesPipeline(EvalPipeline):
         "use_points": False,
         "use_lines": True,
         "repeatability_th": [1, 3, 5],
-        "num_lines_th": [1, 3, 5],
+        "num_lines_th": [10, 50, 300],
     }
     export_keys = []
 
