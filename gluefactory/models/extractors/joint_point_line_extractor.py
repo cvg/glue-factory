@@ -6,7 +6,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from kornia.geometry.transform import warp_perspective
-
+import cv2
+from omegaconf import OmegaConf
 import gluefactory.models.utils.metrics_lines as LineMetrics
 from gluefactory.datasets.homographies_deeplsd import sample_homography
 from gluefactory.models import get_model
@@ -14,6 +15,8 @@ from gluefactory.models.backbones.backbone_encoder import AlikedEncoder, aliked_
 from gluefactory.models.base_model import BaseModel
 from gluefactory.models.extractors.aliked import SDDH, SMH, DKDLight, InputPadder, DKD
 from gluefactory.models.lines.pold2_extractor import LineExtractor
+from gluefactory.models.deeplsd_inference import DeepLSD
+from gluefactory.settings import DATA_PATH
 from gluefactory.models.utils.metrics_points import (
     compute_loc_error,
     compute_pr,
@@ -212,6 +215,23 @@ class JointPointLineDetectorDescriptor(BaseModel):
         self.line_extractor = LineExtractor(
             self.conf.line_detection.conf,
         )
+        deeplsd_conf = {
+        "detect_lines": True,
+        "line_detection_params": {
+            "merge": True,
+            "filtering": True,
+            "grad_thresh": 3,
+            "grad_nfa": True,
+        },
+        "weights": "DeepLSD/weights/deeplsd_md.tar",  # path to the weights of the DeepLSD model (relative to DATA_PATH)
+        }
+        deeplsd_conf = OmegaConf.create(deeplsd_conf)
+
+        ckpt_path = DATA_PATH / deeplsd_conf.weights
+        ckpt = torch.load(str(ckpt_path), map_location=torch.device("cpu"), weights_only=False)
+        deeplsd_net = DeepLSD(deeplsd_conf)
+        deeplsd_net.load_state_dict(ckpt["model"])
+        self.deeplsd = deeplsd_net.to(torch.device("cpu")).eval()
 
     # Utility methods for line df and af with deepLSD
     def normalize_df(self, df):
@@ -361,17 +381,30 @@ class JointPointLineDetectorDescriptor(BaseModel):
             line_indices = []
 
             for df, af, kp, desc in zip(line_distance_field, line_angle_field, rescaled_kp, keypoint_descriptors):
-                line_data = {
-                    "points": torch.clone(kp),
-                    "distance_map": torch.clone(df),
-                    "angle_map": torch.clone(af),
-                    "descriptors": torch.clone(desc),
+                img = (padded_img[0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+                c_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                gray_img = cv2.cvtColor(c_img, cv2.COLOR_BGR2GRAY)
+                inputs = {
+                    "image": torch.tensor(gray_img, dtype=torch.float, device=padded_img.device)[
+                        None, None
+                    ]
+                    / 255.0
+                }
+                deeplsd_output = self.deeplsd(inputs)
+                deeplsd_lines = np.array(deeplsd_output["lines"][0]).astype(int)
+
+                deeplsd_lines_torch = torch.clamp(torch.tensor(deeplsd_lines).cuda(),0,max(img.shape))
+                keypoints_deeplsd = torch.cat((deeplsd_lines_torch[:,0],deeplsd_lines_torch[:,1]))
+                line_data  = {
+                    "points": keypoints_deeplsd,
+                    "distance_map": df,
+                    "angle_map": af,
+                    "descriptors": torch.zeros((keypoints_deeplsd.shape[0],128)).cuda() 
                 }
                 line_pred = self.line_extractor(line_data)
                 lines.append(line_pred["lines"])
                 line_descs.append(line_pred["line_descriptors"])
                 line_indices.append(line_pred["line_endpoint_indices"])
-
                 # Line matchers expect the lines to be stored as line endpoints where line endpoint = coordinate of respective keypoint
                 if len(lines) == 0:
                     print("NO LINES DETECTED")

@@ -44,8 +44,8 @@ class LineMatcher(BaseModel):
             self.conf.dist_thresh,
         )
         # print(f'{len(data["lines0"][0]): {len(matched_idx1)}}')
-        result["orig_lines0"] = torch.Tensor(lines0).unsqueeze(0).to(device)
-        result["orig_lines1"] = torch.Tensor(lines1).unsqueeze(0).to(device)
+        result["orig_lines0"] = data["lines0"]
+        result["orig_lines1"] = data["lines1"]
         result["lines0"] = torch.Tensor(segs1).unsqueeze(0).to(device)
         result["lines1"] = torch.Tensor(segs2).unsqueeze(0).to(device)
         result["line_matches0"] = torch.Tensor(matched_idx1).unsqueeze(0).to(device)

@@ -53,13 +53,15 @@ class POLD2_CNN(BaseModel):
 
         cnn_layers = []
         #cnn_layers.append(nn.Conv1d(1,5,3,1,1))
-        cnn_layers.append(nn.Conv2d(1,5,3,1,1))
+        cnn_layers.append(nn.Conv2d(1,4,3,1,1))
         cnn_layers.append(nn.ReLU())
         #cnn_layers.append(nn.Conv1d(5,5,3,1,1))
-        cnn_layers.append(nn.Conv2d(5,5,3,1,1))
+        cnn_layers.append(nn.Conv2d(4,8,3,1,1))
+        cnn_layers.append(nn.ReLU())
+        cnn_layers.append(nn.Conv2d(8,16,3,1,1))
         cnn_layers.append(nn.ReLU())
         cnn_layers.append(nn.Flatten())
-        cnn_layers.append(nn.Linear(5*input_dim, conf.cnn_hidden_dims[0]))
+        cnn_layers.append(nn.Linear(16*input_dim, conf.cnn_hidden_dims[0]))
         for i in range(1, len(conf.cnn_hidden_dims)):
             cnn_layers.append(
                 nn.Linear(conf.cnn_hidden_dims[i - 1], conf.cnn_hidden_dims[i])

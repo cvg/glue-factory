@@ -11,13 +11,13 @@ data:
         regenerate: True
         use_df: True
         use_af: True
-        num_images: 500
+        num_images: 1024
         negative_type: combined
         combined_ratio: 0.8
         negative_neighbour_min_radius: 5
         negative_neighbour_max_radius: 20
-        num_negative_per_image: 200  
-        num_positive_per_image: 200
+        num_negative_per_image: 300  
+        num_positive_per_image: 300
         num_line_samples: 30
         num_bands: 3
         band_width: 1
@@ -40,7 +40,7 @@ data:
             line_detection:
                     do: False
                 
-            checkpoint: /local/home/Point-Line/outputs/training/focal_loss_experiments/rk_focal_threshDF_focal/checkpoint_best.tar
+            checkpoint: /local/home/Point-Line/outputs/training/oxparis_800_focal/checkpoint_best.tar
 
         glob: "revisitop1m_POLD2/jpg/**/base_image.jpg"
         #glob: "wireframe-pointline/*.pkl"
