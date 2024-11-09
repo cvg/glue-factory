@@ -128,6 +128,7 @@ class POLD2_CNN(BaseModel):
             "precision": torch.tensor(precision, dtype=torch.float, device=device),
             "recall": torch.tensor(recall, dtype=torch.float, device=device),
             "f1": torch.tensor(f1, dtype=torch.float, device=device),
+            "f1_inv": torch.tensor(1 - f1, dtype=torch.float, device=device)
         }
 
 

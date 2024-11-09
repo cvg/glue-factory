@@ -381,6 +381,12 @@ class JointPointLineDetectorDescriptor(BaseModel):
             line_indices = []
 
             for df, af, kp, desc in zip(line_distance_field, line_angle_field, rescaled_kp, keypoint_descriptors):
+                # line_data = {
+                #     "points": torch.clone(kp),
+                #     "distance_map": torch.clone(df),
+                #     "angle_map": torch.clone(af),
+                #     "descriptors": torch.clone(desc),
+                # }
                 img = (padded_img[0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
                 c_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                 gray_img = cv2.cvtColor(c_img, cv2.COLOR_BGR2GRAY)
@@ -391,15 +397,15 @@ class JointPointLineDetectorDescriptor(BaseModel):
                     / 255.0
                 }
                 deeplsd_output = self.deeplsd(inputs)
-                deeplsd_lines = np.array(deeplsd_output["lines"][0]).astype(int)
+                #deeplsd_lines = np.array(deeplsd_output["lines"][0]).astype(int)
 
-                deeplsd_lines_torch = torch.clamp(torch.tensor(deeplsd_lines).cuda(),0,max(img.shape))
-                keypoints_deeplsd = torch.cat((deeplsd_lines_torch[:,0],deeplsd_lines_torch[:,1]))
+                #deeplsd_lines_torch = torch.clamp(torch.tensor(deeplsd_lines).cuda(),0,max(img.shape))
+                #keypoints_deeplsd = torch.cat((deeplsd_lines_torch[:,0],deeplsd_lines_torch[:,1]))
                 line_data  = {
-                    "points": keypoints_deeplsd,
-                    "distance_map": df,
-                    "angle_map": af,
-                    "descriptors": torch.zeros((keypoints_deeplsd.shape[0],128)).cuda() 
+                    "points": torch.clone(kp),
+                    "distance_map": deeplsd_output["df"][0],
+                    "angle_map": deeplsd_output["line_level"][0],
+                    "descriptors": torch.clone(desc)
                 }
                 line_pred = self.line_extractor(line_data)
                 lines.append(line_pred["lines"])

@@ -190,12 +190,14 @@ class POLD2_MLP_Dataset(BaseDataset):
 
 
             # distance field
-            distances = out_jpldd["line_distancefield"][0]
+            #distances = out_jpldd["line_distancefield"][0]
+            distances = out_deeplsd["df"][0]
             distances /= deeplsd_net.conf.line_neighborhood
             distances = distances.cpu().numpy()
 
             # angle field
-            angles = out_jpldd["line_anglefield"][0]
+            #angles = out_jpldd["line_anglefield"][0]
+            angles = out_deeplsd["line_level"][0]
             angles = angles.cpu().numpy() / np.pi
 
             if file_path[-4:] != '.pkl':

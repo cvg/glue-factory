@@ -38,7 +38,7 @@ model:
           #weights: /local/home/Point-Line/outputs/training/pold2_cnn_test/checkpoint_best.tar,
           #weights: /local/home/Point-Line/outputs/training/pold2_mlp_gen+train_Bands-3-1_1kimg_60pimg_NEG-Combined/checkpoint_best.tar,
           #weights : /local/home/Point-Line/outputs/training/pold2_cnn_hard_negative/checkpoint_best.tar
-          weights : /local/home/Point-Line/outputs/training/oxparis_300lines_deeper_net/checkpoint_best.tar  
+          weights : /local/home/Point-Line/outputs/training/oxparis_300lines_deeper_net_300img_deeplsd/checkpoint_best.tar  
           #weights: /local/home/Point-Line/outputs/training/pold2_mlp_train_1k_150samp/checkpoint_best.tar,
         nms: False
       merge: False
