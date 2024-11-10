@@ -13,7 +13,7 @@ from gluefactory.datasets.homographies_deeplsd import sample_homography
 from gluefactory.models import get_model
 from gluefactory.models.backbones.backbone_encoder import AlikedEncoder, aliked_cfgs
 from gluefactory.models.base_model import BaseModel
-from gluefactory.models.extractors.aliked import SDDH, SMH, DKDLight, InputPadder, DKD
+from gluefactory.models.extractors.aliked import SDDH, SMH, InputPadder, DKD
 from gluefactory.models.lines.pold2_extractor import LineExtractor
 from gluefactory.models.deeplsd_inference import DeepLSD
 from gluefactory.settings import DATA_PATH
@@ -340,7 +340,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             start_keypoints = sync_and_time()
 
         # Keypoint detection also removes kp at border. it can return topk keypoints or threshold.
-        keypoints, kpt_dispersities, kptscores = self.dkd(
+        keypoints, _, kptscores = self.dkd(
             keypoint_and_junction_score_map,
             sub_pixel=bool(self.conf.subpixel_refinement)
         )
