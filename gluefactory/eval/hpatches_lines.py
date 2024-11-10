@@ -6,20 +6,25 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from omegaconf import OmegaConf
+import torch.utils
+import torch.utils.data
 from tqdm import tqdm
 
 from gluefactory.models.utils.metrics_lines import (
     compute_loc_error,
     compute_repeatability,
 )
+import os
 
-from ..datasets import get_dataset
-from ..models.cache_loader import CacheLoader
-from ..settings import EVAL_PATH
-from ..utils.export_predictions import export_predictions
-from ..utils.tensor import map_tensor
-from .eval_pipeline import EvalPipeline
-from .io import get_eval_parser, load_model, parse_eval_args
+from gluefactory.datasets import get_dataset
+from gluefactory.models.cache_loader import CacheLoader
+from gluefactory.settings import EVAL_PATH
+from gluefactory.utils.export_predictions import export_predictions
+from gluefactory.utils.tensor import map_tensor
+from gluefactory.eval.eval_pipeline import EvalPipeline,exists_eval,save_eval,load_eval
+from gluefactory.visualization.viz2d import plot_images, plot_lines, save_plot
+from gluefactory.eval.io import get_eval_parser, load_model, parse_eval_args
+from gluefactory.models import BaseModel
 
 
 class HPatchesPipeline(EvalPipeline):
@@ -89,7 +94,7 @@ class HPatchesPipeline(EvalPipeline):
         dataset = get_dataset("hpatches")(data_conf)
         return dataset.get_data_loader("test")
 
-    def get_predictions(self, experiment_dir, model=None, overwrite=False):
+    def get_predictions(self, experiment_dir: Path, model:BaseModel|None=None, overwrite: bool=False) -> Path:
         pred_file = experiment_dir / "predictions.h5"
         if not pred_file.exists() or overwrite:
             if model is None:
@@ -102,8 +107,24 @@ class HPatchesPipeline(EvalPipeline):
                 optional_keys=self.optional_export_keys,
             )
         return pred_file
+    
+    def run(self, experiment_dir: Path, model:BaseModel|None=None, overwrite=False, overwrite_eval=False, plot=False):
+        """Run export+eval loop"""
+        self.save_conf(
+            experiment_dir, overwrite=overwrite, overwrite_eval=overwrite_eval
+        )
+        pred_file = self.get_predictions(
+            experiment_dir, model=model, overwrite=overwrite
+        )
 
-    def run_eval(self, loader, pred_file):
+        f = {}
+        if not exists_eval(experiment_dir) or overwrite_eval or overwrite:
+            s, f, r = self.run_eval(self.get_dataloader(), pred_file, plot)
+            save_eval(experiment_dir, s, f, r)
+        s, r = load_eval(experiment_dir)
+        return s, f, r
+
+    def run_eval(self, loader: torch.utils.data.DataLoader, pred_file: Path, plot: bool):
         assert pred_file.exists()
         results = defaultdict(list)
 
@@ -126,6 +147,13 @@ class HPatchesPipeline(EvalPipeline):
             if "lines0" in pred:
                 lines0 = pred["lines0"].cpu()
                 lines1 = pred["lines1"].cpu()
+
+                if plot:
+                    plot_images([data['view0']['image'].permute(1,2,0), data['view1']['image'].permute(1,2,0)], ['H0', 'H1'])
+                    plot_lines(lines= [pred['orig_lines0'], pred['orig_lines1']])
+                    save_plot(os.path.join('./match_score/', f'{i}.jpg'))
+                    plt.close()
+
                 results_i["repeatability"] = compute_repeatability(
                     lines0,
                     lines1,
@@ -189,7 +217,7 @@ if __name__ == "__main__":
 
     pipeline = HPatchesPipeline(conf)
     s, f, r = pipeline.run(
-        experiment_dir, overwrite=args.overwrite, overwrite_eval=args.overwrite_eval
+        experiment_dir, overwrite=args.overwrite, overwrite_eval=args.overwrite_eval, plot=args.plot
     )
 
     # print results
