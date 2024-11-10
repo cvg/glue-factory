@@ -68,8 +68,8 @@ class POLD2_MLP_Dataset(BaseDataset):
                     "grad_nfa": True,
                 },
                 "weights": None,  # path to the weights of the DeepLSD model (relative to DATA_PATH)
-            },
-            "jpldd_config" : {
+            }, 
+            "jpldd_config" : { # Config for JPLDD to generate distance and angle field. If this is None, DeeplSD DF and AF will be used
                 "name": "joint_point_line_extractor",
                 "max_num_keypoints": 500,  # setting for training, for eval: -1
                 "timeit": True,  # override timeit: False from BaseModel
@@ -186,18 +186,22 @@ class POLD2_MLP_Dataset(BaseDataset):
 
             with torch.no_grad():
                 out_deeplsd = deeplsd_net(inputs)
-                out_jpldd = jpldd_net(inputs_jpldd)
+                out_jpldd = jpldd_net(inputs_jpldd) if self.conf.generate.jpldd_config is not None else None
 
 
             # distance field
-            #distances = out_jpldd["line_distancefield"][0]
-            distances = out_deeplsd["df"][0]
+            if self.conf.generate.jpldd_config is not None:
+                distances = out_jpldd["line_distancefield"][0]
+            else:
+                distances = out_deeplsd["df"][0]
             distances /= deeplsd_net.conf.line_neighborhood
             distances = distances.cpu().numpy()
 
             # angle field
-            #angles = out_jpldd["line_anglefield"][0]
-            angles = out_deeplsd["line_level"][0]
+            if self.conf.generate.jpldd_config is not None:
+                angles = out_jpldd["line_anglefield"][0]
+            else:
+                angles = out_deeplsd["line_level"][0]
             angles = angles.cpu().numpy() / np.pi
 
             if file_path[-4:] != '.pkl':
