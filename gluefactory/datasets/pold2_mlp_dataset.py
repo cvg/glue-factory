@@ -175,7 +175,7 @@ class POLD2_MLP_Dataset(BaseDataset):
                 / 255.0
             }
             inputs_jpldd = {
-                "image": torch.tensor(img, dtype=torch.float, device=device)[None].permute(0, 3, 1, 2)/255.0
+                "image": torch.tensor(img.copy(), dtype=torch.float, device=device)[None].permute(0, 3, 1, 2)/255.0
             }
 
             with torch.no_grad():
@@ -311,8 +311,8 @@ class POLD2_MLP_Dataset(BaseDataset):
                 num_neg_neigh = int(gen_conf.combined_ratio * self.num_negative)
                 num_neg_rand = self.num_negative - num_neg_neigh
 
-                neigh_idx = np.random.choice(len(neg_deeplsd_neighbour), num_neg_neigh, replace=False)
-                rand_idx = np.random.choice(len(neg_deeplsd_random), num_neg_rand, replace=False)
+                neigh_idx = np.random.choice(len(neg_deeplsd_neighbour), min(num_neg_neigh, len(neg_deeplsd_neighbour)), replace=False)
+                rand_idx = np.random.choice(len(neg_deeplsd_random), min(num_neg_rand, len(neg_deeplsd_random)), replace=False)
 
                 neg_lines = np.concatenate([neg_deeplsd_neighbour[neigh_idx], neg_deeplsd_random[rand_idx]])
 
