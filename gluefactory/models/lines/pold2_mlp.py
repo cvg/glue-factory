@@ -50,6 +50,7 @@ class POLD2_MLP(BaseModel):
         "mlp_hidden_dims": [256, 128, 128, 64, 32], # hidden dimensions of the MLP
 
         "cnn_1d": {              # 1D CNN to extract features from the input
+            "use": True,
             "mode": "disjoint",  # separate CNNs for angle and distance fields, disjoint or shared
             "merge_mode": "concat",  # how to merge the features from angle and distance fields
             "kernel_size": 3,
@@ -57,6 +58,14 @@ class POLD2_MLP(BaseModel):
             "padding": "same",
             "channels": [3, 3, 1],  # number of channels in each layer
         },           
+
+        "cnn_2d": {              # 2D CNN to extract features from the input
+            "use": False,
+            "kernel_size": 3,
+            "stride": 1,
+            "padding": "same",
+            "channels": [4, 8, 16],  # number of channels in each layer
+        },
 
         "pred_threshold": 0.9,
         "weights": None,
@@ -81,9 +90,13 @@ class POLD2_MLP(BaseModel):
         input_dim *= conf.num_bands
         if input_dim == 0:
             raise ValueError("No input features selected for MLP, please set has_angle_field or has_distance_field to True")
+        
+        self.cnn1d_active = conf.cnn_1d is not None and conf.cnn_1d["use"]
+        self.cnn2d_active = conf.cnn_2d is not None and conf.cnn_2d["use"]
+        assert not (self.cnn1d_active and self.cnn2d_active), "Only one of 1D and 2D CNNs can be active"
 
         # 1D CNN layers
-        if conf.cnn_1d is not None:
+        if self.cnn1d_active:
             assert conf.cnn_1d["mode"] in [m.value for m in CNNMode]
             assert conf.cnn_1d["merge_mode"] in [m.value for m in MERGE_MODE]
             if conf.cnn_1d["mode"] == CNNMode.DISJOINT.value:
@@ -107,8 +120,10 @@ class POLD2_MLP(BaseModel):
                         )
                     )
                     af_cnn.append(nn.ReLU())
+                af_cnn.append(nn.Flatten())
                 
                 self.af_cnn = nn.Sequential(*af_cnn)
+                self.af_cnn.to(self.device)
 
                 df_cnn = []
                 for i in range(len(self.conv_channels) - 1):
@@ -122,8 +137,10 @@ class POLD2_MLP(BaseModel):
                         )
                     )
                     df_cnn.append(nn.ReLU())
-                
+                df_cnn.append(nn.Flatten())
+
                 self.df_cnn = nn.Sequential(*df_cnn)
+                self.df_cnn.to(self.device)
 
                 input_dim = self.conv_channels[-1] * self.num_line_samples
                 input_dim *= 2 if conf.cnn_1d["merge_mode"] == "concat" else 1
@@ -148,9 +165,40 @@ class POLD2_MLP(BaseModel):
                         )
                     )
                     cnn_layers.append(nn.ReLU())
+                cnn_layers.append(nn.Flatten())
                 
                 self.cnn = nn.Sequential(*cnn_layers)
+                self.cnn.to(self.device)
                 input_dim = self.conv_channels[-1] * self.num_line_samples
+
+        # 2D CNN layers
+        if self.cnn2d_active:
+            cnn_layers = []
+            in_c = 0
+            if conf.has_angle_field:
+                in_c += conf.num_bands
+            if conf.has_distance_field:
+                in_c += conf.num_bands
+
+            cnn_channels = [c for c in conf.cnn_2d["channels"]]
+            self.conv_channels = [1] + cnn_channels
+
+            for i in range(len(self.conv_channels) - 1):
+                cnn_layers.append(
+                    nn.Conv2d(
+                        in_channels=self.conv_channels[i],
+                        out_channels=self.conv_channels[i + 1],
+                        kernel_size=conf.cnn_2d["kernel_size"],
+                        stride=conf.cnn_2d["stride"],
+                        padding=conf.cnn_2d["padding"],
+                    )
+                )
+                cnn_layers.append(nn.ReLU())
+            cnn_layers.append(nn.Flatten())
+            
+            self.cnn = nn.Sequential(*cnn_layers)
+            self.cnn.to(self.device)
+            input_dim *= self.conv_channels[-1]
 
         # MLP layers
         mlp_layers = []
@@ -177,35 +225,48 @@ class POLD2_MLP(BaseModel):
     def _forward(self, data):
         x = data["input"]   # shape: (num_lines, num_samples * num_bands * (2 or 1))
 
-        if self.conf.cnn_1d is None:
+        if not self.cnn1d_active and not self.cnn2d_active:
             return {"line_probs": torch.sigmoid(self.mlp(x))}
         
-        if self.conf.cnn_1d["mode"] == CNNMode.DISJOINT.value:
-                # CNN for distance field
-                df = x[:, :self.num_line_samples * self.conf.num_bands]
-                df = df.view(-1, self.conf.num_bands, self.num_line_samples)
-                df = self.df_cnn(df)
-                df = df.view(-1, self.num_line_samples * self.conv_channels[-1])
+        if self.cnn1d_active:
+            if self.conf.cnn_1d["mode"] == CNNMode.DISJOINT.value:
+                    # CNN for distance field
+                    df = x[:, :self.num_line_samples * self.conf.num_bands]
+                    df = df.view(-1, self.conf.num_bands, self.num_line_samples)
+                    df = self.df_cnn(df)
 
-                # CNN for angle field
-                af = x[:, self.num_line_samples * self.conf.num_bands :]
-                af = af.view(-1, self.conf.num_bands, self.num_line_samples)
-                af = self.af_cnn(af)
-                af = af.view(-1, self.num_line_samples * self.conv_channels[-1])
+                    # CNN for angle field
+                    af = x[:, self.num_line_samples * self.conf.num_bands :]
+                    af = af.view(-1, self.conf.num_bands, self.num_line_samples)
+                    af = self.af_cnn(af)
 
-                # Merge the features
-                if self.conf.cnn_1d["merge_mode"] == MERGE_MODE.CONCAT.value:
-                    x = torch.cat([df, af], dim=1)
-                elif self.conf.cnn_1d["merge_mode"] == MERGE_MODE.ADD.value:
-                    x = df + af
+                    # Merge the features
+                    if self.conf.cnn_1d["merge_mode"] == MERGE_MODE.CONCAT.value:
+                        x = torch.cat([df, af], dim=1)
+                    elif self.conf.cnn_1d["merge_mode"] == MERGE_MODE.ADD.value:
+                        x = df + af
 
-        elif self.conf.cnn_1d["mode"] == CNNMode.SHARED.value:
-            in_c = self.conv_channels[0]
-            x = x.view(-1, in_c, self.num_line_samples)
+            elif self.conf.cnn_1d["mode"] == CNNMode.SHARED.value:
+                in_c = self.conv_channels[0]
+                x = x.view(-1, in_c, self.num_line_samples)
+                x = self.cnn(x)
+        
+        elif self.cnn2d_active:
+            if self.conf.has_angle_field and self.conf.has_distance_field:
+                df = x[:, :self.num_line_samples * self.conf.num_bands].view(-1, 1, self.conf.num_bands, self.num_line_samples)
+                af = x[:, self.num_line_samples * self.conf.num_bands :].view(-1, 1, self.conf.num_bands, self.num_line_samples)
+                x = torch.cat([df, af], dim=3)
+
+            elif self.conf.has_angle_field or self.conf.has_distance_field:
+                x = x.view(-1, 1, self.conf.num_bands, self.num_line_samples)
+
             x = self.cnn(x)
-            x = x.view(-1, self.num_line_samples * self.conv_channels[-1])
 
-        return {"line_probs": torch.sigmoid(self.mlp(x))}
+        logits = self.mlp(x)
+        return {
+            "line_probs": torch.sigmoid(logits),
+            "logits": logits,
+        }
 
     def loss(self, pred, data):
 
