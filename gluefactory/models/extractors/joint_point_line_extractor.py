@@ -88,7 +88,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
         "checkpoint": None,  # if given and non-null, load model checkpoint if local path load locally if standard url download it.
         "line_neighborhood": 5,  # used to normalize / denormalize line distance field
         "timeit": True,  # override timeit: False from BaseModel
-        "use_deeplsd_endpoints": False,  # if True, use DeepLSD to extract keypoints
     }
 
     deeplsd_conf = {
@@ -249,18 +248,8 @@ class JointPointLineDetectorDescriptor(BaseModel):
         if self.conf.line_detection.use_deeplsd_kp or self.conf.line_detection.use_deeplsd_df_af:
             deeplsd_net = DeepLSD(deeplsd_conf)
             deeplsd_net.load_state_dict(ckpt["model"])
-            self.deeplsd = deeplsd_net.to(torch.device("cpu")).eval()
-
-        if conf.use_deeplsd_endpoints:
-            # Load DeepLSD model to extract keypoints
-            deeplsd_conf = OmegaConf.create(self.deeplsd_conf)
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            ckpt_path = DATA_PATH / deeplsd_conf.weights
-            ckpt = torch.load(str(ckpt_path), map_location=device, weights_only=False)
-            deeplsd_net = DeepLSD(deeplsd_conf)
-            deeplsd_net.load_state_dict(ckpt["model"])
-            self.deeplsd_net = deeplsd_net.to(device).eval()
-            self.device = device
+            self.deeplsd = deeplsd_net.to(device).eval()
 
 
     # Utility methods for line df and af with deepLSD
@@ -287,17 +276,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
         image = data["image"]
         div_by = 2**5
         padder = InputPadder(image.shape[-2], image.shape[-1], div_by)
-
-        if self.conf.use_deeplsd_endpoints:
-            # Convert input image to grayscale
-            imgs = []
-            for b in range(image.shape[0]):
-                img = (image[b].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-                c_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-                gray_img = cv2.cvtColor(c_img, cv2.COLOR_BGR2GRAY)
-                gray_img = torch.tensor(gray_img, dtype=torch.float, device=self.device)[None, None]/ 255.0
-                imgs.append(gray_img)
-            deeplsd_image = torch.stack(imgs, dim=0)
 
         # Get Hidden Feature Map and Keypoint/junction scoring
         padded_img = padder.pad(image)
@@ -400,31 +378,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
         output["keypoints"] = rescaled_kp
         output["keypoint_scores"] = torch.stack(kptscores)
 
-        if self.conf.use_deeplsd_endpoints:
-            with torch.no_grad():
-                inputs = {
-                    "image": deeplsd_image,
-                }
-                deeplsd_output = self.deeplsd_net(inputs)
-                bs = len(deeplsd_output["lines"])
-                deeplsd_lines = [np.array(deeplsd_output["lines"][i]).astype(int) for i in range(bs)]
-            
-            rescaled_ep = []
-            keypoints = []
-            h, w = image.shape[2:]
-            for i in range(bs):
-                dpoints = deeplsd_lines[i].reshape(-1, 2).astype(int)
-                dpoints[:, 0] = np.clip(dpoints[:, 0], 0, w)
-                dpoints[:, 1] = np.clip(dpoints[:, 1], 0, h)
-                cur_kp = torch.from_numpy(dpoints).float().to(self.device)
-
-                rescaled_ep.append(cur_kp)
-
-                # convert to normalized coordinates
-                keypoints.append(2 * cur_kp / torch.tensor([w, h], device=self.device) - 1)
-
-            rescaled_kp = torch.stack(rescaled_ep)
-            keypoints = torch.stack(keypoints)
 
         # Keypoint descriptors
         if self.conf.timeit:
