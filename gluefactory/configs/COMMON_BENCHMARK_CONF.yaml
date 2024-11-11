@@ -9,22 +9,24 @@ model:  # TODO: REPLACE MODEL WITH YOU MODEL CFG YOU WANT TO BENCHMARK
     subpixel_refinement: True
     training:
       do: False
-    checkpoint: /local/home/rkreft/shared_team_folder/outputs/training/oxparis_800_focal/checkpoint_best.tar  # if given load model weights from this checkpoint
+    checkpoint: /local/home/Point-Line/outputs/training/oxparis_800_focal/checkpoint_best.tar  # if given load model weights from this checkpoint
     timeit: False  # override timeit: False from BaseModel
     line_detection: # default conf is the one from POLD 2 Line Detector
       do: True
       conf:
-        num_sample: 8
-        num_sample_strong: 150
         max_point_size: 1500
+        min_line_length: 6
+        max_line_length: null
+        samples: [24]
         distance_map:
-          threshold: 0.5
+          max_value: 5
+          threshold: 0.45
+          smooth_threshold: 0.8
           avg_filter_size: 13
           avg_filter_padding: 6
           avg_filter_stride: 1
-          max_value: 2
-          inlier_ratio: 0.8
-          mean_value_ratio: 0.8
+          inlier_ratio: 0.75
+          max_accepted_mean_value: 0.5
 
         mlp_conf:
           name: gluefactory.models.lines.pold2_cnn # can either use pold2_cnn or pold2_mlp class here
