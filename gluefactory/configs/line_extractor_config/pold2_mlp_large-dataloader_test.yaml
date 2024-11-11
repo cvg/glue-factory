@@ -8,14 +8,20 @@ reseed: False
 
 # data generation (None to skip)
 generate:
-    regenerate: True
+    regenerate: False
     
-    num_images: 100
+    num_images: 200
+
+    fields_and_lines_path: DeepLSD-Outputs-OXPA/DeepLSD-Outputs-OXPA.h5
+    h5_file_name: null   # Name the file based on the config - NumBands, ImageSize, NumLineSamples, BandWidth
+    deeplsd_line_neighborhood: 5
+
+
     negative_type: combined
     combined_ratio: 0.8
     negative_neighbour_min_radius: 5
     negative_neighbour_max_radius: 10
-    num_negative_per_image: 40
+    num_negative_per_image: -1
     num_positive_per_image: -1
 
     mlp_config:
@@ -28,27 +34,5 @@ generate:
 
         num_bands: 5            # number of bands to sample along the line
         band_width: 1           # width of the band to sample along the line
-
-    deeplsd_config:
-        detect_lines: True
-        line_detection_params:
-            merge: False
-            filtering: True
-            grad_thresh: 3
-            grad_nfa: True
-        weights: DeepLSD/weights/deeplsd_md.tar
-
-    jpldd_config:
-        name: joint_point_line_extractor
-        max_num_keypoints: 500  # setting for training for eval: -1
-        timeit: True  # override timeit: False from BaseModel
-        line_df_decoder_channels: 32
-        line_af_decoder_channels: 32
-        line_detection:
-                do: False
-            
-        checkpoint: /local/home/Point-Line/outputs/training/focal_loss_experiments/rk_focal_threshDF_focal/checkpoint_best.tar
-    
-    glob: revisitop1m_POLD2/jpg/**/base_image.jpg  # relative to DATA_PATH
 
     debug: True
