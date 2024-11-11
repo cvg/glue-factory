@@ -442,16 +442,12 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 # Line matchers expect the lines to be stored as line endpoints where line endpoint = coordinate of respective keypoint
                 if len(lines) == 0:
                     print("NO LINES DETECTED")
-                    img_lines = (
-                        torch.arange(30)
-                        .reshape(-1, 2)
-                        .to(line_distance_field[-1].device)
-                    )
 
                 valid_lines.append(
                     torch.ones(len(lines[-1])).to(line_distance_field[-1].device)
                 )
             output["lines"] = torch.stack(lines, dim=0)
+            output["line_descriptors"] = torch.stack(line_descs, dim=0)
             output["valid_lines"] = torch.stack(valid_lines, dim=0)
 
             # Use aliked points sampled from inbetween Line endpoints?
