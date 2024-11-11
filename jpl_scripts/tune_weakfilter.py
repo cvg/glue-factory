@@ -251,7 +251,7 @@ class WeakFilterAutoTuner:
         self.jpl_model = jpl_model      # jpl model to serve DF/AF
         self.dlsd_model = dlsd_model    # deeplsd model to generate gt for metric and possibly AF/DF
         self.dataset = dataset          # iterable dataset
-        self.eval_indices = self.conf['eval_indices']
+        self.eval_indices = list(self.conf['eval_indices'])
         self.line_detector_to_be_tuned =  None
         self.do_rand_init = self.conf['random_init']
         self.do_restart_on_stagnation = self.conf['restart_on_stagnation']
@@ -349,9 +349,12 @@ class WeakFilterAutoTuner:
                 output_jpl = self.jpl_model({"image": img_torch})
         df = deeplsd_output["df"][0] if self.conf["use_deeplsd_df"] else output_jpl["line_distancefield"][0]
         af = deeplsd_output["line-level"][0] if self.conf["use_deeplsd_af"] else output_jpl["line_distancefield"][0]
-        dlsd_lines = torch.clamp(torch.tensor(np.array(deeplsd_output["lines"][0]).astype(int)).to(self.device), 0, (img_size.max() - 1))
-        kp = torch.cat((dlsd_lines[:,0], dlsd_lines[:,1])) if self.conf["use_deeplsd_keypoints"] else output_jpl["keypoints"][0]
-        return df, af, kp, dlsd_lines 
+        deeplsd_lines = torch.tensor(deeplsd_output["lines"][0].astype(int))
+        deeplsd_lines[:,:,0] = torch.clamp(deeplsd_lines[:,:,0],0,img.shape[1]-1)
+        deeplsd_lines[:,:,1] = torch.clamp(deeplsd_lines[:,:,1],0,img.shape[0]-1)
+        keypoints_deeplsd = torch.cat((deeplsd_lines[:,0],deeplsd_lines[:,1]))
+        kp = keypoints_deeplsd if self.conf["use_deeplsd_keypoints"] else output_jpl["keypoints"][0]
+        return df.to(self.device), af.to(self.device), kp.to(self.device), deeplsd_lines.to(self.device)
         
         
     def calculate_metric_single_image(self, line_extractor_out_lines: torch.Tensor, gt_dlsd_lines: torch.Tensor) -> float:

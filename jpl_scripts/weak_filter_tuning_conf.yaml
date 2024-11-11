@@ -2,7 +2,7 @@ tuner_conf:
     eval_indices: [100, 101, 102, 104, 105, 506]  # indices of images iside the dataset we use to tune
     use_deeplsd_df: False  # if true uses distance field from deeplsd. Otherwise from jpl model
     use_deeplsd_af: False  # if true uses angle field from deeplsd. Otherwise from jpl model
-    use_deeplsd_keypoints: True  # if true uses line ep from deeplsd as kp. Otherwise from jpl model
+    use_deeplsd_keypoints: True  # if true uses line ep from deeplsd as kp. Otherwise from jpl model (CURRENTLY THIS OPTION IS OBLIGATORY AS deeplsd lines are used in Metric)
     
     # now describe initial parameter value for weak-filter, as well as optimization range
     # for each param: paramname: [do-tune:bool, initial-value, min-value, max-value, step_size]
