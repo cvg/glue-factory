@@ -575,10 +575,14 @@ class LineExtractor(BaseModel):
                 print(f"Number of lines after NMS: {len(filtered_idx)}")
 
         # Prepare output
-        lines = points[filtered_idx]
-        line_descriptors = torch.stack(
-            [descriptors[filtered_idx[:, 0]], descriptors[filtered_idx[:, 1]]], dim=1
-        )
+        if len(filtered_idx) == 0:
+            lines = torch.zeros(0, 2, 2).to(self.device)
+            line_descriptors = torch.zeros(0, 2, 128).to(self.device)
+        else:
+            lines = points[filtered_idx]
+            line_descriptors = torch.stack(
+                [descriptors[filtered_idx[:, 0]], descriptors[filtered_idx[:, 1]]], dim=1
+            )
 
         return {
             "lines": lines,
