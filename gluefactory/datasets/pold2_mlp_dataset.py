@@ -15,6 +15,7 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 from tqdm import tqdm
+import pickle
 import enum
 
 from gluefactory.models.deeplsd_inference import DeepLSD
@@ -34,6 +35,9 @@ class NegativeType(enum.Enum):
     DEEPLSD_NEIGHBOUR = "deeplsd_neighbour"
     COMBINED = "combined"
 
+class LineMethods(enum.Enum):
+    DEEPLSD = "deeplsd"
+    JPLDD = "jpldd"
 
 class POLD2_MLP_Dataset(BaseDataset):
     default_conf = {
@@ -68,6 +72,8 @@ class POLD2_MLP_Dataset(BaseDataset):
                 "band_width": 1,           # width of the band to sample along the line
             },
 
+            "df_af_method": LineMethods.DEEPLSD.value,
+
             "deeplsd_config": {
                 "detect_lines": True,
                 "line_detection_params": {
@@ -90,6 +96,8 @@ class POLD2_MLP_Dataset(BaseDataset):
                     },
                 "checkpoint": None,
             },
+
+            # For wireframe: wireframe-pointline/*.pkl
             "glob": "revisitop1m/jpg/**/base_image.jpg",  # relative to DATA_PATH
             
             "debug": False, # debug the data generation (visualize positive and negative samples)
@@ -156,9 +164,36 @@ class POLD2_MLP_Dataset(BaseDataset):
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+        # Assert line method is valid
+        assert conf.generate.df_af_method in [m.value for m in LineMethods]
+        self.df_af_method = conf.generate.df_af_method
+
+
         def get_line_from_image(file_path, deeplsd_net, jpldd_net, reshape_image=None):
-            img = cv2.imread(file_path)[:, :, ::-1]
-            gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+
+            def get_lines(lines: np.ndarray, points: np.ndarray):
+
+                lines_xy = []
+                for line in lines:
+                    lines_xy.append([points[line[0]], points[line[1]]])
+
+                return np.array(lines_xy)
+
+            if file_path[-4:] != '.pkl':
+                img = cv2.imread(file_path)[:, :, ::-1]
+                gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            else:
+                file = {}
+                with open(file_path, 'rb') as f:
+                    fileread = pickle.load(f)
+                    file['img'] = fileread['img']
+                    file['lines'] = fileread['lines']
+                    file['points'] = fileread['points']
+                    file['imgname'] = fileread['imgname']
+                
+                del fileread
+                img = file['img']
+                gray_img = cv2.cvtColor(file['img'], cv2.COLOR_RGB2GRAY)
 
             if reshape_image is not None:
                 gray_img = cv2.resize(gray_img, (reshape_image, reshape_image))
@@ -180,18 +215,23 @@ class POLD2_MLP_Dataset(BaseDataset):
 
             with torch.no_grad():
                 out_deeplsd = deeplsd_net(inputs)
-                out_jpldd = jpldd_net(inputs_jpldd) if self.conf.generate.jpldd_config is not None else None
+                out_jpldd = jpldd_net(inputs_jpldd)
 
 
             # distance field
-            if self.conf.generate.jpldd_config is not None:
-                distances = out_jpldd["line_distancefield"][0]
-            else:
+            if self.df_af_method == LineMethods.DEEPLSD.value:
                 distances = out_deeplsd["df"][0]
-            distances /= deeplsd_net.conf.line_neighborhood
+                distances /= deeplsd_net.conf.line_neighborhood
+
+                angles = out_deeplsd["line_level"][0]
+
+            elif self.df_af_method == LineMethods.JPLDD.value:
+                distances = out_jpldd["line_distancefield"][0]
+                distances /= jpldd_net.conf.line_neighborhood
+
+                angles = out_jpldd["line_anglefield"][0]
 
             # angle field
-            angles = out_jpldd["line_anglefield"][0]
             angles = angles / np.pi
 
             if file_path[-4:] != '.pkl':
