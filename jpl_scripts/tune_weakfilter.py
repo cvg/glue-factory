@@ -1,6 +1,13 @@
+"""
+Run this to tune the Weakfilter.
+Example-Conf at: glue-factory/jpl_scripts/weak_filter_tuning_conf.yaml
+Ex execution(assume venv activated and in glue-factory/jpl_scripts):  
+    python tune_weakfilter.py test_exp_name --conf=weak_filter_tuning_conf.yaml --num_s=3
+"""
+
+import argparse
 import torch
 import numpy as np
-from matplotlib import pyplot as plt
 from gluefactory.datasets import get_dataset
 from gluefactory.models import get_model
 from gluefactory.models.deeplsd_inference import DeepLSD
@@ -14,6 +21,7 @@ import logging
 import random
 from pprint import pprint
 
+
 line_neighborhood = 5 # in px used to nortmalize/ denormalize df
 
 logging.basicConfig(
@@ -23,21 +31,63 @@ logging.basicConfig(
 )
 
 
+default_conf = {
+    # Add params for tuner here
+    "tuner_conf": {
+        # default conf of weak filter autotuner is in class for it
+        },
+    "dataset": {
+        "name": "oxford_paris_mini_1view_jpldd",
+        "reshape": 800,  # ex. 800
+        "train_batch_size": 1,
+        "split": 'train',
+        "val_batch_size": 1,
+        "test_batch_size": 1,
+        "multiscale_learning": {
+            "do": False,
+            "scales_list": [800, 600, 400],
+            "scale_selection": 'round-robin' # random or round-robin
+        },
+        "load_features": {
+            "do": True,
+            "check_exists": True,
+            "point_gt": {
+                "data_keys": ["superpoint_heatmap", "gt_keypoints", "gt_keypoints_scores"],
+                "use_score_heatmap": True,
+            },
+            "line_gt": {
+                "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
+                "enforce_threshold": 5.0,  # Enforce values in distance field to be no greater than this value
+            },
+        },    
+    },
+    "jpl_model": {
+        "name": "joint_point_line_extractor",
+        "max_num_keypoints": 800,  # setting for training, for eval: -1
+        "timeit": True,  # override timeit: False from BaseModel
+        "line_df_decoder_channels": 32,
+        "line_af_decoder_channels": 32,
+        "line_detection": {
+            "do": False,  # in the tuner we only need 
+        },
+        "checkpoint": "/local/home/rkreft/shared_team_folder/outputs/training/oxparis_800_focal/checkpoint_best.tar"
+    },
+    "deeplsd_model": {
+        "detect_lines": True,
+        "line_detection_params": {
+            "merge": False,
+            "filtering": True,
+            "grad_thresh": 3,
+            "grad_nfa": True,
+        },
+        "weights": "DeepLSD/weights/deeplsd_md.tar",
+    }
+}
+
 # Define utility methods
 
-def get_deep_lsd_model(device="cuda"):
-    deeplsd_conf = {
-    "detect_lines": True,
-    "line_detection_params": {
-        "merge": False,
-        "filtering": True,
-        "grad_thresh": 3,
-        "grad_nfa": True,
-    },
-    "weights": "DeepLSD/weights/deeplsd_md.tar",  # path to the weights of the DeepLSD model (relative to DATA_PATH)
-    }
-    deeplsd_conf = OmegaConf.create(deeplsd_conf)
-
+def get_deep_lsd_model(dlsd_conf, device="cuda"):
+    deeplsd_conf = OmegaConf.create(dlsd_conf)
     ckpt_path = DATA_PATH / deeplsd_conf.weights
     ckpt = torch.load(str(ckpt_path), map_location=device, weights_only=False)
     deeplsd_net = DeepLSD(deeplsd_conf)
@@ -46,47 +96,14 @@ def get_deep_lsd_model(device="cuda"):
     return deeplsd_net
 
 
-def get_jpl_model(weights: str, mlp_weights: str, device: str):
-    DEBUG_DIR = "tmp_testbed"
-    jpldd_conf = {
-        "name": "joint_point_line_extractor",
-        "max_num_keypoints": 800,  # setting for training, for eval: -1
-        "timeit": True,  # override timeit: False from BaseModel
-        "line_df_decoder_channels": 32,
-        "line_af_decoder_channels": 32,
-        "line_detection": {
-            "do": False,
-            "conf": {
-                "max_point_size": 1500,  # max num of keypoints considered
-                "min_line_length": 15,
-                "max_line_length": None,
-                "samples": [16],
-
-                "distance_map": {
-                    "max_value": 5,  # max value to normalize df
-                    "threshold": 0.5, # threshold to have binary df = true
-                    "smooth_threshold": 0.85,
-                    "avg_filter_size": 13,
-                    "avg_filter_padding": 6,
-                    "avg_filter_stride": 1,
-                    "inlier_ratio": 0.5,
-                    "max_accepted_mean_value": 0.3,
-                },
-
-                "mlp_conf": None,
-                "nms": True,
-                "debug": False,
-                "debug_dir": DEBUG_DIR,
-            }
-        },
-        "checkpoint": str(weights)
-    }
-    jpl_model = get_model("joint_point_line_extractor")(jpldd_conf).to(device)
+def get_jpl_model(jpl_conf: dict, device: str):
+    jpl_model = get_model("joint_point_line_extractor")(jpl_conf)
+    jpl_model.to(device)
     jpl_model.eval()
     return jpl_model
 
 
-def get_line_extractor_model(weak_filter_cfg: dict, samples: int):
+def get_line_extractor_model(weak_filter_cfg: dict, samples: int, device: str):
     line_extractor_conf = {
                 "max_point_size": 1500,  # max num of keypoints considered
                 "min_line_length": 10,
@@ -98,6 +115,7 @@ def get_line_extractor_model(weak_filter_cfg: dict, samples: int):
                 "mlp_conf": None,
                 "nms": False,
                 "debug": False,
+                "device": device
             }
     line_extractor = get_model("lines.pold2_extractor")(line_extractor_conf).to(device)
     line_extractor.eval()
@@ -178,7 +196,8 @@ class WeakFilterAutoTuner:
           
     """
     
-    default_conf = {
+    weak_filter_default_conf = {
+        "eval_indices": [100, 101, 102, 104, 105, 506],  # image indices in the dataset that we use to tune the weakfilter
         "use_deeplsd_df": False,  # if true uses distance field from deeplsd. Otherwise from jpl model
         "use_deeplsd_af": False,  # if true uses angle field from deeplsd. Otherwise from jpl model
         "use_deeplsd_keypoints": True,  # if true uses line ep from deeplsd as kp. Otherwise from jpl model
@@ -210,8 +229,8 @@ class WeakFilterAutoTuner:
         "random_init": False,
         "restart_on_stagnation": False,
     }
-    
-    def __init__(self, dataset, eval_indices, exp_name, jpl_model=None, device='cpu') -> None:
+
+    def __init__(self, conf, dataset, jpl_model, dlsd_model, exp_name, device='cpu') -> None:
         """
         Initializes the Autotuner. The Autotuner can load state if wanted.
 
@@ -224,14 +243,15 @@ class WeakFilterAutoTuner:
         """
         # TODO: add state loading
         logging.info("Initialize...")
-        self.minimum_accepted_metric_value = -99999
+        self.conf = OmegaConf.merge(OmegaConf.create(WeakFilterAutoTuner.weak_filter_default_conf), conf)  # overall conf containing everything
+
+        self.minimum_accepted_metric_value = -99999  # if metric value is smaller, skip this neighbor
         self.exp_name = exp_name
         self.device = device
-        self.jpl_model = jpl_model
-        self.dlsd_model = get_deep_lsd_model(device)
-        self.dataset = dataset  # iterable dataset
-        self.eval_indices = eval_indices
-        self.conf = WeakFilterAutoTuner.default_conf
+        self.jpl_model = jpl_model      # jpl model to serve DF/AF
+        self.dlsd_model = dlsd_model    # deeplsd model to generate gt for metric and possibly AF/DF
+        self.dataset = dataset          # iterable dataset
+        self.eval_indices = self.conf['eval_indices']
         self.line_detector_to_be_tuned =  None
         self.do_rand_init = self.conf['random_init']
         self.do_restart_on_stagnation = self.conf['restart_on_stagnation']
@@ -242,7 +262,7 @@ class WeakFilterAutoTuner:
         # initialize eval images
         logging.info("Prepare data for eval-images...")
         self.eval_img_data =  {}
-        for idx in eval_indices:
+        for idx in self.eval_indices:
             img = self.dataset[idx]
             df, af, kp, dlsd_lines = self.calculate_outputs(img)
             self.eval_img_data[str(idx)] = {
@@ -479,7 +499,7 @@ class WeakFilterAutoTuner:
         """
         # set line extractor to current_conf
         del self.line_detector_to_be_tuned
-        self.line_detector_to_be_tuned = get_line_extractor_model(config, int(config["samples"]))
+        self.line_detector_to_be_tuned = get_line_extractor_model(config, int(config["samples"]), self.device)
         
         results = np.zeros(len(self.eval_indices))
         # run detection for all test images
@@ -508,66 +528,50 @@ class WeakFilterAutoTuner:
         
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='My Python Script')
+    parser = argparse.ArgumentParser(description='-WeakFilter Autotuner-')
     # Add the 'restore' argument (optional string)
     parser.add_argument('exp_name', type=str)
-    parser.add_argument('--restore', type=str, default=None, help='Path to a model checkpoint to restore')
+    parser.add_argument('--conf', type=str, help="path to config file")
+    #parser.add_argument('--restore', type=str, default=None, help='Path to a model checkpoint to restore')
     # Add the 'num_steps' argument (optional integer with a default value)
     parser.add_argument('--num_steps', type=int, default=100, help='Number of training steps')
-    parser.add_argument('--rand_init', action='store_true', default=False,
-                    help='Flag to enable random initialization')
-    # Parse the command-line arguments
+    parser.add_argument("--device", choices=["cpu", "mps", "cuda"], default="cuda")
     args = parser.parse_args()
+    
+    # Parse the command-line arguments
+    default_conf = OmegaConf.create(default_conf)
+    conf = OmegaConf.merge(default_conf, OmegaConf.load(args.conf))
+    dset_conf = conf["dataset"]
+    model_conf = conf["jpl_model"]
+    dlsd_conf = conf["deeplsd_model"]
+    tuner_conf = conf["tuner_conf"]
+    
     exp_name = args.exp_name
-    restore_path = args.restore
+    #restore_path = args.restore
     num_steps = args.num_steps
-    do_rand_init = args.rand_init
     
     # figure out device
-    if torch.cuda.is_available():
-        device = 'cuda'
-    elif torch.backends.mps.is_built():
-        device = 'mps'
-    else:
-        device = 'cpu'
-    print(f"Device Used: {device}")
+    if args.device == "cuda":
+        assert torch.cuda.is_available()
+    elif args.device == "mps":
+        assert torch.backends.mps.is_built()
+        
+    device = args.device
+    print(f"Using Device: {device}")
     
-    # load dataset
-    dset_conf = {
-        "reshape": 800,  # ex. 800
-        "train_batch_size": 1,
-        "val_batch_size": 1,
-        "test_batch_size": 1,
-        "multiscale_learning": {
-            "do": False,
-            "scales_list": [800, 600, 400],
-            "scale_selection": 'round-robin' # random or round-robin
-        },
-        "load_features": {
-            "do": True,
-            "check_exists": True,
-            "point_gt": {
-                "data_keys": ["superpoint_heatmap", "gt_keypoints", "gt_keypoints_scores"],
-                "use_score_heatmap": True,
-            },
-            "line_gt": {
-                "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
-                "enforce_threshold": 5.0,  # Enforce values in distance field to be no greater than this value
-            },
-        },
-    }
-    oxpa_2 = get_dataset("oxford_paris_mini_1view_jpldd")(dset_conf)
-    ds = oxpa_2.get_dataset(split="train")
+    # Initialize Dataset
+    dataset = get_dataset(dset_conf.name)(dset_conf)
+    ds = dataset.get_dataset(dset_conf.split)
+    
+    # Initialize JPL and deeplsd Models
+    jpl_model = get_jpl_model(model_conf, device=device)
+    deeplsd_model = get_deep_lsd_model(dlsd_conf, device=device)
     
     # initialize Autotuner
-    eval_indices = [100, 101, 102, 104, 105, 506]
-    weights = "/local/home/Point-Line/outputs/training/oxparis_800_focal/checkpoint_best.tar"
-    mlp_weights = "/local/home/Point-Line/outputs/training/pold2_cnn_2d_conv_hard_negative/checkpoint_best.tar"
-    jpl_model = get_jpl_model(weights, mlp_weights, device)
-    tuner = WeakFilterAutoTuner(ds, eval_indices, exp_name, jpl_model, device)
+    tuner = WeakFilterAutoTuner(tuner_conf, ds, jpl_model, deeplsd_model, exp_name, device)
     
     # for now do one step
-    for step in trange(num_steps, desc='Training', unit='step'):
+    for step in trange(num_steps, desc='Running Optimization', unit='step'):
         tuner.step()
         tuner.save_state()
     confs, metrics = tuner.get_top_k_confs_by_metric(topk=3)

@@ -1,0 +1,70 @@
+tuner_conf:
+    eval_indices: [100, 101, 102, 104, 105, 506]  # indices of images iside the dataset we use to tune
+    use_deeplsd_df: False  # if true uses distance field from deeplsd. Otherwise from jpl model
+    use_deeplsd_af: False  # if true uses angle field from deeplsd. Otherwise from jpl model
+    use_deeplsd_keypoints: True  # if true uses line ep from deeplsd as kp. Otherwise from jpl model
+    
+    # now describe initial parameter value for weak-filter, as well as optimization range
+    # for each param: paramname: [do-tune:bool, initial-value, min-value, max-value, step_size]
+    # min and max values are inclusive
+    parameters:
+        max_value: [False, 5, 5, 5, 0]  # this value is used to normalize  
+        threshold: [True, 0.5, 0.05, 0.95, 0.05]  # threshold to have binary df=True
+        smooth_threshold: [True, 0.85, 0.05, 0.95, 0.05]
+        avg_filter_size: [False, 13, 13, 13, 0]
+        avg_filter_padding: [False, 6, 6, 6, 0]
+        avg_filter_stride: [False, 1, 1, 1, 0]
+        inlier_ratio: [True, 0.5, 0.05, 0.95, 0.05]
+        max_accepted_mean_value: [True, 0.3, 0.05, 0.95, 0.05]
+        # samples is separate and not configured in the weak filter
+        samples: [True, 8, 4, 50, 2]
+    
+    metric:
+        weight_num_lines: 0.25
+        weight_common_lines: 15
+        aggregation: 'mean' # options: 'mean', 'median'    
+    save_every_iter: 100  # number of iterations after which checkpoints are saved periodically
+    debug: False  # is true, stores images with detected lines for the best configs
+    debug_folder: "debug_images" # folder based on current directory where debug images are stored 
+    random_init: False
+    restart_on_stagnation: False
+
+jpl_model:
+    name: extractors.joint_point_line_extractor
+    aliked_model_name: "aliked-n16"
+    max_num_keypoints: 2048  # setting for training, for eval: -1
+    detection_threshold: 0.0
+    nms_radius: 3
+    training:
+      do: False
+    checkpoint: /local/home/Point-Line/outputs/training/oxparis_800_focal/checkpoint_best.tar
+    timeit: False
+    line_detection:
+      do: False
+
+dataset:
+    name: gluefactory.datasets.oxford_paris_mini_1view_jpldd
+    data_dir: "revisitop1m_POLD2/jpg"
+    split: 'train'  # split must be selected 
+    grayscale: False
+    num_workers: 2  
+    train_batch_size: 1  
+    val_batch_size: 1
+    prefetch_factor: 2
+    reshape: 800  
+    square_pad: False 
+    multiscale_learning:
+        do: False  
+    load_features:
+        do: False
+    val_size: 500
+    train_size: 11500
+
+deeplsd_model:
+    detect_lines: True
+    line_detection_params:
+        merge: False
+        filtering: True
+        grad_thresh: 3
+        grad_nfa: True
+    weights: "DeepLSD/weights/deeplsd_md.tar"
