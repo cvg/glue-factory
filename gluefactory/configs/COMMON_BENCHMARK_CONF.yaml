@@ -27,13 +27,15 @@ model:  # TODO: REPLACE MODEL WITH YOU MODEL CFG YOU WANT TO BENCHMARK
           mean_value_ratio: 0.8
 
         mlp_conf:
-          name: gluefactory.models.lines.pold2_mlp
+          name: gluefactory.models.lines.pold2_cnn # can either use pold2_cnn or pold2_mlp class here
           has_angle_field: True
-          has_distance_field: True
-          num_line_samples: 150
-          mlp_hidden_dims: [ 256, 128, 128, 64, 32 ]
-          pred_threshold: 0.9
-          weights: /local/home/Point-Line/outputs/training/pold2_mlp_gen+train_run1/checkpoint_best.tar
+          has_distance_field: True 
+          num_bands: 3
+          band_width: 1
+          num_line_samples: 30
+          mlp_hidden_dims: [256, 128, 128, 64, 32]
+          pred_threshold: 0.95
+          weights : /local/home/Point-Line/outputs/training/oxparis_300lines_deeper_net_300img_deeplsd/checkpoint_best.tar 
   matcher:
     name: matchers.nn_point_line
 benchmarks:

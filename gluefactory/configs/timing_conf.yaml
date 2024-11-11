@@ -31,6 +31,7 @@ model:
           max_accepted_mean_value: 0.4     # Maximum difference in AF mean value with line angle
 
         mlp_conf:
+          name: gluefactory.models.lines.pold2_cnn # can either use pold2_cnn or pold2_mlp class here
           has_angle_field: True
           has_distance_field: True 
           num_bands: 3
@@ -38,7 +39,7 @@ model:
           num_line_samples: 30
           mlp_hidden_dims: [256, 128, 128, 64, 32]
           pred_threshold: 0.95
-          weights : /local/home/Point-Line/outputs/training/oxparis_300lines_deeper_net/checkpoint_best.tar  
+          weights : /local/home/Point-Line/outputs/training/oxparis_300lines_deeper_net_300img_deeplsd/checkpoint_best.tar 
         nms: False  # immense difference (~18-19 FPS)
       merge: False
 data:

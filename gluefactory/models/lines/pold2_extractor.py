@@ -21,11 +21,12 @@ from omegaconf import OmegaConf
 from PIL import Image
 from tqdm import tqdm
 
+from gluefactory.models import get_model
 from gluefactory.models.base_model import BaseModel
 from gluefactory.models.lines.line_refinement import merge_lines_torch
 from gluefactory.models.lines.pold2_mlp import POLD2_MLP
 from gluefactory.models.lines.pold2_cnn import POLD2_CNN
-from gluefactory.settings import DATA_PATH, root
+from gluefactory.settings import DATA_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,7 @@ class LineExtractor(BaseModel):
 
         # Import mlp
         if conf.mlp_conf is not None:
-            self.model = POLD2_CNN(conf.mlp_conf)
+            self.model = get_model(conf.mlp_conf["name"])(conf.mlp_conf)
             self.model.to(self.device)
             self.model.eval()
             

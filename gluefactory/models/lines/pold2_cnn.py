@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 class POLD2_CNN(BaseModel):
 
     default_conf = {
+        "name": "models.lines.pold2_cnn",
         "has_angle_field": True,
         "has_distance_field": True, 
         "num_line_samples": 30,    # number of sampled points between line endpoints
@@ -34,6 +35,7 @@ class POLD2_CNN(BaseModel):
         "pred_threshold": 0.9,
         "weights": None,
         "device": None,
+        "brute_force_samples": False
     }
 
     def _init(self, conf):
@@ -81,8 +83,10 @@ class POLD2_CNN(BaseModel):
         self.set_initialized()
 
     def _forward(self, data: torch.Tensor):
-        x = data["input"]
-        #print(x.shape)
+        x = data["input"]  # B x Num_Bands*Num_Samples
+        df = x[:,:self.conf.num_bands * self.conf.num_line_samples].reshape(-1, self.conf.num_bands, self.conf.num_line_samples)
+        af = x[:,self.conf.num_bands * self.conf.num_line_samples:].reshape(-1, self.conf.num_bands, self.conf.num_line_samples)
+        x = torch.cat([df, af], dim=2)
         if x.ndim == 3:
             x = x.unsqueeze(1)
         return {"line_probs": torch.sigmoid(self.cnn(x))}

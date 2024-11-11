@@ -227,25 +227,26 @@ class JointPointLineDetectorDescriptor(BaseModel):
             )
             self.load_state_dict(chkpt["model"], strict=False)
         
-        # Load line extraction after checkpoint loading
-        self.line_extractor = LineExtractor(
-            self.conf.line_detection.conf,
-        )
-        deeplsd_conf = {
-        "detect_lines": True,
-        "line_detection_params": {
-            "merge": True,
-            "filtering": True,
-            "grad_thresh": 3,
-            "grad_nfa": True,
-        },
-        "weights": "DeepLSD/weights/deeplsd_md.tar",  # path to the weights of the DeepLSD model (relative to DATA_PATH)
-        }
-        deeplsd_conf = OmegaConf.create(deeplsd_conf)
+        # Load line extractor if line detection is used
+        if self.conf.line_detection.do:
+            self.line_extractor = LineExtractor(
+                self.conf.line_detection.conf,
+            )
 
-        ckpt_path = DATA_PATH / deeplsd_conf.weights
-        ckpt = torch.load(str(ckpt_path), map_location=torch.device("cpu"), weights_only=False)
         if self.conf.line_detection.use_deeplsd_kp or self.conf.line_detection.use_deeplsd_df_af:
+            deeplsd_conf = {
+                "detect_lines": True,
+                "line_detection_params": {
+                    "merge": True,
+                    "filtering": True,
+                    "grad_thresh": 3,
+                    "grad_nfa": True,
+                },
+                "weights": "DeepLSD/weights/deeplsd_md.tar",  # path to the weights of the DeepLSD model (relative to DATA_PATH)
+            }
+            deeplsd_conf = OmegaConf.create(deeplsd_conf)
+            ckpt_path = DATA_PATH / deeplsd_conf.weights
+            ckpt = torch.load(str(ckpt_path), map_location=torch.device("cpu"), weights_only=False)
             deeplsd_net = DeepLSD(deeplsd_conf)
             deeplsd_net.load_state_dict(ckpt["model"])
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
