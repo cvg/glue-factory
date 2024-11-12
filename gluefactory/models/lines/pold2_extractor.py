@@ -652,8 +652,15 @@ class LineExtractor(BaseModel):
         distance_map /= df_max
 
         # normalize AF to [0, 1]
-        angle_map = angle_map.float()
-        angle_map = angle_map / torch.pi
+        if angle_map is None:
+            if self.conf.filters.angle_field:
+                raise ValueError("Angle map is required for angle field filtering")
+            if self.conf.filters.mlp and self.conf.mlp_conf.has_angle_field:
+                raise ValueError("Angle map is required for MLP filtering")
+
+        else:
+            angle_map = angle_map.float()
+            angle_map = angle_map / torch.pi
 
         # Process distance map
         binary_distance_map = self.process_distance_map(distance_map)
