@@ -6,9 +6,10 @@ import numpy as np
 import torch
 from torch.nn.functional import pixel_shuffle, softmax
 
-from gluefactory.datasets.homographies_deeplsd import warp_lines
+from gluefactory.datasets.homographies_deeplsd import warp_lines, warp_points
 from gluefactory.geometry.homography import warp_lines_torch
 from gluefactory.utils.image import compute_image_grad
+from homography_est import LineSegment, ransac_line_homography
 
 UPM_EPS = 1e-8
 
@@ -139,15 +140,24 @@ def project_point_to_line(line_segs, points):
     as well as the list of orthogonal distances."""
     # Compute the 1D coordinate of the points projected on the line
     dir_vec = (line_segs[:, 1] - line_segs[:, 0])[:, None]
-    coords1d = (
-        torch.sum((points[None] - line_segs[:, None, 0]) * dir_vec, dim=2)
-        / torch.norm(dir_vec.float(), dim=2) ** 2
-    )
+    if isinstance(line_segs, np.ndarray):
+        coords1d = (
+        np.sum((points[None] - line_segs[:, None, 0]) * dir_vec, axis=2)
+        / np.linalg.norm(dir_vec.astype(np.float32), axis=2) ** 2
+        )
+    else:
+        coords1d = (
+            torch.sum((points[None] - line_segs[:, None, 0]) * dir_vec, dim=2)
+            / torch.norm(dir_vec.float(), dim=2) ** 2
+        )
     # coords1d is of shape (n_lines, n_points)
 
     # Compute the orthogonal distance of the points to each line
     projection = line_segs[:, None, 0] + coords1d[:, :, None] * dir_vec
-    dist_to_line = torch.norm(projection - points[None], dim=2)
+    if isinstance(line_segs, np.ndarray):
+        dist_to_line = np.linalg.norm(projection - points[None], axis=2)
+    else:
+        dist_to_line = torch.norm(projection - points[None], dim=2)
 
     return coords1d, dist_to_line
 
@@ -155,15 +165,28 @@ def project_point_to_line(line_segs, points):
 def get_segment_overlap(seg_coord1d):
     """Given a list of segments parameterized by the 1D coordinate
     of the endpoints, compute the overlap with the segment [0, 1]."""
-    seg_coord1d, _ = torch.sort(seg_coord1d, dim=-1)
-    overlap = (
-        (seg_coord1d[..., 1] > 0)
-        * (seg_coord1d[..., 0] < 1)
-        * (
-            torch.minimum(seg_coord1d[..., 1], torch.tensor(1))
-            - torch.maximum(seg_coord1d[..., 0], torch.tensor(0))
+
+    if isinstance(seg_coord1d, np.ndarray):
+
+        seg_coord1d = np.sort(seg_coord1d, axis=-1)
+        overlap = (
+            (seg_coord1d[..., 1] > 0)
+            * (seg_coord1d[..., 0] < 1)
+            * (
+                np.minimum(seg_coord1d[..., 1], 1)
+                - np.maximum(seg_coord1d[..., 0], 0)
+            )
         )
-    )
+    else:
+        seg_coord1d, _ = torch.sort(seg_coord1d, dim=-1)
+        overlap = (
+            (seg_coord1d[..., 1] > 0)
+            * (seg_coord1d[..., 0] < 1)
+            * (
+                torch.minimum(seg_coord1d[..., 1], torch.tensor(1))
+                - torch.maximum(seg_coord1d[..., 0], torch.tensor(0))
+            )
+        )
 
     return overlap
 
@@ -194,7 +217,10 @@ def get_orth_line_dist(
     coords_1_on_2 = coords_1_on_2.reshape(n_lines2, n_lines1, 2)
     overlaps2 = get_segment_overlap(coords_1_on_2).T
     overlaps = (overlaps1 + overlaps2) / 2
-    min_overlaps = torch.minimum(overlaps1, overlaps2)
+    if isinstance(overlaps1, np.ndarray):
+        min_overlaps = np.minimum(overlaps1, overlaps2)
+    else:
+        min_overlaps = torch.minimum(overlaps1, overlaps2)
 
     if return_overlap:
         return line_dists, overlaps
@@ -204,7 +230,12 @@ def get_orth_line_dist(
         low_overlaps = overlaps < min_overlap
     else:
         low_overlaps = min_overlaps < min_overlap
-    line_dists[low_overlaps] = torch.amax(line_dists)
+
+    if isinstance(line_dists, np.ndarray):
+        line_dists[low_overlaps] = np.amax(line_dists)
+    else:
+        line_dists[low_overlaps] = torch.amax(line_dists)
+
     return line_dists
 
 
@@ -360,18 +391,33 @@ def get_common_lines(
         Updated lines0 with a valid reprojection in img1 and warped_lines1.
     """
     # First warp lines0 to img1 to detect invalid lines
-    warped_lines0 = warp_lines(lines0.cpu().numpy(), H.cpu().numpy())
+    if isinstance(H, np.ndarray):
+        warped_lines0 = warp_lines(lines0, H)
+    else:
+        warped_lines0 = warp_lines(lines0.cpu().numpy(), H.cpu().numpy())
 
     # Clip them to the boundary
     warped_lines0, valid = clip_line_to_boundaries(warped_lines0, img_size)
 
     # Warp all the valid lines back in img0
-    inv_H = np.linalg.inv(H.cpu().numpy())
+    if isinstance(H, np.ndarray):
+        inv_H = np.linalg.inv(H)
+    else:
+        inv_H = np.linalg.inv(H.cpu().numpy())
+
     new_lines0 = warp_lines(warped_lines0[valid], inv_H)
-    warped_lines1 = warp_lines(lines1.cpu().numpy(), inv_H)
+    
+    if isinstance(H, np.ndarray):
+        warped_lines1 = warp_lines(lines1, inv_H)
+    else:
+        warped_lines1 = warp_lines(lines1.cpu().numpy(), inv_H)
+
     warped_lines1, valid = clip_line_to_boundaries(warped_lines1, img_size)
 
-    return torch.Tensor(new_lines0,device=lines0.device), torch.Tensor(warped_lines1[valid],device=lines1.device)
+    if isinstance(H, np.ndarray):
+        return new_lines0, warped_lines1[valid]
+    else:
+        return torch.Tensor(new_lines0,device=lines0.device), torch.Tensor(warped_lines1[valid],device=lines1.device)
 
 
 # Taken from SOLD2
@@ -534,3 +580,59 @@ def nms_fast(in_corners, H, W, dist_thresh):
     out = out[:, inds2]
     out_inds = inds1[inds_keep[inds2]]
     return out, out_inds
+
+def get_inliers_and_reproj_error(line_seg1, line_seg2, H, tol_px=5):
+    # Warp back line_seg2
+    warped_line_seg2 = warp_lines(line_seg2, H)
+
+    # Compute the line distance
+    dist = np.diag(get_orth_line_dist(line_seg1, warped_line_seg2))
+    inliers = dist < tol_px
+    reproj_error = 0 if np.sum(inliers) == 0 else dist[inliers].mean()
+    return inliers, reproj_error
+
+def estimate_homography(line_seg1, line_seg2, tol_px=5):
+    """ Estimate the homography relating two sets of lines.
+    Args:
+        line_seg1, line_seg2: the matching set of line segments.
+        tol_px: inlier threshold in RANSAC.
+    Returns:
+        The estimated homography, mask of inliers, and reprojection error.
+    """
+    # Initialize the line segments C++ bindings
+    lines1 = [LineSegment(l[0, [1, 0]], l[1, [1, 0]]) for l in line_seg1]
+    lines2 = [LineSegment(l[0, [1, 0]], l[1, [1, 0]]) for l in line_seg2]
+
+    # Estimate the homography with RANSAC
+    inliers = []
+    H = ransac_line_homography(lines1, lines2, tol_px, False, inliers)
+    inliers, reproj_error = get_inliers_and_reproj_error(
+        line_seg1, line_seg2, H, tol_px)
+    return H, inliers, reproj_error
+
+def H_estimation(line_seg1, line_seg2, H_gt, img_size,
+                 reproj_thresh=3, tol_px=5):
+    """ Given matching line segments from pairs of images, estimate
+        a homography and compare it to the ground truth homography.
+    Args:
+        line_seg1, line_seg2: the matching set of line segments.
+        H_gt: the ground truth homography relating the two images.
+        img_size: the original image size.
+        reproj_thresh: error threshold to determine if a homography is valid.
+        tol_px: inlier threshold in RANSAC.
+    Returns:
+        The percentage of correctly estimated homographies.
+    """
+    # Estimate the homography
+    H, inliers, reproj_error = estimate_homography(line_seg1, line_seg2,
+                                                   tol_px)
+    
+    # Compute the homography estimation error
+    corners = np.array([[0, 0],
+                        [0, img_size[1] - 1],
+                        [img_size[0] - 1, 0],
+                        [img_size[0] - 1, img_size[1] - 1]], dtype=float)
+    warped_corners = warp_points(corners, H_gt)
+    pred_corners = warp_points(warped_corners, H)
+    error = np.linalg.norm(corners - pred_corners, axis=1).mean()
+    return error < reproj_thresh, np.sum(inliers), reproj_error
