@@ -8,12 +8,12 @@ model:  # TODO: REPLACE MODEL WITH YOU MODEL CFG YOU WANT TO BENCHMARK
     nms_radius: 3
     subpixel_refinement: True
     # use_deeplsd_endpoints: true
-    line_df_decoder_channels: 64  # adapt to your checkpoint!!
-    line_af_decoder_channels: 64
+    line_df_decoder_channels: 32  # adapt to your checkpoint!!
+    line_af_decoder_channels: 32
     use_line_anglefield: True
     training:
       do: False
-    timeit: True  # override timeit: False from BaseModel
+    timeit: False  # override timeit: False from BaseModel
     line_detection:
         do: True
         conf:
