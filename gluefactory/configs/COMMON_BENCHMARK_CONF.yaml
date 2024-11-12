@@ -1,44 +1,92 @@
 model:  # TODO: REPLACE MODEL WITH YOU MODEL CFG YOU WANT TO BENCHMARK
   name: two_view_pipeline
   extractor:
-    name: extractors.joint_point_line_extractor
-    aliked_model_name: "aliked-n16"
-    max_num_keypoints: 2048  # setting for training, for eval: -1
-    detection_threshold: 0.0 # set to <= 0 for training, for eval without fixed num of kp, do set to a good value
-    nms_radius: 3
-    subpixel_refinement: True
+    name: joint_point_line_extractor
     training:
       do: False
-    checkpoint: /local/home/Point-Line/outputs/training/oxparis_800_focal/checkpoint_best.tar  # if given load model weights from this checkpoint
-    timeit: False  # override timeit: False from BaseModel
-    line_detection: # default conf is the one from POLD 2 Line Detector
-      do: True
-      conf:
-        max_point_size: 1500
-        min_line_length: 6
-        max_line_length: null
-        samples: [24]
-        distance_map:
-          max_value: 5
-          threshold: 0.45
-          smooth_threshold: 0.8
-          avg_filter_size: 13
-          avg_filter_padding: 6
-          avg_filter_stride: 1
-          inlier_ratio: 0.75
-          max_accepted_mean_value: 0.5
+    max_num_keypoints: 1500  # setting for training for eval: -1
+    timeit: True  # override timeit: False from BaseModel
+    # use_deeplsd_endpoints: true
+    line_df_decoder_channels: 32
+    line_af_decoder_channels: 32
+    line_detection:
+        do: True
+        conf:
+            max_point_size: 1500
+            min_line_length: 6
+            max_line_length: null
+            max_lines: 2000
 
-        mlp_conf:
-          name: gluefactory.models.lines.pold2_cnn # can either use pold2_cnn or pold2_mlp class here
-          has_angle_field: True
-          has_distance_field: True 
-          num_bands: 3
-          band_width: 1
-          num_line_samples: 30
-          mlp_hidden_dims: [256, 128, 128, 64, 32]
-          pred_threshold: 0.95
-          weights : /local/home/Point-Line/outputs/training/oxparis_300lines_deeper_net_300img/checkpoint_best.tar 
-        nms: False
+            samples: [24]
+
+            distance_map:
+                max_value: 5
+                threshold: 0.45
+                smooth_threshold: 0.8
+                avg_filter_size: 13
+                avg_filter_padding: 6
+                avg_filter_stride: 1
+                inlier_ratio: 0.7
+                max_accepted_mean_value: 0.4
+
+            brute_force_df:
+                use: true                       # Use brute force sampling for distance field in the second stage
+                image_size: 800                  # Image size for which the coefficients are generated
+                inlier_ratio: 0.95                # Ratio of inliers
+                max_accepted_mean_value: null #0.4     # Maximum accepted DF mean value along the line
+                binary_threshold: 0.5            # Threshold for binarizing the distance field
+
+            angle_map:
+                threshold: 0.1                   # Threshold for deciding if a line angle is correct
+                inlier_ratio: 0.8              # Ratio of inliers
+                max_accepted_mean_value: 0.1     # Maximum difference in AF mean value with line angle
+
+
+            mlp_conf:
+                has_angle_field: True
+                has_distance_field: True 
+                
+                num_line_samples: 30    # number of sampled points between line endpoints
+                brute_force_samples: False  # sample all points between line endpoints
+                image_size: null         # size of the input image relevant only if brute_force_samples is True
+
+                num_bands: 3            # number of bands to sample along the line
+                band_width: 1           # width of the band to sample along the line
+
+                mlp_hidden_dims: [256, 128, 128, 64, 32] # hidden dimensions of the MLP
+
+                cnn_1d:              # 1D CNN to extract features from the input
+                    use: true
+                    mode: disjoint  # separate CNNs for angle and distance fields disjoint or shared
+                    merge_mode: add  # how to merge the features from angle and distance fields
+                    kernel_size: 3
+                    stride: 1
+                    padding: same
+                    channels: [4, 8, 16]  # number of channels in each layer     
+
+                cnn_2d:             # 2D CNN to extract features from the input
+                    use: false
+                    kernel_size: 3
+                    stride: 1
+                    padding: same
+                    channels: [4, 8, 16]  # number of channels in each layer    
+
+                pred_threshold: 0.8        
+                weights: /local/home/Point-Line/outputs/training/pold2_cnn1d_NS-30_NB-3_disjoint/checkpoint_best.tar
+
+            filters:
+                distance_field: True
+                angle_field: False
+                brute_force_df: True
+                mlp: False
+
+            nms: false
+            debug: false
+
+    checkpoint: /local/home/Point-Line/outputs/training/oxparis_800_focal/checkpoint_best.tar
+    #"checkpoint": "/local/home/rkreft/shared_team_folder/outputs/training/rk_oxparis_focal_hard_gt/checkpoint_best.tar"
+    #"checkpoint": "/local/home/rkreft/shared_team_folder/outputs/training/rk_pold2gt_oxparis_base_hard_gt/checkpoint_best.tar"
+
   matcher:
     #name: matchers.nearest_neighbor_matcher
     name: matchers.line_matcher
