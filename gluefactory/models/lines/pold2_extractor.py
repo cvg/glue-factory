@@ -61,6 +61,7 @@ class LineExtractor(BaseModel):
         "brute_force_df": {
             "use": False,                       # Use brute force sampling for distance field in the second stage
             "image_size": 800,                  # Image size for which the coefficients are generated
+            "binary_threshold": 0.3,            # Threshold for binary distance map
             "inlier_ratio": 0.9,                # Ratio of inliers
             "max_accepted_mean_value": 0.4,     # Maximum accepted DF mean value along the line
         },
@@ -375,6 +376,8 @@ class LineExtractor(BaseModel):
         # Shape: (num_lines, bf_num_samples_df, 2)
         points_coordinates = points_coordinates.reshape(-1, 2)  # Shape: (num_lines * bf_num_samples_df, 2)
 
+        binary_distance_map = (distance_map < self.conf.brute_force_df.binary_threshold).float()
+
         # Sample points
         binary_df_sampled = self.sample_map(
             points_coordinates, binary_distance_map
@@ -394,16 +397,17 @@ class LineExtractor(BaseModel):
         detected_line_indices = (
             torch.sum(binary_df_sampled, dim=0) >= num_valid * self.conf.brute_force_df.inlier_ratio
         )
-        detected_line_float = torch.sum(df_sampled, dim=0) / num_valid <= self.conf.brute_force_df.max_accepted_mean_value
+        # detected_line_float = torch.sum(df_sampled, dim=0) / num_valid <= self.conf.brute_force_df.max_accepted_mean_value
 
         if self.conf.debug:
             print(f"=============== Distance Filter BRUTE FORCE =================")
             print(f"Decision pos lines binary df: {torch.sum(detected_line_indices)}")
-            print(f"Decision pos lines df: {torch.sum(detected_line_float)}")
-            print(f"Decision overall num lines: {torch.sum(detected_line_indices & detected_line_float)}")
+            # print(f"Decision pos lines df: {torch.sum(detected_line_float)}")
+            # print(f"Decision overall num lines: {torch.sum(detected_line_indices & detected_line_float)}")
             print(f"=============================================================")
 
         # Finally we can filter the indices
+        return indices[detected_line_indices]
         return indices[detected_line_indices & detected_line_float]
 
 
