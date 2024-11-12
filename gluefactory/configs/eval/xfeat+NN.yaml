@@ -1,7 +1,7 @@
 model:
     name: two_view_pipeline
     extractor:
-        name: extractors.xfeat
+        name: extractors.xfeat  # XFeat - Sparse model, use xfeat_dense for dense model
         max_num_keypoints: 4096
         detection_threshold: 0.05
         pretrained: True
@@ -9,6 +9,9 @@ model:
         get_sparse_outputs: True
         force_num_keypoints: True
         preprocess: True
+        NMS:
+            threshold: 0.05
+            kernel_size: 5
     matcher:
         name: matchers.nearest_neighbor_matcher
 benchmarks:
