@@ -11,7 +11,6 @@ from gluefactory.datasets import get_dataset
 from gluefactory.models.deeplsd_inference import DeepLSD
 from gluefactory.models.lines.pold2_extractor import LineExtractor
 from gluefactory.settings import DATA_PATH
-from gluefactory.visualization.viz2d import show_distance_field
 import torch
 import numpy as np
 import random
@@ -29,7 +28,7 @@ DEBUG_DIR = "tmp_testbed"
 deeplsd_conf = {
     "detect_lines": True,
     "line_detection_params": {
-        "merge": False,
+        "merge": True,
         "filtering": True,
         "grad_thresh": 3,
         "grad_nfa": True,
