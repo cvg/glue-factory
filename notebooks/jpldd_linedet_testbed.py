@@ -273,6 +273,7 @@ print(f"KP-HMAP: type: {type(hmap)}, shape: {hmap.shape}, min: {torch.min(hmap)}
 
 ## Inference - Random 300 samples [Get FPS]
 # Comment while inspecting binary_distance_field
+random.seed(42)
 rand_idx = random.sample(range(0, len(ds)), 300) 
 """
 for i in rand_idx:
