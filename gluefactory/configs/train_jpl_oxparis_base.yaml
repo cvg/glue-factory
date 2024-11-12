@@ -33,6 +33,10 @@ model:
     line_neighborhood: 5
     max_num_keypoints: 1000  # setting for training, for eval: -1
     subpixel_refinement: True
+    use_line_anglefield: True   # if set to false, model will be initialized without AF branch and AF will not be output or considered in inference or training
+                                # In that case make sure the line detection does not expect AF input!
+    line_df_decoder_channels: 64  # number of channels in CNN for af/df decoder branches
+    line_af_decoder_channels: 64
     training:
         do: True
         aliked_pretrained: True

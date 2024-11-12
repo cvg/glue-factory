@@ -9,8 +9,6 @@ from kornia.geometry.transform import warp_perspective
 from omegaconf import OmegaConf
 import cv2
 
-from gluefactory.settings import DATA_PATH
-from gluefactory.models.deeplsd_inference import DeepLSD
 import gluefactory.models.utils.metrics_lines as LineMetrics
 from gluefactory.datasets.homographies_deeplsd import sample_homography
 from gluefactory.models import get_model
