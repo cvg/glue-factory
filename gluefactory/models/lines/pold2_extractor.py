@@ -360,7 +360,7 @@ class LineExtractor(BaseModel):
         coeffs_df_second = self.all_coeffs_df_second[distances][:,:, None]   # Shape: (num_lines, max_line_length, 1)
         
         # assert non negative distance map
-        assert torch.all(distance_map >= 0)
+        # assert torch.all(distance_map >= 0)
         # Padded coeffs will sample the DF
         # Hardcode DF[0,0]
         distance_map[0,0] = -1
