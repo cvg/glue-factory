@@ -27,6 +27,7 @@ from gluefactory.models.utils.metrics_points import (
 )
 from gluefactory.utils.misc import change_dict_key, sync_and_time
 
+# Parameters for calculating point metrics in validation loss
 default_H_params = {
     "translation": True,
     "rotation": True,
@@ -45,12 +46,12 @@ logger = logging.getLogger(__file__)
 
 
 class JointPointLineDetectorDescriptor(BaseModel):
-    # currently contains only ALIKED
     default_conf = {
-        "aliked_model_name": "aliked-n16",
-        "line_df_decoder_channels": 32,
-        "line_af_decoder_channels": 32,
-        "max_num_keypoints": 1000,  # setting for training, for eval: -1
+        "aliked_model_name": "aliked-n16",  # aliked model determining structure of our encoder
+        "use_line_anglefield": True,  # if set to false, model will be initialized without AF branch and AF will not be output or considered in inference or training
+        "line_df_decoder_channels": 64,
+        "line_af_decoder_channels": 64,
+        "max_num_keypoints": 1024,  # setting for training, for eval: -1
         "detection_threshold": -1,  # setting for training, for eval: 0.2
         "nms_radius": 3,
         "subpixel_refinement": True, # perform subpixel refinement after detection
@@ -64,7 +65,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 "gt_aliked_model": "aliked-n32",
             },  # if train is True, initialize ALIKED Light model form OTF Descriptor GT
             "loss": {
-                "kp_loss_name": "weighted_bce",  # other options: bce or focal loss
+                "kp_loss_name": "weighted_bce",  # other options: bce, weighted_bce or focal loss
                 "kp_loss_parameters": {
                     "lambda_weighted_bce": 200,  # weighted bce parameter factor how to boost keypoint loss in map
                     "focal_gamma": 5,
@@ -90,6 +91,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         "timeit": True,  # override timeit: False from BaseModel
     }
 
+    # used for line detection ablation and development when we use deeplsd af/df or line endpoints
     deeplsd_conf = {
         "detect_lines": True,
         "line_detection_params": {
@@ -129,7 +131,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         # Load Network Components
         self.encoder_backbone = AlikedEncoder(aliked_model_cfg)
         self.keypoint_and_junction_branch = SMH(dim)  # using SMH from ALIKE here
-        self.dkd = DKD(
+        self.dkd = DKD(  # Not learned Point detection with subpixel refinement (remove border points, nms, refinement)
             radius=conf.nms_radius,
             top_k=-1 if conf.detection_threshold > 0 else conf.max_num_keypoints,
             scores_th=conf.detection_threshold,
@@ -159,21 +161,23 @@ class JointPointLineDetectorDescriptor(BaseModel):
             nn.Conv2d(conf.line_df_decoder_channels, 1, kernel_size=1),
             nn.ReLU(),
         )
-        self.angle_field_branch = nn.Sequential(
-            nn.Conv2d(dim, conf.line_af_decoder_channels, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.BatchNorm2d(conf.line_af_decoder_channels),
-            nn.Conv2d(
-                conf.line_af_decoder_channels,
-                conf.line_af_decoder_channels,
-                kernel_size=3,
-                padding=1,
-            ),
-            nn.ReLU(),
-            nn.BatchNorm2d(conf.line_af_decoder_channels),
-            nn.Conv2d(conf.line_af_decoder_channels, 1, kernel_size=1),
-            nn.Sigmoid(),
-        )
+        # only use line angle-field if configured
+        if self.conf.use_line_anglefield:
+            self.angle_field_branch = nn.Sequential(
+                nn.Conv2d(dim, conf.line_af_decoder_channels, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.BatchNorm2d(conf.line_af_decoder_channels),
+                nn.Conv2d(
+                    conf.line_af_decoder_channels,
+                    conf.line_af_decoder_channels,
+                    kernel_size=3,
+                    padding=1,
+                ),
+                nn.ReLU(),
+                nn.BatchNorm2d(conf.line_af_decoder_channels),
+                nn.Conv2d(conf.line_af_decoder_channels, 1, kernel_size=1),
+                nn.Sigmoid(),
+            )
 
         if conf.timeit:
             self.timings = {
@@ -215,8 +219,11 @@ class JointPointLineDetectorDescriptor(BaseModel):
             logger.warning(f"Load model parameters from checkpoint {conf.checkpoint}")
             chkpt = torch.load(conf.checkpoint, map_location=torch.device("cpu"))
 
-            # remove mlp weights from line detection
+            # remove mlp weights from line detection TODO: remove them when storing instead of filter on load
             chkpt["model"] = {k: v for k, v in chkpt["model"].items() if not ("mlp" in k)}
+            # if angle field is not wanted we filter out its weights if existent so we can also load old checkpoints including this branch
+            if not self.conf.use_line_anglefield:
+                chkpt["model"] = {k: v for k, v in chkpt["model"].items() if not ("angle_field_branch" in k)}
 
             self.load_state_dict(
                 chkpt["model"], strict=True
@@ -233,6 +240,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 self.conf.line_detection.conf,
             )
 
+        # only load deeplsd model if we perform ablation or development
         if self.conf.line_detection.use_deeplsd_kp or self.conf.line_detection.use_deeplsd_df_af:
             deeplsd_conf = {
                 "detect_lines": True,
@@ -324,36 +332,29 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 keypoint_and_junction_score_map.squeeze()
             )  # B x H x W
 
-        # Line AF Decoder
-        if self.conf.timeit:
-            start_line_af = sync_and_time()
-        line_angle_field = (
-            self.angle_field_branch(feature_map) * torch.pi
-        )  # multipy with pi as output is in [0, 1] and we want to get angle
-        if self.conf.timeit:
-            self.timings["line-af"].append(sync_and_time() - start_line_af)
-
-        # Line DF Decoder
+        ## Line DF Decoder ##
         if self.conf.timeit:
             start_line_df = sync_and_time()
         line_distance_field = self.denormalize_df(
-            self.distance_field_branch(feature_map)
-        )  # denormalize as NN outputs normalized version which is focused on line neighborhood
+            self.distance_field_branch(feature_map)) # denormalize as NN outputs normalized version
+        # remove additional dimensions of size 1 if not having batchsize one
+        line_distance_field = line_distance_field[:, 0, :, :] if line_distance_field.shape[0] == 1 else line_distance_field.squeeze()
         if self.conf.timeit:
             self.timings["line-df"].append(sync_and_time() - start_line_df)
-
-        # remove additional dimensions of size 1 if not having batchsize one
-        if line_angle_field.shape[0] == 1:
-            line_angle_field = line_angle_field[:, 0, :, :]
-            line_distance_field = line_distance_field[:, 0, :, :]
-        else:
-            line_angle_field = (
-                line_angle_field.squeeze()
-            )  # squeeze to remove size 1 dim to match groundtruth
-            line_distance_field = line_distance_field.squeeze()
-
-        output["line_anglefield"] = line_angle_field
         output["line_distancefield"] = line_distance_field
+
+        ## Line AF Decoder ##
+        if self.conf.use_line_anglefield:
+            if self.conf.timeit:
+                start_line_af = sync_and_time()
+            line_angle_field = (
+                self.angle_field_branch(feature_map) * torch.pi
+            )  # multipy with pi as output is in [0, 1] and we want angle
+            # remove additional dimensions of size 1 if not having batchsize one
+            line_angle_field = line_angle_field[:, 0, :, :] if line_distance_field.shape[0] == 1 else line_angle_field.squeeze()
+            if self.conf.timeit:
+                self.timings["line-af"].append(sync_and_time() - start_line_af)
+            output["line_anglefield"] = line_angle_field
 
         # Keypoint detection
         if self.conf.timeit:
@@ -401,6 +402,10 @@ class JointPointLineDetectorDescriptor(BaseModel):
             line_descs = []
             line_indices = []
 
+            if output.get("line_anglefield", None) is None:
+                # create dummy so that zipping works
+                line_angle_field = torch.zeros_like(line_distance_field)
+
             for df, af, kp, desc in zip(line_distance_field, line_angle_field, rescaled_kp, keypoint_descriptors):
                 '''
                             "line_detection": {  # by default we use the POLD2 Line Extractor (MLP with Angle Field)
@@ -410,7 +415,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
                                 "use_deeplsd_df_af": False # whether we should use Distance and Angle Field from JPLDD or DeepLSD
                             },
                 '''
-                # UNCOMMENT BELOW FOR USING DEEPLSD STUFF
+                # Only use deeplsd if explicitly activated
                 if self.conf.line_detection.use_deeplsd_kp or self.conf.line_detection.use_deeplsd_df_af:
                     img = (image[0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
                     c_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
@@ -429,12 +434,15 @@ class JointPointLineDetectorDescriptor(BaseModel):
                     deeplsd_lines_torch[:,:,0] = torch.clamp(deeplsd_lines_torch[:,:,0],0,img.shape[1])
                     deeplsd_lines_torch[:,:,1] = torch.clamp(deeplsd_lines_torch[:,:,1],0,img.shape[0])
                     keypoints_deeplsd = torch.cat((deeplsd_lines_torch[:,0],deeplsd_lines_torch[:,1]))
+                # prepare line data for line detection!
                 line_data = {
                      "points": torch.clone(kp) if not self.conf.line_detection.use_deeplsd_kp else keypoints_deeplsd,
                      "distance_map": torch.clone(df) if not self.conf.line_detection.use_deeplsd_df_af else deeplsd_output["df"][0],
-                     "angle_map": torch.clone(af) if not self.conf.line_detection.use_deeplsd_df_af else deeplsd_output["line_level"][0],
                      "descriptors": torch.clone(desc) if not self.conf.line_detection.use_deeplsd_kp else torch.zeros((keypoints_deeplsd.shape[0],128)).cuda(),
                 }
+                if self.conf.use_line_anglefield:
+                    line_data["angle_map"] = torch.clone(af) if not self.conf.line_detection.use_deeplsd_df_af else deeplsd_output["line_level"][0]
+
                 line_pred = self.line_extractor(line_data)
                 lines.append(line_pred["lines"])
                 line_descs.append(line_pred["line_descriptors"])
@@ -491,7 +499,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         If predictions contain padding_mask we consider this on loss calculation
         1. On Keypoint-ScoreMap:        weighted BCE Loss / BCE Loss / Focal Loss
         2. On Keypoint-Descriptors:     L1 loss
-        3. On Line-Angle Field:         use angle loss from deepLSD paper
+        3. On Line-Angle Field:         use angle loss from deepLSD paper (ONLY IF AF ACTIVATED!)
         4. On Line-Distance Field:      use L1 loss on normalized versions of Distance field (as in deepLSD paper)
         """
 
@@ -520,12 +528,13 @@ class JointPointLineDetectorDescriptor(BaseModel):
             ).mean(dim=(1, 2))
             losses["descriptors"] = keypoint_descriptor_loss
 
-        # use angular loss for distance field
-        af_diff = (data["deeplsd_angle_field"] - pred["line_anglefield"])
-        line_af_loss = (torch.minimum(af_diff**2, (torch.pi - af_diff.abs()) ** 2) * padding_mask).mean(
-            dim=(1, 2)
-        )  # pixelwise minimum
-        losses["line_anglefield"] = line_af_loss 
+        # use angular loss for anglefield, if use of af is activated
+        if self.conf.use_line_anglefield:
+            af_diff = (data["deeplsd_angle_field"] - pred["line_anglefield"])
+            line_af_loss = (torch.minimum(af_diff**2, (torch.pi - af_diff.abs()) ** 2) * padding_mask).mean(
+                dim=(1, 2)
+            )  # pixelwise minimum
+            losses["line_anglefield"] = line_af_loss
 
         # use normalized versions for loss
         gt_mask = data["deeplsd_distance_field"] < self.conf.line_neighborhood
@@ -541,9 +550,10 @@ class JointPointLineDetectorDescriptor(BaseModel):
         overall_loss = (
             self.conf.training.loss.loss_weights.keypoint_weight
             * keypoint_scoremap_loss
-            + self.conf.training.loss.loss_weights.line_af_weight * line_af_loss
             + self.conf.training.loss.loss_weights.line_df_weight * line_df_loss
         )
+        if self.conf.use_line_anglefield:
+            overall_loss += (self.conf.training.loss.loss_weights.line_af_weight * line_af_loss)
         if self.conf.training.train_descriptors.do:
             overall_loss += (
                 self.conf.training.loss.loss_weights.descriptor_weight
