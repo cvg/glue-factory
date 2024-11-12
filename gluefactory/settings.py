@@ -1,7 +1,7 @@
 from pathlib import Path
 
 cluster_team_folder = Path(
-    "/local/home/rkreft/shared_team_folder"
+    "/local/home/Point-Line/"
 )  # cluster team folder for 3dv
 root = Path(__file__).parent.parent  # top-level directory
 DATA_PATH = cluster_team_folder / "data"  # datasets and pretrained weights
