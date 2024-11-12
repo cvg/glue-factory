@@ -1,7 +1,7 @@
 model:
   name: two_view_pipeline
   extractor:
-    name: lines.sold2
+    name: lines.lsd
   matcher:
     name: matchers.line_matcher
     line_dist: orth
