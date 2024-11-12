@@ -37,7 +37,7 @@ class MERGE_MODE(enum.Enum):
 class POLD2_MLP(BaseModel):
 
     default_conf = {
-        "name": "models.lines.pold2_mlp",
+        "name": "lines.pold2_mlp",
         "has_angle_field": True,
         "has_distance_field": True, 
         

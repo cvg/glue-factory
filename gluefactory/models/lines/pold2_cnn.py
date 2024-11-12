@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class POLD2_CNN(BaseModel):
 
     default_conf = {
-        "name": "models.lines.pold2_cnn",
+        "name": "lines.pold2_cnn",
         "has_angle_field": True,
         "has_distance_field": True, 
         "num_line_samples": 30,    # number of sampled points between line endpoints
