@@ -25,7 +25,6 @@ from gluefactory.models import get_model
 from gluefactory.models.base_model import BaseModel
 from gluefactory.models.lines.line_refinement import merge_lines_torch
 from gluefactory.models.lines.pold2_mlp import POLD2_MLP
-from gluefactory.models.lines.pold2_cnn import POLD2_CNN
 from gluefactory.settings import DATA_PATH
 
 logger = logging.getLogger(__name__)
