@@ -60,6 +60,7 @@ class RDNIM(BaseDataset, torch.utils.data.Dataset):
         # Extract the images paths and the homographies
         seq_path = [p for p in Path(self._root_dir, 'images').iterdir()]
         self._files = []
+        self.scene_names = []
         for seq in seq_path:
             id = seq.stem
             images_path = [x for x in seq.iterdir() if x.suffix == '.jpg']
@@ -72,6 +73,7 @@ class RDNIM(BaseDataset, torch.utils.data.Dataset):
                     'ref': str(references[id]),
                     'H': H,
                     'timestamp': timestamp})
+                self.scene_names.append(id)
 
     def _read_image(self, idx: int, type: str) -> dict:
         img = load_image(self._files[idx][type], self.conf.grayscale)
@@ -92,6 +94,7 @@ class RDNIM(BaseDataset, torch.utils.data.Dataset):
             'idx': idx,
             'name': self._files[idx]["img"] + self.conf.reference,
             'timestamp': self._files[idx]['timestamp'],
+            'scene': self.scene_names[idx]
         }
 
     def __len__(self):

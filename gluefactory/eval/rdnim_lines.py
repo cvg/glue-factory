@@ -43,8 +43,8 @@ class RDNIMPipeline(EvalPipeline):
             "estimator": "poselib",
             "ransac_th": 1.0,  # -1 runs a bunch of thresholds and selects the best
         },
-        "use_points": True,
-        "use_lines": False,
+        "use_points": False,
+        "use_lines": True,
         "repeatability_th": [1, 3, 5],
         "num_lines_th": [10, 50, 300],
     }
@@ -123,19 +123,19 @@ class RDNIMPipeline(EvalPipeline):
             results_i["scenes"] = data["scene"][0]
 
             if "lines0" in pred:
-                lines0 = pred["lines0"].cpu().numpy()
-                lines1 = pred["lines1"].cpu().numpy()
+                lines0 = pred["lines0"].cpu()
+                lines1 = pred["lines1"].cpu()
                 results_i["repeatability"] = compute_repeatability(
                     lines0,
                     lines1,
-                    pred["line_matches0"].cpu().numpy(),
-                    pred["line_matches1"].cpu().numpy(),
-                    pred["line_matching_scores0"].cpu().numpy(),
+                    pred["line_matches0"].cpu(),
+                    pred["line_matches1"].cpu(),
+                    pred["line_matching_scores0"].cpu(),
                     self.conf.repeatability_th,
                     rep_type="num",
                 )
                 results_i["loc_error"] = compute_loc_error(
-                    pred["line_matching_scores0"].cpu().numpy(), self.conf.num_lines_th
+                    pred["line_matching_scores0"].cpu(), self.conf.num_lines_th
                 )
                 results_i["num_lines"] = (lines0.shape[0] + lines1.shape[0]) / 2
 
