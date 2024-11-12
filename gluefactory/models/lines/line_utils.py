@@ -283,10 +283,11 @@ def clip_line_to_boundary(lines: torch.Tensor) -> tuple[torch.Tensor, torch.Tens
     Returns:
         The clipped coordinates + a mask indicating invalid lines.
     """
-    updated_lines = lines.detach().clone()
+    #updated_lines = lines.detach().clone()
+    updated_lines = lines.copy()
 
     # Detect invalid lines completely outside of the first boundary
-    invalid = torch.all(lines[:, :, 0] < 0, dim=1)
+    invalid = np.all(lines[:, :, 0] < 0, axis=1)
 
     # Clip the lines to the boundary and update the second coordinate
     # First endpoint
@@ -320,7 +321,8 @@ def clip_line_to_boundaries(
     Returns:
         The clipped coordinates + a mask indicating valid lines.
     """
-    new_lines = lines.detach().clone()
+    #new_lines = lines.detach().clone()
+    new_lines = lines.copy()
 
     # Clip the first coordinate to the 0 boundary of img1
     new_lines, invalid_x0 = clip_line_to_boundary(lines)
@@ -339,8 +341,8 @@ def clip_line_to_boundaries(
     new_lines = new_lines[:, :, [1, 0]]
 
     # Merge all the invalid lines and also remove lines that became too short
-    short = torch.linalg.norm(new_lines[:, 1] - new_lines[:, 0], dim=1) < min_len
-    valid = torch.logical_not(invalid_x0 | invalid_xh | invalid_y0 | invalid_yw | short)
+    short = np.linalg.norm(new_lines[:, 1] - new_lines[:, 0], axis=1) < min_len
+    valid = np.logical_not(invalid_x0 | invalid_xh | invalid_y0 | invalid_yw | short)
 
     return new_lines, valid
 
@@ -358,18 +360,18 @@ def get_common_lines(
         Updated lines0 with a valid reprojection in img1 and warped_lines1.
     """
     # First warp lines0 to img1 to detect invalid lines
-    warped_lines0, _ = warp_lines_torch(lines0, H)
+    warped_lines0 = warp_lines(lines0.cpu().numpy(), H.cpu().numpy())
 
     # Clip them to the boundary
     warped_lines0, valid = clip_line_to_boundaries(warped_lines0, img_size)
 
     # Warp all the valid lines back in img0
-    inv_H = torch.linalg.inv(H)
-    new_lines0, _ = warp_lines_torch(warped_lines0[valid], inv_H)
-    warped_lines1, _ = warp_lines_torch(lines1, inv_H)
+    inv_H = np.linalg.inv(H.cpu().numpy())
+    new_lines0 = warp_lines(warped_lines0[valid], inv_H)
+    warped_lines1 = warp_lines(lines1.cpu().numpy(), inv_H)
     warped_lines1, valid = clip_line_to_boundaries(warped_lines1, img_size)
 
-    return new_lines0, warped_lines1[valid]
+    return torch.Tensor(new_lines0,device=lines0.device), torch.Tensor(warped_lines1[valid],device=lines1.device)
 
 
 # Taken from SOLD2

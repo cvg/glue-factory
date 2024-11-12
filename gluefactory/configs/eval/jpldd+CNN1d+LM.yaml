@@ -1,0 +1,94 @@
+model:
+  name: two_view_pipeline
+  extractor:
+    name: joint_point_line_extractor
+    training:
+      do: False
+    max_num_keypoints: 1000  # setting for training for eval: -1
+    timeit: True  # override timeit: False from BaseModel
+    line_df_decoder_channels: 32
+    line_af_decoder_channels: 32
+    line_detection:
+        do: True
+        conf:
+            max_point_size: 1500
+            min_line_length: 60
+            max_line_length: null
+            samples: [8, 16, 32, 64, 128, 256]
+
+            distance_map:
+                max_value: 5
+                threshold: 0.6
+                smooth_threshold: 0.8
+                avg_filter_size: 13
+                avg_filter_padding: 6
+                avg_filter_stride: 1
+                inlier_ratio: 0.8
+                max_accepted_mean_value: 0.5
+
+            angle_map:
+                threshold: 0.15                   # Threshold for deciding if a line angle is correct
+                inlier_ratio: 0.8              # Ratio of inliers
+                max_accepted_mean_value: 0.15     # Maximum difference in AF mean value with line angle
+
+
+            mlp_conf:
+                has_angle_field: True
+                has_distance_field: True 
+                
+                num_line_samples: 30    # number of sampled points between line endpoints
+                brute_force_samples: True  # sample all points between line endpoints
+                image_size: 800         # size of the input image relevant only if brute_force_samples is True
+
+                num_bands: 5            # number of bands to sample along the line
+                band_width: 1           # width of the band to sample along the line
+
+                mlp_hidden_dims: [512, 256, 128, 64, 32] # hidden dimensions of the MLP
+
+                cnn_1d:            # 1D CNN to extract features from the input
+                    mode: shared  # separate CNNs for angle and distance fields disjoint or shared
+                    merge_mode: concat  # how to merge the features from angle and distance fields
+                    kernel_size: 5
+                    stride: 1
+                    padding: same
+                    channels: [16, 8, 4, 1]  # number of channels in each layer          
+
+                pred_threshold: 0.8            
+                weights: /local/home/Point-Line/outputs/training/pold2_mlp_200imgs_test/checkpoint_best.tar
+
+
+            filters:
+                distance_field: True
+                angle_field: True
+                mlp: False
+
+
+            nms: True
+            debug: False
+            debug_dir: DEBUG_DIR
+
+    checkpoint: /local/home/Point-Line/outputs/training/focal_loss_experiments/rk_focal_threshDF_focal/checkpoint_best.tar
+    #"checkpoint": "/local/home/rkreft/shared_team_folder/outputs/training/rk_oxparis_focal_hard_gt/checkpoint_best.tar"
+    #"checkpoint": "/local/home/rkreft/shared_team_folder/outputs/training/rk_pold2gt_oxparis_base_hard_gt/checkpoint_best.tar"
+
+  matcher:
+    name: matchers.line_matcher
+    line_dist: struct
+benchmarks:
+  megadepth1500:
+    data:
+    preprocessing:
+      side: long
+      resize: 1600
+    eval:
+      estimator: opencv
+      ransac_th: 1.0
+  hpatches_lines:
+    eval:
+      estimator: opencv
+      ransac_th: 0.5
+    model:
+      extractor:
+        max_num_keypoints: 512 # overwrite config above
+    use_points: False
+    use_lines: True

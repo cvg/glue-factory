@@ -1,0 +1,76 @@
+data:
+    name: gluefactory.datasets.pold2_mlp_dataset_large
+    data_dir: "pold2_mlp_dataset-DEBUG"
+
+    train_size: 180
+    val_size: 20
+    shuffle_seed: 0
+    reseed: False
+
+    generate:
+        regenerate: False
+
+        num_images: 100
+        negative_type: combined
+        combined_ratio: 0.8
+        negative_neighbour_min_radius: 10
+        negative_neighbour_max_radius: 20
+        num_negative_per_image: -1 
+        num_positive_per_image: -1
+
+        mlp_config:
+            has_angle_field: True
+            has_distance_field: True 
+            
+            brute_force_samples: True  # sample all points between line endpoints
+            image_size: 800         # size of the input image relevant only if brute_force_samples is True
+
+            num_bands: 5 #11            # number of bands to sample along the line
+            band_width: 1           # width of the band to sample along the line
+
+        debug: True
+    
+    batch_size: 64
+    num_workers: 2
+    prefetch_factor: 2
+    seed: 0
+
+model:
+    name: gluefactory.models.lines.pold2_mlp
+    has_angle_field: True
+    has_distance_field: True
+
+    brute_force_samples: True  # sample all points between line endpoints
+    image_size: 800         # size of the input image relevant only if brute_force_samples is True
+
+    num_bands: 5
+    band_width: 1
+
+    mlp_hidden_dims: [512, 256, 128, 64, 32]
+
+    cnn_1d:              # 1D CNN to extract features from the input
+        mode: shared  # separate CNNs for angle and distance fields disjoint or shared
+        merge_mode: add  # how to merge the features from angle and distance fields
+        kernel_size: 5
+        stride: 1
+        padding: same
+        channels: [16, 8, 4, 1]  # number of channels in each layer    
+
+    pred_threshold: 0.9
+    weights: null
+    trainable: True
+
+train:
+    epochs: 100
+    lr: 0.0001
+    lr_schedule: 
+        type: 'ReduceLROnPlateau'
+        on_epoch: True
+        options:
+            patience: 8
+    log_every_iter: 500
+    eval_every_iter: 1500
+    save_every_iter: 3000
+    keep_last_checkpoints: 3
+    seed: 42
+    submodules: []

@@ -4,10 +4,12 @@ model:
         name: lines.deeplsd
         model_conf:
             detect_lines: True
+            line_detection_params:
+                merge: True
 
     matcher:
         name: matchers.line_matcher
-        line_dist: struct
+        line_dist: orth
 benchmarks:
     megadepth1500:
         data:
@@ -17,7 +19,7 @@ benchmarks:
         eval:
             estimator: opencv
             ransac_th: 0.5
-    hpatches:
+    hpatches_lines:
         eval:
             estimator: opencv
             ransac_th: 0.5

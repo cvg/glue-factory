@@ -4,19 +4,54 @@ model:
     name: extractors.joint_point_line_extractor
     training:
       do: False
-    max_num_keypoints: 512
+    max_num_keypoints: 1024
     line_detection:
+      do: True
+      conf:
+        max_point_size: 1500
+        min_line_length: 6
+        max_line_length: Null
+        samples: [24]
+        distance_map:
+            max_value: 5 # this is fixed and only determined by the distance threshold
+            threshold: 0.45 # lower value gets more lines
+            smooth_threshold: 0.8 # higher seems to be less strict (i.e. more lines)
+            avg_filter_size: 13
+            avg_filter_padding: 6
+            avg_filter_stride: 1
+            inlier_ratio: 0.75 # gives artifacts at 0.5 (lower is more lines)
+            max_accepted_mean_value: 0.5 # be very careful with this. Only small increases can caus
+
+              #angle_map:
+              # threshold: 0.1                   # Threshold for deciding if a line angle is correct (inlier)
+              #inlier_ratio: 0.8                # Ratio of inliers
+              #max_accepted_mean_value: 0.4     # Maximum difference in AF mean value with line angle
+
+        mlp_conf:
+          has_angle_field: True
+          has_distance_field: True 
+          num_bands: 3
+          band_width: 1
+          num_line_samples: 30
+          mlp_hidden_dims: [256, 128, 128, 64, 32]
+          pred_threshold: 0.95
+          #weights: /local/home/Point-Line/outputs/training/pold2_cnn_test/checkpoint_best.tar,
+          #weights: /local/home/Point-Line/outputs/training/pold2_mlp_gen+train_Bands-3-1_1kimg_60pimg_NEG-Combined/checkpoint_best.tar,
+          #weights : /local/home/Point-Line/outputs/training/pold2_cnn_hard_negative/checkpoint_best.tar
+          weights : /local/home/Point-Line/outputs/training/oxparis_300lines_deeper_net_300img_deeplsd/checkpoint_best.tar  
+          #weights: /local/home/Point-Line/outputs/training/pold2_mlp_train_1k_150samp/checkpoint_best.tar,
+        nms: False
       merge: False
-    checkpoint: jp/checkpoint_best.tar
+    checkpoint: /local/home/Point-Line/outputs/training/oxparis_800_focal/checkpoint_best.tar
   matcher:
     name: matchers.line_matcher
-    line_dist: struct
+    line_dist: orth
 benchmarks:
   megadepth1500:
     data:
-    preprocessing:
-      side: long
-      resize: 1600
+      preprocessing:
+        side: long
+        resize: 1600
     eval:
       estimator: opencv
       ransac_th: 1.0
