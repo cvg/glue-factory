@@ -39,6 +39,8 @@ class LineExtractor(BaseModel):
         "min_line_length": 6,                  # Minimum line length
         "max_line_length": None,                 # Maximum line length
 
+        "max_lines": 2000,                      # Maximum number of lines to consider
+
         "distance_map": {
             "max_value": 5,                     # Maximum value to which the distance map is capped [Line Neighbourhood in Extractor Config]
             "threshold": 0.5,                   # Threshold for generating binary distance map
@@ -687,6 +689,15 @@ class LineExtractor(BaseModel):
             line_descriptors = torch.stack(
                 [descriptors[filtered_idx[:, 0]], descriptors[filtered_idx[:, 1]]], dim=1
             )
+
+        # sort lines by length and select the top k (max_lines)
+        line_lengths = torch.sum((lines[:, 0] - lines[:, 1]) ** 2, dim=1)
+        _, sorted_idx = torch.sort(line_lengths, descending=True)
+        sorted_idx = sorted_idx[: self.conf.max_lines]
+
+        lines = lines[sorted_idx]
+        line_descriptors = line_descriptors[sorted_idx]
+        filtered_idx = filtered_idx[sorted_idx]
 
         return {
             "lines": lines,
