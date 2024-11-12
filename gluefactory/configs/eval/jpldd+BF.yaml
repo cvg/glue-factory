@@ -29,7 +29,7 @@ model:
 
             brute_force_df:
                 use: true                       # Use brute force sampling for distance field in the second stage
-                image_size: 800                  # Image size for which the coefficients are generated
+                image_size: 1200                  # Image size for which the coefficients are generated
                 inlier_ratio: 0.85                # Ratio of inliers
                 max_accepted_mean_value: 0.3     # Maximum accepted DF mean value along the line
 
@@ -97,6 +97,10 @@ benchmarks:
       estimator: opencv
       ransac_th: 1.0
   hpatches_lines:
+    data:
+      preprocessing:
+        resize: 800
+        side: short
     eval:
       estimator: opencv
       ransac_th: 0.5
