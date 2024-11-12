@@ -171,7 +171,7 @@ class DeepLSD(BaseModel):
 
         # Merge close-by lines together
         if merge:
-            lines = merge_lines(lines, thresh=4, overlap_thresh=0).astype(np.float32)
+            lines = merge_lines(torch.from_numpy(lines), thresh=4, overlap_thresh=0)
 
         return lines
 
