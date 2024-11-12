@@ -26,6 +26,7 @@ class LineMatcher(BaseModel):
         result = {}
         lines0 = data["lines0"][0][:, :, [1, 0]].cpu()
         lines1 = data["lines1"][0][:, :, [1, 0]].cpu()
+        print(len(lines0))
         lines0 = lines0[
             torch.linalg.norm(lines0[:, 1] - lines0[:, 0], axis=1) > self.conf.min_length
         ]
