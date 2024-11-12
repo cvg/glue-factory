@@ -30,8 +30,8 @@ class SOLD2(BaseModel):
         for i in range(len(segs)):
             cur = segs[i]
             lines.append(cur[:, :, [1, 0]])
-
-        return {"lines": lines}
+        
+        return {"lines": torch.stack(lines,dim=0)}
 
     def loss(self, pred, data):
         raise NotImplementedError

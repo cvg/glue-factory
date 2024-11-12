@@ -1,0 +1,82 @@
+data:
+    name: gluefactory.datasets.pold2_mlp_dataset
+    data_dir: "pold2_cnn_dataset_HARD_NEGATIVE"
+
+    train_size: 85000
+    val_size: 15000
+    shuffle_seed: 0
+    reseed: False
+
+    generate:
+        regenerate: True
+        use_df: True
+        use_af: True
+        num_images: 300
+        negative_type: combined
+        combined_ratio: 0.8
+        negative_neighbour_min_radius: 5
+        negative_neighbour_max_radius: 20
+        num_negative_per_image: 300  
+        num_positive_per_image: 300
+        num_line_samples: 30
+        num_bands: 3
+        band_width: 1
+
+        deeplsd_config: 
+            detect_lines: True
+            line_detection_params:
+                merge: False
+                filtering: True
+                grad_thresh: 3
+                grad_nfa: True
+            weights: "DeepLSD/weights/deeplsd_md.tar"
+        
+        jpldd_config:
+            name: joint_point_line_extractor
+            max_num_keypoints: 500  # setting for training for eval: -1
+            timeit: True  # override timeit: False from BaseModel
+            line_df_decoder_channels: 32
+            line_af_decoder_channels: 32
+            line_detection:
+                    do: False
+                
+            checkpoint: /local/home/Point-Line/outputs/training/oxparis_800_focal/checkpoint_best.tar
+
+        glob: "revisitop1m_POLD2/jpg/**/base_image.jpg"
+        #glob: "wireframe-pointline/*.pkl"
+
+
+        debug: False
+    
+    batch_size: 32
+    num_workers: 1
+    prefetch_factor: 2
+    seed: 0
+
+model:
+    name: gluefactory.models.lines.pold2_cnn
+    has_angle_field: True
+    has_distance_field: True
+    num_line_samples: 30
+    num_bands: 3
+    band_width: 1
+    mlp_hidden_dims: [256, 128, 128, 64, 32]
+    pred_threshold: 0.9
+    weights: null
+
+train:
+    epochs: 100
+    lr: 0.001
+    # lr_schedule: 
+    #     type: 'ReduceLROnPlateau'
+    #     on_epoch: True
+    #     options:
+    #         patience: 3
+    patience: 10
+    log_every_iter: 500
+    eval_every_iter: 1500
+    save_every_iter: 3000
+    keep_last_checkpoints: 3
+    seed: 0
+    submodules: []
+    #best_key: f1_inv

@@ -1,0 +1,30 @@
+model:
+    name: two_view_pipeline
+    extractor:
+        name: lines.elsed
+    matcher:
+        name: matchers.line_matcher
+        line_dist: orth
+        ELSED: True
+benchmarks:
+    megadepth1500:
+        data:
+            preprocessing:
+            side: long
+            resize: 1600
+        eval:
+            estimator: poselib
+            ransac_th: -1
+    hpatches_lines:
+        data:
+          preprocessing:
+            side: short
+            resize: 480
+        eval:
+            estimator: poselib
+            ransac_th: -1
+        model:
+            extractor:
+                max_num_keypoints: 512  # overwrite config above
+        use_points: False
+        use_lines: True
