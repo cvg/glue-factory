@@ -4,7 +4,7 @@ model:
     name: joint_point_line_extractor
     training:
       do: False
-    max_num_keypoints: 1024  # setting for training for eval: -1
+    max_num_keypoints: 1500  # setting for training for eval: -1
     timeit: True  # override timeit: False from BaseModel
     # use_deeplsd_endpoints: true
     line_df_decoder_channels: 32
@@ -27,13 +27,14 @@ model:
                 avg_filter_padding: 6
                 avg_filter_stride: 1
                 inlier_ratio: 0.7
-                max_accepted_mean_value: 0.5
+                max_accepted_mean_value: 0.4
 
             brute_force_df:
                 use: true                       # Use brute force sampling for distance field in the second stage
-                image_size: 1200                  # Image size for which the coefficients are generated
-                inlier_ratio: 0.85                # Ratio of inliers
-                max_accepted_mean_value: 0.3     # Maximum accepted DF mean value along the line
+                image_size: 800                  # Image size for which the coefficients are generated
+                inlier_ratio: 0.95                # Ratio of inliers
+                max_accepted_mean_value: null #0.4     # Maximum accepted DF mean value along the line
+                binary_threshold: 0.5            # Threshold for binarizing the distance field
 
             angle_map:
                 threshold: 0.1                   # Threshold for deciding if a line angle is correct
@@ -102,7 +103,7 @@ benchmarks:
     data:
       preprocessing:
         resize: 800
-        side: short
+        side: long
     eval:
       estimator: opencv
       ransac_th: 0.5
