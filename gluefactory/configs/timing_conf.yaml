@@ -3,6 +3,9 @@ model:
     aliked_model_name: "aliked-n16"
     max_num_keypoints: 2048  # setting for training, for eval: -1
     detection_threshold: 0.0
+    line_df_decoder_channels: 32  # adapt to your checkpoint!!
+    line_af_decoder_channels: 32
+    use_line_anglefield: True  # ~ 7ms difference
     nms_radius: 3
     training:
       do: False

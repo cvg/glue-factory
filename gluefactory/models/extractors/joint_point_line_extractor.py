@@ -176,6 +176,8 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 nn.Conv2d(conf.line_af_decoder_channels, 1, kernel_size=1),
                 nn.Sigmoid(),
             )
+        else:
+            logger.warning("-- USE OF ANGLE FIELD IS DEACTIVATED! --")
 
         if conf.timeit:
             self.timings = {
@@ -336,7 +338,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         line_distance_field = self.denormalize_df(
             self.distance_field_branch(feature_map)) # denormalize as NN outputs normalized version
         # remove additional dimensions of size 1 if not having batchsize one
-        line_distance_field = line_distance_field[:, 0, :, :] if line_distance_field.shape[0] == 1 else line_distance_field.squeeze()
+        line_distance_field = line_distance_field.squeeze(1) if line_distance_field.shape[0] == 1 else line_distance_field.squeeze()
         if self.conf.timeit:
             self.timings["line-df"].append(sync_and_time() - start_line_df)
         output["line_distancefield"] = line_distance_field
@@ -349,7 +351,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 self.angle_field_branch(feature_map) * torch.pi
             )  # multipy with pi as output is in [0, 1] and we want angle
             # remove additional dimensions of size 1 if not having batchsize one
-            line_angle_field = line_angle_field[:, 0, :, :] if line_distance_field.shape[0] == 1 else line_angle_field.squeeze()
+            line_angle_field = line_angle_field.squeeze(1) if line_distance_field.shape[0] == 1 else line_angle_field.squeeze()
             if self.conf.timeit:
                 self.timings["line-af"].append(sync_and_time() - start_line_af)
             output["line_anglefield"] = line_angle_field
@@ -437,6 +439,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
                      "points": torch.clone(kp) if not self.conf.line_detection.use_deeplsd_kp else keypoints_deeplsd,
                      "distance_map": torch.clone(df) if not self.conf.line_detection.use_deeplsd_df_af else deeplsd_output["df"][0],
                      "descriptors": torch.clone(desc) if not self.conf.line_detection.use_deeplsd_kp else torch.zeros((keypoints_deeplsd.shape[0],128)).cuda(),
+                     "angle_map": None
                 }
                 if self.conf.use_line_anglefield:
                     line_data["angle_map"] = torch.clone(af) if not self.conf.line_detection.use_deeplsd_df_af else deeplsd_output["line_level"][0]

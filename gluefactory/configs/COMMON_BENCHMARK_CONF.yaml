@@ -7,6 +7,9 @@ model:  # TODO: REPLACE MODEL WITH YOU MODEL CFG YOU WANT TO BENCHMARK
     detection_threshold: 0.0 # set to <= 0 for training, for eval without fixed num of kp, do set to a good value
     nms_radius: 3
     subpixel_refinement: True
+    line_df_decoder_channels: 64  # adapt to your checkpoint!!
+    line_af_decoder_channels: 64
+    use_line_anglefield: True
     training:
       do: False
     checkpoint: /local/home/Point-Line/outputs/training/oxparis_800_focal/checkpoint_best.tar  # if given load model weights from this checkpoint
@@ -68,8 +71,8 @@ benchmarks:
   hpatches:
     data:
       preprocessing:
-        side: short
-        resize: 480
+        side: long
+        resize: 800
     eval:
       estimator: poselib
       ransac_th: -1
