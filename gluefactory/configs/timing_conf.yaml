@@ -1,0 +1,61 @@
+model:
+    name: extractors.joint_point_line_extractor
+    aliked_model_name: "aliked-n16"
+    max_num_keypoints: 2048  # setting for training, for eval: -1
+    detection_threshold: 0.0
+    nms_radius: 3
+    training:
+      do: False
+    checkpoint: /local/home/Point-Line/outputs/training/oxparis_800_focal/checkpoint_best.tar
+    timeit: True  # setting it to True -> gives 4-5 fps less performance
+    line_detection:
+      do: True
+      conf:
+        max_point_size: 1500
+        min_line_length: 6
+        max_line_length: Null
+        samples: [24] # only changes memory not comp time
+        distance_map:
+            max_value: 5 # this is fixed and only determined by the distance threshold
+            threshold: 0.45 # lower value gets more lines
+            smooth_threshold: 0.8 # higher seems to be less strict (i.e. more lines)
+            avg_filter_size: 13
+            avg_filter_padding: 6
+            avg_filter_stride: 1
+            inlier_ratio: 0.75 # gives artifacts at 0.5 (lower is more lines)
+            max_accepted_mean_value: 0.4 # be very careful with this. Only small increases can caus
+
+        angle_map:
+          threshold: 0.1                   # Threshold for deciding if a line angle is correct (inlier)
+          inlier_ratio: 0.8                # Ratio of inliers
+          max_accepted_mean_value: 0.4     # Maximum difference in AF mean value with line angle
+
+        mlp_conf:
+          name: gluefactory.models.lines.pold2_cnn # can either use pold2_cnn or pold2_mlp class here
+          has_angle_field: True
+          has_distance_field: True 
+          num_bands: 3
+          band_width: 1
+          num_line_samples: 30
+          mlp_hidden_dims: [256, 128, 128, 64, 32]
+          pred_threshold: 0.95
+          weights : /local/home/Point-Line/outputs/training/oxparis_300lines_deeper_net_300img_deeplsd/checkpoint_best.tar 
+        nms: False  # immense difference (~18-19 FPS)
+      merge: False
+data:
+    name: gluefactory.datasets.oxford_paris_mini_1view_jpldd
+    data_dir: "revisitop1m_POLD2/jpg"
+    split: 'val'  # split must be selected 
+    grayscale: False
+    num_workers: 2  
+    train_batch_size: 1  
+    val_batch_size: 1
+    prefetch_factor: 2
+    reshape: 800  
+    square_pad: False 
+    multiscale_learning:
+        do: False  
+    load_features:
+        do: False
+    val_size: 500
+    train_size: 11500

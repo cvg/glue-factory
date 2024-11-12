@@ -1,0 +1,97 @@
+data:
+    name: gluefactory.datasets.pold2_mlp_dataset
+    data_dir: "pold2_cnn1d_dataset_HARD_NEGATIVE"
+
+    train_size: 110000
+    val_size: 30000
+    shuffle_seed: 0
+    reseed: False
+
+    generate:
+        regenerate: False
+
+        num_images: 1000
+        negative_type: combined
+        combined_ratio: 0.8
+        negative_neighbour_min_radius: 10
+        negative_neighbour_max_radius: 20
+        num_negative_per_image: 70  
+        num_positive_per_image: 70
+
+        mlp_config:
+            has_angle_field: True
+            has_distance_field: True 
+            
+            brute_force_samples: True  # sample all points between line endpoints
+            image_size: 800         # size of the input image relevant only if brute_force_samples is True
+
+            num_bands: 5            # number of bands to sample along the line
+            band_width: 1           # width of the band to sample along the line
+
+        deeplsd_config: 
+            detect_lines: True
+            line_detection_params:
+                merge: False
+                filtering: True
+                grad_thresh: 3
+                grad_nfa: True
+            weights: "DeepLSD/weights/deeplsd_md.tar"
+        
+        jpldd_config:
+            name: joint_point_line_extractor
+            max_num_keypoints: 500  # setting for training for eval: -1
+            timeit: True  # override timeit: False from BaseModel
+            line_df_decoder_channels: 32
+            line_af_decoder_channels: 32
+            line_detection:
+                    do: False
+                
+            checkpoint: /local/home/Point-Line/outputs/training/focal_loss_experiments/rk_focal_threshDF_focal/checkpoint_best.tar
+
+        glob: "revisitop1m_POLD2/jpg/**/base_image.jpg"
+
+        debug: False
+    
+    batch_size: 32
+    num_workers: 1
+    prefetch_factor: 2
+    seed: 0
+
+model:
+    name: gluefactory.models.lines.pold2_mlp
+    has_angle_field: True
+    has_distance_field: True
+
+    brute_force_samples: True  # sample all points between line endpoints
+    image_size: 800         # size of the input image relevant only if brute_force_samples is True
+
+    num_bands: 5
+    band_width: 1
+
+    mlp_hidden_dims: [512, 256, 128, 64, 32]
+
+    cnn_1d:              # 1D CNN to extract features from the input
+        mode: shared  # separate CNNs for angle and distance fields disjoint or shared
+        merge_mode: add  # how to merge the features from angle and distance fields
+        kernel_size: 11
+        stride: 1
+        padding: same
+        channels: [16, 8, 4, 1]  # number of channels in each layer    
+
+    pred_threshold: 0.9
+    weights: null
+
+train:
+    epochs: 100
+    lr: 0.0001
+    lr_schedule: 
+        type: 'ReduceLROnPlateau'
+        on_epoch: True
+        options:
+            patience: 8
+    log_every_iter: 500
+    eval_every_iter: 1500
+    save_every_iter: 3000
+    keep_last_checkpoints: 3
+    seed: 4200
+    submodules: []

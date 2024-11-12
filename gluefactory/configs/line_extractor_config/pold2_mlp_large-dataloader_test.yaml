@@ -1,0 +1,38 @@
+data_dir: pold2_mlp_dataset-DEBUG
+
+# splits
+train_size: 100
+val_size: 10
+shuffle_seed: 0  # or None to skip
+reseed: False
+
+# data generation (None to skip)
+generate:
+    regenerate: False
+    
+    num_images: 200
+
+    fields_and_lines_path: DeepLSD-Outputs-OXPA/DeepLSD-Outputs-OXPA.h5
+    h5_file_name: null   # Name the file based on the config - NumBands, ImageSize, NumLineSamples, BandWidth
+    deeplsd_line_neighborhood: 5
+
+
+    negative_type: combined
+    combined_ratio: 0.8
+    negative_neighbour_min_radius: 5
+    negative_neighbour_max_radius: 10
+    num_negative_per_image: -1
+    num_positive_per_image: -1
+
+    mlp_config:
+        has_angle_field: True
+        has_distance_field: True 
+        
+        num_line_samples: 30    # number of sampled points between line endpoints
+        brute_force_samples: True  # sample all points between line endpoints
+        image_size: 800         # size of the input image relevant only if brute_force_samples is True
+
+        num_bands: 5            # number of bands to sample along the line
+        band_width: 1           # width of the band to sample along the line
+
+    debug: True

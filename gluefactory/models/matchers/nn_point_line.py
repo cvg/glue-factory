@@ -276,8 +276,8 @@ class NearestNeighborPointLineMatcher(BaseModel):
                     matches[:, 0], matches[:, 1]
                 ]
             else:
-                print(f'Lines0 Detected Issue:{data["lines0"][batch_idx].shape}')
-                print(f'Lines1 Detected Issue:{data["lines1"][batch_idx].shape}')
+                print(f'Zero Lines0 Detected Issue:{data["lines0"][batch_idx].shape}')
+                print(f'Zero Lines1 Detected Issue:{data["lines1"][batch_idx].shape}')
 
             # TODO Batching makes no sense, always 1
             # line_matches0.append(torch.from_numpy(lm0).to(data['descriptors0'][batch_idx].device))
