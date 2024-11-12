@@ -1,0 +1,33 @@
+model:
+    name: two_view_pipeline
+    extractor:
+        name: extractors.xfeat
+        max_num_keypoints: 4096
+        detection_threshold: 0.05
+        pretrained: True
+        model_name: xfeat
+        get_sparse_outputs: True
+        force_num_keypoints: True
+        preprocess: True
+    matcher:
+        name: matchers.nearest_neighbor_matcher
+benchmarks:
+    megadepth1500:
+        data:
+            preprocessing:
+            side: long
+            resize: 1600
+        eval:
+            estimator: poselib
+            ransac_th: -1
+    hpatches:
+        data:
+            preprocessing:
+                side: long
+                resize: 800
+        eval:
+            estimator: poselib
+            ransac_th: -1
+        model:
+            extractor:
+                max_num_keypoints: 1024  # overwrite config above
