@@ -1,5 +1,6 @@
 import pyelsed
 import torch
+import numpy as np
 
 
 from ..base_model import BaseModel
@@ -21,22 +22,26 @@ class ELSED(BaseModel):
 
     def _forward(self, data):
         image = data["image"]
+        device = image.device
         assert image.ndim == 4  # assert batched input
         assert image.shape[0] == 1  # assert batches of 1
 
         if image.shape[1] == 3:
             # Convert to grayscale
-            scale = image.new_tensor([0.299, 0.587, 0.114]).view(1, 3, 1, 1)
-            image = (image * scale).sum(1, keepdim=True)
-        image = image.squeeze(1).squeeze(0)
+            rgb = (image[0]*255).to(torch.int32)
+            r, g, b = rgb[0,:,:], rgb[1,:,:], rgb[2,:,:]
+            image = 0.2989 * r + 0.5870 * g + 0.1140 * b
         
         # Forward pass
         if isinstance(image, torch.Tensor):
-            image = image.detach().cpu().numpy()
-        segs, scores = pyelsed.detect(image)
+            image = image.detach().cpu().numpy().astype(np.uint8)
+        segs, scores = pyelsed.detect(img = image)
 
-        lines = segs.reshape(-1,2,2)  # N x 4 -> N x 2 x 2
-
+        lines = torch.tensor(segs.reshape(-1,2,2)).to(device)  # N x 4 -> N x 2 x 2
+        scores = torch.tensor(scores).to(device)
+        
+        # add artificial batch dimension to lines again
+        lines = lines.unsqueeze(0)
         return {"lines": lines, "lines_scores": scores}
 
     def loss(self, pred, data):

@@ -13,16 +13,16 @@ benchmarks:
             side: long
             resize: 1600
         eval:
-            estimator: opencv
-            ransac_th: 0.5
+            estimator: poselib
+            ransac_th: -1
     hpatches_lines:
         data:
           preprocessing:
             side: short
             resize: 480
         eval:
-            estimator: opencv
-            ransac_th: 0.5
+            estimator: poselib
+            ransac_th: -1
         model:
             extractor:
                 max_num_keypoints: 512  # overwrite config above
