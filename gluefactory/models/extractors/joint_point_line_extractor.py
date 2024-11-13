@@ -241,7 +241,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             )
 
         # only load deeplsd model if we perform ablation or development
-        if self.conf.line_detection.use_deeplsd_kp or self.conf.line_detection.use_deeplsd_df_af:
+        if self.conf.line_detection.do and (self.conf.line_detection.use_deeplsd_kp or self.conf.line_detection.use_deeplsd_df_af):
             deeplsd_conf = {
                 "detect_lines": True,
                 "line_detection_params": {
