@@ -18,11 +18,14 @@ benchmarks:
     megadepth1500:
         data:
             preprocessing:
-            side: long
-            resize: 1600
+                side: long
+                resize: 1600
         eval:
             estimator: poselib
             ransac_th: -1
+        model:
+            extractor:
+                max_num_keypoints: 2048
     hpatches:
         data:
             preprocessing:
