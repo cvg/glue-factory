@@ -1,14 +1,12 @@
 import logging
-import os
 import pickle
 import random
 import shutil
-import tarfile
 from pathlib import Path
+import zipfile
 
 import numpy as np
 import torch
-from tqdm import tqdm
 
 from gluefactory.datasets import BaseDataset
 from gluefactory.settings import DATA_PATH, root
@@ -17,20 +15,7 @@ from gluefactory.utils.image import ImagePreprocessor, load_image, read_image
 logger = logging.getLogger(__name__)
 
 
-def get_relative_transform(pose0, pose1):
-    R0 = pose0[..., :3, :3]  # Bx3x3
-    t0 = pose0[..., :3, [3]]  # Bx3x1
-
-    R1 = pose1[..., :3, :3]  # Bx3x3
-    t1 = pose1[..., :3, [3]]  # Bx3x1
-
-    R_0to1 = R1.transpose(-1, -2) @ R0  # Bx3x3
-    t_0to1 = R1.transpose(-1, -2) @ (t0 - t1)  # Bx3x1
-    T_0to1 = np.concatenate([R_0to1, t_0to1], axis=-1)  # Bx3x4
-
-    return T_0to1
-
-
+DOWNLOAD_URL = "https://polybox.ethz.ch/index.php/s/N3J7SfnE6NEt8Nu"
 
 class Scannet(BaseDataset):
     """
@@ -46,7 +31,7 @@ class Scannet(BaseDataset):
         "val_batch_size": 1,
         "all_batch_size": 1,
         "device": None,  # specify device to move image data to. if None is given, just read, skip move to device
-        "split": "train",  # train, val, test
+        "split": "train",  # train, val
         "seed": 0,
         "num_workers": 0,  # number of workers used by the Dataloader
         "prefetch_factor": None,
@@ -82,106 +67,72 @@ class Scannet(BaseDataset):
                 "enforce_threshold": 5.0,  # Enforce values in distance field to be no greater than this value
             },
         },
-        "img_list": "gluefactory/datasets/scannet_images.txt",
+        "train_scene_list": "gluefactory/datasets/scannetv2_train.txt",
+        "val_scene_list": "gluefactory/datasets/scannetv2_val.txt",
         # img list path from repo root -> use checked in file list, it is similar to pold2 file
         "rand_shuffle_seed": None,  # seed to randomly shuffle before split in train and val
-        "val_size": 500,  # size of validation set given
-        "train_size": 11500,
+        "val_size": 500,  # number of val images
+        "train_size": 11500,  # number of train images
     }
 
     def _init(self, conf):
-        self.pairs = self.read_gt()
         # Auto-download the dataset if not existing
         if not (DATA_PATH / conf.data_dir).exists():
             self.download_scannet()
         # load image names
-        images = self.img_list
-        if self.conf.rand_shuffle_seed is not None:
-            np.random.RandomState(conf.shuffle_seed).shuffle(images)
-        train_images = images[: conf.train_size]
-        val_images = images[conf.train_size : conf.train_size + conf.val_size]
+        with open(root / self.conf.train_scene_list, "r") as f:
+            self.train_scene_list = [file_name.strip("\n") for file_name in f.readlines()]
+        with open(root / self.conf.val_scene_list, "r") as f:
+            self.val_scene_list = [file_name.strip("\n") for file_name in f.readlines()]
+        # sample images
+        self.sample_images()
+
         self.images = {
-            "train": train_images,
-            "val": val_images,
-            "test": images,
-            "all": images,
+            "train": self.train_images,
+            "val": self.val_images,
+            "all": self.train_images + self.val_images,
         }
-        print(f"DATASET OVERALL(NO-SPLIT) IMAGES: {len(images)}")
+        print(f"DATASET OVERALL(NO-SPLIT) IMAGES: {len(self.images["all"])}")
 
     def download_scannet(self):
         logger.info("Downloading the Scannet dataset...")
+        data_dir = DATA_PATH / self.conf.data_dir
+        tmp_dir = data_dir.parent / "scannet_tmp"
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
+        tmp_dir.mkdir(exist_ok=True, parents=True)
+        zip_name = "scannet_subset.zip"
+        zip_path = tmp_dir / zip_name
+        torch.hub.download_url_to_file(DOWNLOAD_URL, zip_path)
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            zip_ref.extractall(tmp_dir)
+        shutil.move(tmp_dir / zip_name.split(".")[0], str(data_dir))
 
-
-    def read_gt(self):
-        pairs = []
-        gt_poses = np.load(self.config["gt_path"])
-        names = gt_poses["name"]
-
-        for i in range(len(names)):
-            scene_id = names[i, 0]
-            scene_idx = names[i, 1]
-            scene = f"scene{scene_id:04d}_{scene_idx:02d}"
-
-            image0 = str(int(names[i, 2]))
-            image1 = str(int(names[i, 3]))
-
-            K0 = np.loadtxt(
-                os.path.join(
-                    self.config["scannet_path"],
-                    "scannet_test_1500",
-                    scene,
-                    "intrinsic/intrinsic_color.txt",
-                )
-            )
-            K1 = K0
-
-            pose_0 = np.loadtxt(
-                os.path.join(
-                    self.config["scannet_path"],
-                    "scannet_test_1500",
-                    scene,
-                    "pose",
-                    image0 + ".txt",
-                )
-            )
-            pose_1 = np.loadtxt(
-                os.path.join(
-                    self.config["scannet_path"],
-                    "scannet_test_1500",
-                    scene,
-                    "pose",
-                    image1 + ".txt",
-                )
-            )
-            T_0to1 = get_relative_transform(pose_0, pose_1)
-
-            pairs.append(
-                {
-                    "image0": os.path.join(
-                        self.config["scannet_path"],
-                        "scannet_test_1500",
-                        scene,
-                        "color",
-                        image0 + ".jpg",
-                    ),
-                    "image1": os.path.join(
-                        self.config["scannet_path"],
-                        "scannet_test_1500",
-                        scene,
-                        "color",
-                        image1 + ".jpg",
-                    ),
-                    "K0": K0,
-                    "K1": K1,
-                    "T_0to1": T_0to1,
-                }
-            )
-
-        return pairs
-
+    def sample_images(self):
+        """
+        Read train and val scenes from respective files and sample names.
+        """
+        # TODO add per scene sampling according to number wanted if not doing it upfront
+        self.train_images = []
+        self.val_images = []
+        for s in self.train_scene_list:
+            scene_folder = DATA_PATH / self.conf.data_dir / s / "color"
+            self.train_images += list(Path(scene_folder).glob("**/*.jpg"))
+        for s in self.val_scene_list:
+            scene_folder = DATA_PATH / self.conf.data_dir / s / "color"
+            self.val_images += list(Path(scene_folder).glob("**/*.jpg"))
+        # randomize if wanted
+        if self.conf.rand_shuffle_seed is not None:
+            np.random.RandomState(self.conf.shuffle_seed).shuffle(self.train_images)
+            np.random.RandomState(self.conf.shuffle_seed).shuffle(self.val_images)
+        # select subset
+        if self.conf.train_size is not None:
+            self.train_images = self.train_images[:self.conf.train_size]
+        if self.conf.val_size is not None:
+            self.val_images = self.val_images[:self.conf.val_size]
 
     def get_dataset(self, split):
-        assert split in ["train", "val", "test", "all"]
+        assert split in ["train", "val", "all"]
         return _Dataset(self.conf, self.images[split], split)
 
 
@@ -277,11 +228,11 @@ class _Dataset(torch.utils.data.Dataset):
             }
         )
 
-    def _read_image(self, img_folder_path, enforce_batch_dim=False):
+    def _read_image(self, idx, enforce_batch_dim=False):
         """
         Read image as tensor and puts it on device
         """
-        img_path = img_folder_path / "base_image.jpg"
+        img_path = self.image_sub_paths[idx]
         img = load_image(img_path, grayscale=self.grayscale)
         if enforce_batch_dim:
             if img.ndim < 4:
@@ -425,13 +376,11 @@ class _Dataset(torch.utils.data.Dataset):
         """
         Dataloader is usually just returning one datapoint by design. Batching is done in Loader normally.
         """
-        full_artificial_img_path = self.img_dir / self.image_sub_paths[idx]
-        folder_path = full_artificial_img_path.parent / full_artificial_img_path.stem
-        img = self._read_image(folder_path)
+        img = self._read_image(idx)
         orig_shape = img.shape[-1], img.shape[-2]
         size_to_reshape_to = self.select_resize_shape(orig_shape)
         data = {
-            "name": str(folder_path / "base_image.jpg"),
+            "name": self.image_sub_paths[idx],
         }  # keys: 'name', 'scales', 'image_size', 'transform', 'original_image_size', 'image'
         if size_to_reshape_to == orig_shape:
             data["image"] = img
