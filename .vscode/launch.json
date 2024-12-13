@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Run GT Generator",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/gluefactory/ground_truth_generation/KP_extractor.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--source_dir", "/media/egoedeke/a9a96a4d-b323-489e-a833-13f4ade040c8/glue-factory/outputs/results/superpoint_gt",
+                "--output_dir", "/media/egoedeke/a9a96a4d-b323-489e-a833-13f4ade040c8/glue-factory/notebooks/data",
+                "--file_format", "hdf5",
+                "--output_format", "numpy",
+                "--threshold_type", "nms",
+                "--threshold_value", "0.015",
+                "--max_keypoints", "1000"
+            ]
+        }
+    ]
+}
