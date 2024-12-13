@@ -77,13 +77,13 @@ def get_dataset_and_loader(
     config = {
         "name": dataset,  # name of dataset class in gluefactory > datasets
         "grayscale": True,  # commented out things -> dataset must also have these keys but has not
-        "preprocessing": {"resize": [800, 800]},
+        # "preprocessing": {"resize": [800, 800]},
         "train_batch_size": 1,  # prefix must match split mode
         "val_batch_size": 1,  # prefix must match split mode
         "all_batch_size": 1,
         "num_workers": num_workers,
         "split": (
-            "all" if dataset == "minidepth" else "train"
+            "train" if dataset == "minidepth" else "train"
         ),  # if implemented by dataset class gives different splits
     }
     omega_conf = OmegaConf.create(config)
