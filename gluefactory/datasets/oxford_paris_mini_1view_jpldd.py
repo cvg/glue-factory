@@ -95,6 +95,15 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         }
         print(f"DATASET OVERALL(NO-SPLIT) IMAGES: {len(images)}")
 
+        augmentation_map = {
+           "dark": augmentations.DarkAugmentation,
+            "lg": augmentations.LGAugmentation,
+            "identity": augmentations.IdentityAugmentation
+        }
+
+        self.augmentation = augmentation_map[self.conf.load_features.augment.type]()
+
+
     def download_oxford_paris_mini(self):
         logger.info("Downloading the OxfordParis Mini dataset...")
         data_dir = DATA_PATH / self.conf.data_dir
@@ -133,12 +142,12 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
 
     def get_dataset(self, split):
         assert split in ["train", "val", "test", "all"]
-        return _Dataset(self.conf, self.images[split], split)
+        return _Dataset(self.conf, self.images[split], split, self.augmentation)
 
 
 
 class _Dataset(torch.utils.data.Dataset):
-    def __init__(self, conf, image_sub_paths: list[str], split):
+    def __init__(self, conf, image_sub_paths: list[str], split, augmentation):
         super().__init__()
         self.split = split
         self.conf = conf
@@ -167,6 +176,7 @@ class _Dataset(torch.utils.data.Dataset):
 
         self.img_dir = DATA_PATH / conf.data_dir
         self.dlsd_kp_gt_folder = self.img_dir.parent / "deeplsd_kp_gt"
+        self.dlsd_line_gt_folder = self.img_dir.parent / "deeplsd_line_gt"
         # Extract image paths
         self.image_sub_paths = image_sub_paths  # [Path(i) for i in image_sub_paths]
 
@@ -342,6 +352,11 @@ class _Dataset(torch.utils.data.Dataset):
         full_artificial_img_path = self.img_dir / self.image_sub_paths[idx]
         folder_path = full_artificial_img_path.parent / full_artificial_img_path.stem
         img = self._read_image(folder_path)
+        try:
+            img = img.numpy().transpose(1, 2, 0)
+            img = self.augmentation(image=img, return_tensor=True)
+        except Exception as e:
+            print(f"Error in augmentation: {e}")
         orig_shape = img.shape[-1], img.shape[-2]
         size_to_reshape_to = self.select_resize_shape(orig_shape)
         data = {
