@@ -64,6 +64,9 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
                 "enforce_threshold": 5.0,  # Enforce values in distance field to be no greater than this value
             },
+            "augment": {
+                "type": "dark", # choose "identity" for no augmentation; other options are "lg"
+            }
         },
         "img_list": "gluefactory/datasets/oxford_paris_images.txt",
         # img list path from repo root -> use checked in file list, it is similar to pold2 file
