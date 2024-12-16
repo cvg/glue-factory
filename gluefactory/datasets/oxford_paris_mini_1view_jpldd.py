@@ -151,6 +151,7 @@ class _Dataset(torch.utils.data.Dataset):
         super().__init__()
         self.split = split
         self.conf = conf
+        self.augmentation = augmentation
         self.grayscale = bool(conf.grayscale)
         self.max_num_gt_kp = conf.load_features.point_gt.max_num_keypoints
         
@@ -356,7 +357,7 @@ class _Dataset(torch.utils.data.Dataset):
             img = img.numpy().transpose(1, 2, 0)
             img = self.augmentation(image=img, return_tensor=True)
         except Exception as e:
-            print(f"Error in augmentation: {e}")
+            logging.error(f"Error in augmentation: {e}")
         orig_shape = img.shape[-1], img.shape[-2]
         size_to_reshape_to = self.select_resize_shape(orig_shape)
         data = {
