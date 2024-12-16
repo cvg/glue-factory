@@ -12,3 +12,5 @@ __pycache__
 *.png
 *.hdf5
 image_list100.txt
+.vscode/launch.json
+notebooks/data/

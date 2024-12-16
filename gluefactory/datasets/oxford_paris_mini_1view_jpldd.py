@@ -13,6 +13,8 @@ from tqdm import tqdm
 from gluefactory.datasets import BaseDataset
 from gluefactory.settings import DATA_PATH, root
 from gluefactory.utils.image import load_image, read_image, ImagePreprocessor
+from gluefactory.datasets import augmentations
+
 
 logger = logging.getLogger(__name__)
 
