@@ -30,6 +30,9 @@ data:
                     use_superpoint_kp_gt: True  # set true to use default HA-Superpoint groundtruth
                 line_gt:
                     data_keys: [ "deeplsd_distance_field", "deeplsd_angle_field" ]
+                augment: # activate or deactivate data augmentation
+                    do: True
+                    type: "dark" # choose identity, dark or lg
             train_scenes_file_path: "gluefactory/datasets/minidepth_train_scenes.txt"
             val_scenes_file_path: "gluefactory/datasets/minidepth_val_scenes.txt"
         oxparis:
@@ -54,6 +57,9 @@ data:
                     use_superpoint_kp_gt: True  # set true to use default HA-Superpoint groundtruth
                 line_gt:
                     data_keys: [ "deeplsd_distance_field", "deeplsd_angle_field" ]
+                augment: # activate or deactivate data augmentation
+                    do: True
+                    type: "dark" # choose identity, dark or lg
             val_size: 500
             train_size: 11500
 

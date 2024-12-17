@@ -11,6 +11,7 @@ import torch
 from gluefactory.datasets import BaseDataset
 from gluefactory.settings import DATA_PATH, root
 from gluefactory.utils.image import load_image, ImagePreprocessor
+from gluefactory.datasets import augmentations
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,11 @@ class MiniDepthDataset(BaseDataset):
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
                 "enforce_threshold": 5.0
             },
+            "augment": {
+                # there is the option to use data augmentation. It is not enlarging dataset but applies the augmentation to an Image with certain probability
+                "do": False,
+                "type": "dark",  # choose "identity" for no augmentation; other options are "lg", "dark"
+            }
         },
         "train_scenes_file_path": "gluefactory/datasets/minidepth_train_scenes.txt",  # path to training scenes file where train scenes from megadepth1500 are excluded, based on repo root
         "val_scenes_file_path": "gluefactory/datasets/minidepth_val_scenes.txt",
@@ -69,6 +75,13 @@ class MiniDepthDataset(BaseDataset):
         if not (DATA_PATH / conf.data_dir).exists():
             logger.info("Downloading the minidepth dataset...")
             self.download_minidepth()
+        # prepare augmentation in case it is needed
+        augmentation_map = {
+            "dark": augmentations.DarkAugmentation,
+            "lg": augmentations.LGAugmentation,
+            "identity": augmentations.IdentityAugmentation
+        }
+        self.augmentation = augmentation_map[self.conf.load_features.augment.type]()
 
     def download_minidepth(self):
         logger.info("Downloading the MiniDepth dataset...")
@@ -87,15 +100,16 @@ class MiniDepthDataset(BaseDataset):
 
     def get_dataset(self, split):
         assert split in ["train", "val", "test", "all"]
-        return _Dataset(self.conf, split)
+        return _Dataset(self.conf, split, self.augmentation)
 
 
 class _Dataset(torch.utils.data.Dataset):
-    def __init__(self, conf, split):
+    def __init__(self, conf, split, augmentation):
         super().__init__()
         self.conf = conf
         self.grayscale = bool(conf.grayscale)
         self.max_num_gt_kp = conf.load_features.point_gt.max_num_keypoints
+        self.augmentation = augmentation
         
         # we can configure whether we want to load superpoint kp-gt, deeplsd_lineEP lp-gt or both
         self.use_superpoint_kp_gt = conf.load_features.point_gt.use_superpoint_kp_gt
@@ -315,6 +329,12 @@ class _Dataset(torch.utils.data.Dataset):
         """
         path = self.image_paths[idx]
         img = self._read_image(self.img_dir / path)
+        if self.conf.load_features.augment.do:
+            try:
+                img = img.numpy().transpose(1, 2, 0)
+                img = self.augmentation(image=img, return_tensor=True)
+            except Exception as e:
+                logging.error(f"Error in augmentation: {e}")
         orig_shape = img.shape[-1], img.shape[-2]
         size_to_reshape_to = self.select_resize_shape(orig_shape)
         data = {
