@@ -13,6 +13,8 @@ from tqdm import tqdm
 from gluefactory.datasets import BaseDataset
 from gluefactory.settings import DATA_PATH, root
 from gluefactory.utils.image import load_image, read_image, ImagePreprocessor
+from gluefactory.datasets import augmentations
+
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,10 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
                 "enforce_threshold": 5.0,  # Enforce values in distance field to be no greater than this value
             },
+            "augment": {  # there is the option to use data augmentation. It is not enlarging dataset but applies the augmentation to an Image with certain probability
+                "do": False,
+                "type": "dark", # choose "identity" for no augmentation; other options are "lg", "dark"
+            }
         },
         "img_list": "gluefactory/datasets/oxford_paris_images.txt",
         # img list path from repo root -> use checked in file list, it is similar to pold2 file
@@ -89,6 +95,15 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
             "all": images,
         }
         print(f"DATASET OVERALL(NO-SPLIT) IMAGES: {len(images)}")
+
+        augmentation_map = {
+           "dark": augmentations.DarkAugmentation,
+            "lg": augmentations.LGAugmentation,
+            "identity": augmentations.IdentityAugmentation
+        }
+
+        self.augmentation = augmentation_map[self.conf.load_features.augment.type]()
+
 
     def download_oxford_paris_mini(self):
         logger.info("Downloading the OxfordParis Mini dataset...")
@@ -128,15 +143,16 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
 
     def get_dataset(self, split):
         assert split in ["train", "val", "test", "all"]
-        return _Dataset(self.conf, self.images[split], split)
+        return _Dataset(self.conf, self.images[split], split, self.augmentation)
 
 
 
 class _Dataset(torch.utils.data.Dataset):
-    def __init__(self, conf, image_sub_paths: list[str], split):
+    def __init__(self, conf, image_sub_paths: list[str], split, augmentation):
         super().__init__()
         self.split = split
         self.conf = conf
+        self.augmentation = augmentation
         self.grayscale = bool(conf.grayscale)
         self.max_num_gt_kp = conf.load_features.point_gt.max_num_keypoints
         
@@ -162,6 +178,7 @@ class _Dataset(torch.utils.data.Dataset):
 
         self.img_dir = DATA_PATH / conf.data_dir
         self.dlsd_kp_gt_folder = self.img_dir.parent / "deeplsd_kp_gt"
+        
         # Extract image paths
         self.image_sub_paths = image_sub_paths  # [Path(i) for i in image_sub_paths]
 
@@ -337,6 +354,12 @@ class _Dataset(torch.utils.data.Dataset):
         full_artificial_img_path = self.img_dir / self.image_sub_paths[idx]
         folder_path = full_artificial_img_path.parent / full_artificial_img_path.stem
         img = self._read_image(folder_path)
+        if self.conf.load_features.augment.do:
+            try:
+                img = img.numpy().transpose(1, 2, 0)
+                img = self.augmentation(image=img, return_tensor=True)
+            except Exception as e:
+                logging.error(f"Error in augmentation: {e}")
         orig_shape = img.shape[-1], img.shape[-2]
         size_to_reshape_to = self.select_resize_shape(orig_shape)
         data = {
