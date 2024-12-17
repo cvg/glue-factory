@@ -177,7 +177,7 @@ class _Dataset(torch.utils.data.Dataset):
 
         self.img_dir = DATA_PATH / conf.data_dir
         self.dlsd_kp_gt_folder = self.img_dir.parent / "deeplsd_kp_gt"
-        self.dlsd_line_gt_folder = self.img_dir.parent / "deeplsd_line_gt"
+        
         # Extract image paths
         self.image_sub_paths = image_sub_paths  # [Path(i) for i in image_sub_paths]
 
