@@ -27,15 +27,15 @@ class POLD2_CNN(BaseModel):
     default_conf = {
         "name": "lines.pold2_cnn",
         "has_angle_field": True,
-        "has_distance_field": True, 
-        "num_line_samples": 30,    # number of sampled points between line endpoints
-        "num_bands": 1,            # number of bands to sample along the line
-        "band_width": 1,           # width of the band to sample along the line
+        "has_distance_field": True,
+        "num_line_samples": 30,  # number of sampled points between line endpoints
+        "num_bands": 1,  # number of bands to sample along the line
+        "band_width": 1,  # width of the band to sample along the line
         "cnn_hidden_dims": [256, 128, 128, 64, 32],
         "pred_threshold": 0.9,
         "weights": None,
         "device": None,
-        "brute_force_samples": False
+        "brute_force_samples": False,
     }
 
     def _init(self, conf):
@@ -54,16 +54,16 @@ class POLD2_CNN(BaseModel):
             raise ValueError("No input features selected for CNN")
 
         cnn_layers = []
-        #cnn_layers.append(nn.Conv1d(1,5,3,1,1))
-        cnn_layers.append(nn.Conv2d(1,4,3,1,1))
+        # cnn_layers.append(nn.Conv1d(1,5,3,1,1))
+        cnn_layers.append(nn.Conv2d(1, 4, 3, 1, 1))
         cnn_layers.append(nn.ReLU())
-        #cnn_layers.append(nn.Conv1d(5,5,3,1,1))
-        cnn_layers.append(nn.Conv2d(4,8,3,1,1))
+        # cnn_layers.append(nn.Conv1d(5,5,3,1,1))
+        cnn_layers.append(nn.Conv2d(4, 8, 3, 1, 1))
         cnn_layers.append(nn.ReLU())
-        cnn_layers.append(nn.Conv2d(8,16,3,1,1))
+        cnn_layers.append(nn.Conv2d(8, 16, 3, 1, 1))
         cnn_layers.append(nn.ReLU())
         cnn_layers.append(nn.Flatten())
-        cnn_layers.append(nn.Linear(16*input_dim, conf.cnn_hidden_dims[0]))
+        cnn_layers.append(nn.Linear(16 * input_dim, conf.cnn_hidden_dims[0]))
         for i in range(1, len(conf.cnn_hidden_dims)):
             cnn_layers.append(
                 nn.Linear(conf.cnn_hidden_dims[i - 1], conf.cnn_hidden_dims[i])
@@ -84,8 +84,12 @@ class POLD2_CNN(BaseModel):
 
     def _forward(self, data: torch.Tensor):
         x = data["input"]  # B x Num_Bands*Num_Samples
-        df = x[:,:self.conf.num_bands * self.conf.num_line_samples].reshape(-1, self.conf.num_bands, self.conf.num_line_samples)
-        af = x[:,self.conf.num_bands * self.conf.num_line_samples:].reshape(-1, self.conf.num_bands, self.conf.num_line_samples)
+        df = x[:, : self.conf.num_bands * self.conf.num_line_samples].reshape(
+            -1, self.conf.num_bands, self.conf.num_line_samples
+        )
+        af = x[:, self.conf.num_bands * self.conf.num_line_samples :].reshape(
+            -1, self.conf.num_bands, self.conf.num_line_samples
+        )
         x = torch.cat([df, af], dim=2)
         if x.ndim == 3:
             x = x.unsqueeze(1)
@@ -132,7 +136,7 @@ class POLD2_CNN(BaseModel):
             "precision": torch.tensor(precision, dtype=torch.float, device=device),
             "recall": torch.tensor(recall, dtype=torch.float, device=device),
             "f1": torch.tensor(f1, dtype=torch.float, device=device),
-            "f1_inv": torch.tensor(1 - f1, dtype=torch.float, device=device)
+            "f1_inv": torch.tensor(1 - f1, dtype=torch.float, device=device),
         }
 
 

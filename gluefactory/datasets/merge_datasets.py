@@ -1,16 +1,16 @@
 import logging
 from random import shuffle
+
 import torch
 from omegaconf import OmegaConf
 
-
 from gluefactory.datasets import BaseDataset, get_dataset
-from gluefactory.datasets.oxford_paris_mini_1view_jpldd import OxfordParisMiniOneViewJPLDD
 from gluefactory.datasets.minidepth import MiniDepthDataset
-
+from gluefactory.datasets.oxford_paris_mini_1view_jpldd import (
+    OxfordParisMiniOneViewJPLDD,
+)
 
 logger = logging.getLogger(__name__)
-
 
 
 class MergedDataset(BaseDataset):
@@ -35,11 +35,11 @@ class MergedDataset(BaseDataset):
         "datasets": {  # Here list datasets with their (file)name. As an example we have Oxparis and Minidepth here
             "minidepth": {
                 "name": "gluefactory.datasets.minidepth",
-                **MiniDepthDataset.default_conf
+                **MiniDepthDataset.default_conf,
             },
             "oxparis": {
                 "name": "gluefactory.datasets.oxford_paris_mini_1view_jpldd",
-                **OxfordParisMiniOneViewJPLDD.default_conf
+                **OxfordParisMiniOneViewJPLDD.default_conf,
             },
         },
     }
@@ -47,12 +47,10 @@ class MergedDataset(BaseDataset):
     def _init(self, conf):
         # if multiscale learning is activated for this dataset, check that all sub datsets have it activated as well.
         # Also make sure the same sclaes list is used
-        if conf['use_multiscale_learning']:
-            for dset_key, dset_conf in conf['datasets'].items():
-                assert dset_conf['multiscale_learning']['do']
+        if conf["use_multiscale_learning"]:
+            for dset_key, dset_conf in conf["datasets"].items():
+                assert dset_conf["multiscale_learning"]["do"]
         self.config = conf
-        
-
 
     def get_dataset(self, split):
         return _Dataset(self.config, split)
@@ -63,26 +61,32 @@ class _Dataset(torch.utils.data.Dataset):
         super().__init__()
         self.conf = conf
         # load datasets, set split
-        #self.set_split_for_all_datasets(split)
+        # self.set_split_for_all_datasets(split)
         self.datasets = {}  # store dataset objects
         self.img_index_collection = []  # store image indices
         if self.conf.use_multiscale_learning:
             self.relevant_batch_size = self.conf[f"{split}_batch_size"]
             self.num_selected_this_batch = 0
             self.current_scale = None
-            
 
-        logging.info(f"Initialize Merged Dataset with following datasets: {conf['datasets'].keys()}")
+        logging.info(
+            f"Initialize Merged Dataset with following datasets: {conf['datasets'].keys()}"
+        )
         for key, dset_conf in conf["datasets"].items():
             # 1st check if mulitscale learning scale selection is random for all
-            scale_selection = dset_conf['multiscale_learning']['scale_selection']
-            assert scale_selection == 'random'
+            scale_selection = dset_conf["multiscale_learning"]["scale_selection"]
+            assert scale_selection == "random"
             # 2nd set batch size of sub datasets to overall batch size so that sub datasets don't change scale mid loading
             if OmegaConf.is_readonly(dset_conf):
                 OmegaConf.set_readonly(dset_conf, False)
-            OmegaConf.update(dset_conf, f'{split}_batch_size', self.relevant_batch_size, force_add=True)
+            OmegaConf.update(
+                dset_conf,
+                f"{split}_batch_size",
+                self.relevant_batch_size,
+                force_add=True,
+            )
             OmegaConf.set_readonly(dset_conf, True)
-            assert dset_conf[f'{split}_batch_size'] == self.relevant_batch_size
+            assert dset_conf[f"{split}_batch_size"] == self.relevant_batch_size
             # Now initialize
             dset = get_dataset(dset_conf.name)(dset_conf)
             dset_initialized = dset.get_dataset(split)
@@ -93,16 +97,15 @@ class _Dataset(torch.utils.data.Dataset):
         if self.conf.inter_dataset_shuffle:
             shuffle(self.img_index_collection)
 
-        logging.info(f"Merged Dataset using split {conf['split']} has {len(self.img_index_collection)} Images....")
-
+        logging.info(
+            f"Merged Dataset using split {conf['split']} has {len(self.img_index_collection)} Images...."
+        )
 
     def __len__(self):
         return len(self.img_index_collection)
 
-
     def get_dataset(self, split):
         return self
-
 
     def __getitem__(self, idx):
         dataset_key, in_dataset_idx = self.img_index_collection[idx]
@@ -127,9 +130,7 @@ class _Dataset(torch.utils.data.Dataset):
                 dset.set_num_selected_with_current_scale(1)
                 self.num_selected_this_batch += 1
                 return dset[in_dataset_idx]
-                
-            
-    
+
     def is_new_batch_starting_now(self) -> bool:
         """
         Based on current state descides whether to change shape to reshape images to.
@@ -141,7 +142,9 @@ class _Dataset(torch.utils.data.Dataset):
         """
         # check if batch changes
         if self.num_selected_this_batch % self.relevant_batch_size == 0:
-            self.num_selected_this_batch = 0  # Initially OR if batch changes set counter to 0
+            self.num_selected_this_batch = (
+                0  # Initially OR if batch changes set counter to 0
+            )
             return True
         else:
             return False

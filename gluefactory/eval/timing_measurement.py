@@ -17,19 +17,10 @@ from gluefactory.datasets import get_dataset
 from gluefactory.models import get_model
 from gluefactory.utils.tensor import batch_to_device
 
+default_conf = {"model": {"name": ""}, "dataset": {"name": ""}}
 
-default_conf = {
-    "model": {
-        "name": ""
-    },
-    "dataset": {
-        "name": ""
-    }
-}
 
-def get_dataset_and_loader(
-    dset_conf
-):  
+def get_dataset_and_loader(dset_conf):
     dataset = get_dataset(dset_conf.name)(dset_conf)
     loader = dataset.get_data_loader(dset_conf.get("split", "test"))
     return loader
@@ -78,7 +69,7 @@ def run_measurement(
     print(f"\t90th-percentile: {perc90} --> ~{1/perc90} FPS")
     print(f"\t95th-percentile: {perc95} --> ~{1/perc95} FPS")
     print(f"\t99th-percentile: {perc99} --> ~{1/perc99} FPS")
-    
+
     if jpl_inner_timings:
         print(f"INNER TIMINGS JPLDD")
         inner_timings = model.get_current_timings()
@@ -88,9 +79,7 @@ def run_measurement(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--conf", type=str, help="Name of config to run"
-    )
+    parser.add_argument("--conf", type=str, help="Name of config to run")
     parser.add_argument(
         "--num_s", type=int, default=100, help="Number of timing samples."
     )
@@ -103,28 +92,27 @@ if __name__ == "__main__":
     model_conf = conf["model"]
     model_is_jpl = "joint_point_line_extractor" in model_conf["name"]
     do_jpl_inner_timing = model_is_jpl and model_conf["timeit"]
-    
+
     print("NUMBER OF SAMPLES: ", args.num_s)
     print("CONF TO TEST: ", args.conf)
     print("Dataset: ", dset_conf.name)
     print("--Split: ", dset_conf.split)
     print("Model: ", model_conf.name)
-    
-    if model_is_jpl: 
+
+    if model_is_jpl:
         print("JPLDD-Inner timing activated: ", do_jpl_inner_timing)
 
-   
     # get data loader
     dataloader = get_dataset_and_loader(dset_conf)
-    
+
     if args.device == "cuda":
         assert torch.cuda.is_available()
     elif args.device == "mps":
         assert torch.backends.mps.is_built()
-        
+
     device = args.device
     print(f"Using Device: {device}")
-    
+
     # get model
     model = get_model(model_conf.name)(model_conf)
     model.eval()
@@ -137,5 +125,5 @@ if __name__ == "__main__":
         name=model_conf.name,
         device=device,
         batch_size=dataloader.batch_size,
-        jpl_inner_timings=do_jpl_inner_timing
+        jpl_inner_timings=do_jpl_inner_timing,
     )

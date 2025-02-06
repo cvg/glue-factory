@@ -5,12 +5,12 @@
 3) Optionally: save a .png or .pdf plot (nice in papers!) with `save_plot`.
 """
 
+import cv2
 import matplotlib
 import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-import cv2
 
 
 def cm_ranking(sc, ths=[512, 1024, 2048, 4096]):
@@ -494,14 +494,15 @@ def show_points(image, points):
 
     return image
 
-def show_lines(image, lines, color='green'):
-    if color == 'green':
+
+def show_lines(image, lines, color="green"):
+    if color == "green":
         cval = (0, 255, 0)
-    elif color == 'red':
+    elif color == "red":
         cval = (0, 0, 255)
-    elif color == 'yellow':
+    elif color == "yellow":
         cval = (0, 255, 255)
-    elif color == 'blue':
+    elif color == "blue":
         cval = (255, 0, 0)
     else:
         cval = (0, 255, 0)

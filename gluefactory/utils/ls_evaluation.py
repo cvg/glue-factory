@@ -283,7 +283,7 @@ def compute_repeatability(segs1, segs2, distances, thresholds):
 
 
 def compute_loc_error(distances, thresholds):
-    """ Compute the line localization error between two sets of lines.
+    """Compute the line localization error between two sets of lines.
     Args:
         distances: the line distance of the matches, in increasing order.
         thresholds: int or list of number of lines to take into account.

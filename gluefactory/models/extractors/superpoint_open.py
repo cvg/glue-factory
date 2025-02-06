@@ -1,9 +1,9 @@
 """PyTorch implementation of the SuperPoint model,
-   derived from the TensorFlow re-implementation (2018).
-   Authors: Rémi Pautrat, Paul-Edouard Sarlin
-   https://github.com/rpautrat/SuperPoint
-   The implementation of this model and its trained weights are made
-   available under the MIT license.
+derived from the TensorFlow re-implementation (2018).
+Authors: Rémi Pautrat, Paul-Edouard Sarlin
+https://github.com/rpautrat/SuperPoint
+The implementation of this model and its trained weights are made
+available under the MIT license.
 """
 
 from collections import OrderedDict

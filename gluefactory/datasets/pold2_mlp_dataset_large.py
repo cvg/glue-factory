@@ -5,28 +5,31 @@ Usage:
 """
 
 import argparse
+import enum
 import glob
 import logging
 import shutil
 from pathlib import Path
 
 import cv2
+import h5py as h5
 import numpy as np
 import torch
 from omegaconf import OmegaConf
 from tqdm import tqdm
-import enum
-import h5py as h5
 
-from gluefactory.utils.image import load_image
-from gluefactory.models.extractors.joint_point_line_extractor import JointPointLineDetectorDescriptor
+from gluefactory.models.extractors.joint_point_line_extractor import (
+    JointPointLineDetectorDescriptor,
+)
 from gluefactory.models.lines.pold2_extractor import LineExtractor
+from gluefactory.utils.image import load_image
 
 from ..settings import DATA_PATH
 from ..utils.tools import fork_rng
 from .base_dataset import BaseDataset
 
 logger = logging.getLogger(__name__)
+
 
 class NegativeType(enum.Enum):
     RANDOM = "random"
@@ -47,33 +50,26 @@ class POLD2_MLP_Dataset(BaseDataset):
         # data generation (None to skip)
         "generate": {
             "regenerate": False,
-
             "fields_and_lines_path": "DeepLSD-Outputs-OXPA/DeepLSD-Outputs-OXPA.h5",
-            "h5_file_name": None,   # Name the file based on the config - NumBands, ImageSize, NumLineSamples, BandWidth
+            "h5_file_name": None,  # Name the file based on the config - NumBands, ImageSize, NumLineSamples, BandWidth
             "deeplsd_line_neighborhood": 5,
-
             "num_images": 100,
             "num_positive_per_image": 10,  # -1 to use all
             "num_negative_per_image": 10,
-
             "negative_type": "combined",  # random, deeplsd_random, deeplsd_neighbour, combined
             "combined_ratio": 0.5,
             "negative_neighbour_min_radius": 5,
             "negative_neighbour_max_radius": 10,
-
             "mlp_config": {
                 "has_angle_field": True,
-                "has_distance_field": True, 
-                
-                "num_line_samples": 30,    # number of sampled points between line endpoints
+                "has_distance_field": True,
+                "num_line_samples": 30,  # number of sampled points between line endpoints
                 "brute_force_samples": False,  # sample all points between line endpoints
-                "image_size": 800,         # size of the input image, relevant only if brute_force_samples is True
-
-                "num_bands": 1,            # number of bands to sample along the line
-                "band_width": 1,           # width of the band to sample along the line
+                "image_size": 800,  # size of the input image, relevant only if brute_force_samples is True
+                "num_bands": 1,  # number of bands to sample along the line
+                "band_width": 1,  # width of the band to sample along the line
             },
-            
-            "debug": False, # debug the data generation (visualize positive and negative samples)
+            "debug": False,  # debug the data generation (visualize positive and negative samples)
         },
     }
 
@@ -83,7 +79,9 @@ class POLD2_MLP_Dataset(BaseDataset):
         h5_file_name = conf.generate.h5_file_name
 
         if h5_file_name is None and conf.generate is None:
-            raise ValueError("No h5 file name found in the configuration. Either provide a name or regenerate the data by specifying the generate configuration.")
+            raise ValueError(
+                "No h5 file name found in the configuration. Either provide a name or regenerate the data by specifying the generate configuration."
+            )
         elif h5_file_name is None:
             num_bands = conf.generate.mlp_config.num_bands
             image_size = conf.generate.mlp_config.image_size
@@ -97,13 +95,15 @@ class POLD2_MLP_Dataset(BaseDataset):
                 h5_file_name = f"MLPDataset-{image_size}x{image_size}_{num_bands}Bands_BW{band_width}_{num_line_samples}Samples.h5"
         self.h5_file_name = h5_file_name
 
-        if not data_dir.exists() or (conf.generate is not None and conf.generate.regenerate):
+        if not data_dir.exists() or (
+            conf.generate is not None and conf.generate.regenerate
+        ):
             self.generate_data(conf, data_dir)
 
-        if (
-            not (data_dir / self.h5_file_name).exists()
-        ):
-            raise ValueError(f"Data file {data_dir / self.h5_file_name} not found. Generate the data first.")
+        if not (data_dir / self.h5_file_name).exists():
+            raise ValueError(
+                f"Data file {data_dir / self.h5_file_name} not found. Generate the data first."
+            )
 
         # Get the number of samples from the h5 file
         with h5.File(data_dir / self.h5_file_name, "r") as f:
@@ -129,7 +129,7 @@ class POLD2_MLP_Dataset(BaseDataset):
             with h5.File(data_dir / self.h5_file_name, "r") as f:
                 for i in range(len(f[f"{idx}"].keys())):
                     self.train_idxs.append((idx, i))
-        
+
         for idx in self.val_samples:
             with h5.File(data_dir / self.h5_file_name, "r") as f:
                 for i in range(len(f[f"{idx}"].keys())):
@@ -149,6 +149,7 @@ class POLD2_MLP_Dataset(BaseDataset):
         self.gen_debug = False
         if conf.generate.debug:
             import os
+
             from gluefactory.visualization.viz2d import show_lines, show_points
 
             self.IMAGE = None
@@ -166,6 +167,7 @@ class POLD2_MLP_Dataset(BaseDataset):
 
             if self.gen_debug:
                 from copy import deepcopy
+
                 self.IMAGE = np.ascontiguousarray(deepcopy(img), dtype=np.uint8)
 
             # distance field
@@ -181,15 +183,19 @@ class POLD2_MLP_Dataset(BaseDataset):
             lines = np.array(fields_and_lines[file_path]["deeplsd_lines"])
 
             return distances, angles, lines, img.shape[:2]
-            
+
         def generate_random_endpoints(img_shape, gen_conf):
             # Randomly sample negative points and generate lines
-            neg_x = np.random.randint(0, img_shape[1], (2 * self.num_negative)).reshape(-1, 1)
-            neg_y = np.random.randint(0, img_shape[0], (2 * self.num_negative)).reshape(-1, 1)
+            neg_x = np.random.randint(0, img_shape[1], (2 * self.num_negative)).reshape(
+                -1, 1
+            )
+            neg_y = np.random.randint(0, img_shape[0], (2 * self.num_negative)).reshape(
+                -1, 1
+            )
             neg_lines = np.stack([neg_x, neg_y], axis=1).reshape(-1, 2, 2)
 
             return neg_lines
-        
+
         def generate_deeplsd_random_endpoints(lines):
             # Randomly pair up the deeplsd endpoints to generate negative samples
             lines = lines.copy()
@@ -198,7 +204,7 @@ class POLD2_MLP_Dataset(BaseDataset):
             neg_lines = endpoints.reshape(-1, 2, 2)
 
             return neg_lines
-        
+
         def generate_deeplsd_neighbour_endpoints(lines, img_shape, gen_conf):
             # Pairup points in the neighbourhood of the deeplsd endpoints to generate hard negative samples
             neg_lines = []
@@ -231,7 +237,7 @@ class POLD2_MLP_Dataset(BaseDataset):
         gen_conf = conf.generate
         if gen_conf is None:
             raise ValueError("No data generation configuration found.")
-        
+
         extractor = LineExtractor(
             OmegaConf.create(
                 {
@@ -246,10 +252,16 @@ class POLD2_MLP_Dataset(BaseDataset):
 
         fps = list(fields_and_lines.keys())
         print(f"Found {len(fps)} images in the dataset")
-        fps = np.random.choice(fps, gen_conf.num_images, replace=False) if gen_conf.num_images > 0 else fps
+        fps = (
+            np.random.choice(fps, gen_conf.num_images, replace=False)
+            if gen_conf.num_images > 0
+            else fps
+        )
 
         for file_path in tqdm(fps, desc="Generating data"):
-            distance_map, angle_map, lines, img_shape = get_line_from_image(file_path, fields_and_lines)
+            distance_map, angle_map, lines, img_shape = get_line_from_image(
+                file_path, fields_and_lines
+            )
 
             lines = lines.astype(int)  # convert to int for indexing
 
@@ -277,31 +289,43 @@ class POLD2_MLP_Dataset(BaseDataset):
                 neg_lines = generate_deeplsd_random_endpoints(lines)
 
             elif gen_conf.negative_type == NegativeType.DEEPLSD_NEIGHBOUR.value:
-                neg_lines = generate_deeplsd_neighbour_endpoints(lines, img_shape, gen_conf)
+                neg_lines = generate_deeplsd_neighbour_endpoints(
+                    lines, img_shape, gen_conf
+                )
 
             elif gen_conf.negative_type == NegativeType.COMBINED.value:
                 neg_deeplsd_random = generate_deeplsd_random_endpoints(lines)
-                neg_deeplsd_neighbour = generate_deeplsd_neighbour_endpoints(lines, img_shape, gen_conf)
+                neg_deeplsd_neighbour = generate_deeplsd_neighbour_endpoints(
+                    lines, img_shape, gen_conf
+                )
 
                 num_neg_neigh = int(gen_conf.combined_ratio * self.num_negative)
                 num_neg_rand = self.num_negative - num_neg_neigh
 
-                neigh_idx = np.random.choice(len(neg_deeplsd_neighbour), num_neg_neigh, replace=False)
-                rand_idx = np.random.choice(len(neg_deeplsd_random), num_neg_rand, replace=False)
+                neigh_idx = np.random.choice(
+                    len(neg_deeplsd_neighbour), num_neg_neigh, replace=False
+                )
+                rand_idx = np.random.choice(
+                    len(neg_deeplsd_random), num_neg_rand, replace=False
+                )
 
-                neg_lines = np.concatenate([neg_deeplsd_neighbour[neigh_idx], neg_deeplsd_random[rand_idx]])
+                neg_lines = np.concatenate(
+                    [neg_deeplsd_neighbour[neigh_idx], neg_deeplsd_random[rand_idx]]
+                )
 
             else:
                 raise ValueError(f"Unknown negative type: {gen_conf.negative_type}")
-            
+
             num_neg = min(self.num_negative, len(neg_lines))
             neg_idx = np.random.choice(len(neg_lines), num_neg, replace=False)
             neg_lines = neg_lines[neg_idx]
-            
+
             # DEBUG
             if self.gen_debug:
-                dimg = show_lines(self.IMAGE[:,:,::-1].copy(), pos_lines.astype(int), color='green')
-                dimg = show_lines(dimg, neg_lines.astype(int), color='red')
+                dimg = show_lines(
+                    self.IMAGE[:, :, ::-1].copy(), pos_lines.astype(int), color="green"
+                )
+                dimg = show_lines(dimg, neg_lines.astype(int), color="red")
                 dimg = show_points(dimg, pos_lines.reshape(-1, 2).astype(int))
 
                 global IDX
@@ -314,21 +338,32 @@ class POLD2_MLP_Dataset(BaseDataset):
             neg_lines = torch.tensor(neg_lines, dtype=torch.int, device=device)
 
             # Generate positive samples
-            positives = extractor.mlp_input_prep(
-                pos_lines.reshape(-1, 2),
-                torch.arange(len(pos_lines)*2).reshape(-1, 2).to(extractor.device),
-                distance_map.to(extractor.device),
-                angle_map.to(extractor.device)
-            ).cpu().numpy()
-            
+            positives = (
+                extractor.mlp_input_prep(
+                    pos_lines.reshape(-1, 2),
+                    torch.arange(len(pos_lines) * 2)
+                    .reshape(-1, 2)
+                    .to(extractor.device),
+                    distance_map.to(extractor.device),
+                    angle_map.to(extractor.device),
+                )
+                .cpu()
+                .numpy()
+            )
 
             # Generate negative samples
-            negatives = extractor.mlp_input_prep(
-                neg_lines.reshape(-1, 2),
-                torch.arange(len(neg_lines)*2).reshape(-1, 2).to(extractor.device),
-                distance_map.to(extractor.device),
-                angle_map.to(extractor.device)
-            ).cpu().numpy()
+            negatives = (
+                extractor.mlp_input_prep(
+                    neg_lines.reshape(-1, 2),
+                    torch.arange(len(neg_lines) * 2)
+                    .reshape(-1, 2)
+                    .to(extractor.device),
+                    distance_map.to(extractor.device),
+                    angle_map.to(extractor.device),
+                )
+                .cpu()
+                .numpy()
+            )
 
             # Save the data
             pos_labels = np.ones(len(positives))
@@ -349,7 +384,9 @@ class POLD2_MLP_Dataset(BaseDataset):
                     line_group.create_dataset("label", data=label)
 
     def get_dataset(self, split):
-        return _Dataset(self.conf, self.split_data[split], split, self.data_dir / self.h5_file_name)
+        return _Dataset(
+            self.conf, self.split_data[split], split, self.data_dir / self.h5_file_name
+        )
 
 
 class _Dataset(torch.utils.data.Dataset):
