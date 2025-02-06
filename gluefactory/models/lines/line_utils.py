@@ -1,15 +1,15 @@
 """
-    A set of geometry tools to handle lines in Pytorch and Numpy.
+A set of geometry tools to handle lines in Pytorch and Numpy.
 """
 
 import numpy as np
 import torch
+from homography_est import LineSegment, ransac_line_homography
 from torch.nn.functional import pixel_shuffle, softmax
 
 from gluefactory.datasets.homographies_deeplsd import warp_lines, warp_points
 from gluefactory.geometry.homography import warp_lines_torch
 from gluefactory.utils.image import compute_image_grad
-from homography_est import LineSegment, ransac_line_homography
 
 UPM_EPS = 1e-8
 
@@ -142,8 +142,8 @@ def project_point_to_line(line_segs, points):
     dir_vec = (line_segs[:, 1] - line_segs[:, 0])[:, None]
     if isinstance(line_segs, np.ndarray):
         coords1d = (
-        np.sum((points[None] - line_segs[:, None, 0]) * dir_vec, axis=2)
-        / np.linalg.norm(dir_vec.astype(np.float32), axis=2) ** 2
+            np.sum((points[None] - line_segs[:, None, 0]) * dir_vec, axis=2)
+            / np.linalg.norm(dir_vec.astype(np.float32), axis=2) ** 2
         )
     else:
         coords1d = (
@@ -172,10 +172,7 @@ def get_segment_overlap(seg_coord1d):
         overlap = (
             (seg_coord1d[..., 1] > 0)
             * (seg_coord1d[..., 0] < 1)
-            * (
-                np.minimum(seg_coord1d[..., 1], 1)
-                - np.maximum(seg_coord1d[..., 0], 0)
-            )
+            * (np.minimum(seg_coord1d[..., 1], 1) - np.maximum(seg_coord1d[..., 0], 0))
         )
     else:
         seg_coord1d, _ = torch.sort(seg_coord1d, dim=-1)
@@ -314,7 +311,7 @@ def clip_line_to_boundary(lines: torch.Tensor) -> tuple[torch.Tensor, torch.Tens
     Returns:
         The clipped coordinates + a mask indicating invalid lines.
     """
-    #updated_lines = lines.detach().clone()
+    # updated_lines = lines.detach().clone()
     updated_lines = lines.copy()
 
     # Detect invalid lines completely outside of the first boundary
@@ -352,7 +349,7 @@ def clip_line_to_boundaries(
     Returns:
         The clipped coordinates + a mask indicating valid lines.
     """
-    #new_lines = lines.detach().clone()
+    # new_lines = lines.detach().clone()
     new_lines = lines.copy()
 
     # Clip the first coordinate to the 0 boundary of img1
@@ -406,7 +403,7 @@ def get_common_lines(
         inv_H = np.linalg.inv(H.cpu().numpy())
 
     new_lines0 = warp_lines(warped_lines0[valid], inv_H)
-    
+
     if isinstance(H, np.ndarray):
         warped_lines1 = warp_lines(lines1, inv_H)
     else:
@@ -417,7 +414,9 @@ def get_common_lines(
     if isinstance(H, np.ndarray):
         return new_lines0, warped_lines1[valid]
     else:
-        return torch.Tensor(new_lines0,device=lines0.device), torch.Tensor(warped_lines1[valid],device=lines1.device)
+        return torch.Tensor(new_lines0, device=lines0.device), torch.Tensor(
+            warped_lines1[valid], device=lines1.device
+        )
 
 
 # Taken from SOLD2
@@ -581,6 +580,7 @@ def nms_fast(in_corners, H, W, dist_thresh):
     out_inds = inds1[inds_keep[inds2]]
     return out, out_inds
 
+
 def get_inliers_and_reproj_error(line_seg1, line_seg2, H, tol_px=5):
     # Warp back line_seg2
     warped_line_seg2 = warp_lines(line_seg2, H)
@@ -591,8 +591,9 @@ def get_inliers_and_reproj_error(line_seg1, line_seg2, H, tol_px=5):
     reproj_error = 0 if np.sum(inliers) == 0 else dist[inliers].mean()
     return inliers, reproj_error
 
+
 def estimate_homography(line_seg1, line_seg2, tol_px=5):
-    """ Estimate the homography relating two sets of lines.
+    """Estimate the homography relating two sets of lines.
     Args:
         line_seg1, line_seg2: the matching set of line segments.
         tol_px: inlier threshold in RANSAC.
@@ -607,12 +608,13 @@ def estimate_homography(line_seg1, line_seg2, tol_px=5):
     inliers = []
     H = ransac_line_homography(lines1, lines2, tol_px, False, inliers)
     inliers, reproj_error = get_inliers_and_reproj_error(
-        line_seg1, line_seg2, H, tol_px)
+        line_seg1, line_seg2, H, tol_px
+    )
     return H, inliers, reproj_error
 
-def H_estimation(line_seg1, line_seg2, H_gt, img_size,
-                 reproj_thresh=3, tol_px=5):
-    """ Given matching line segments from pairs of images, estimate
+
+def H_estimation(line_seg1, line_seg2, H_gt, img_size, reproj_thresh=3, tol_px=5):
+    """Given matching line segments from pairs of images, estimate
         a homography and compare it to the ground truth homography.
     Args:
         line_seg1, line_seg2: the matching set of line segments.
@@ -624,14 +626,18 @@ def H_estimation(line_seg1, line_seg2, H_gt, img_size,
         The percentage of correctly estimated homographies.
     """
     # Estimate the homography
-    H, inliers, reproj_error = estimate_homography(line_seg1, line_seg2,
-                                                   tol_px)
-    
+    H, inliers, reproj_error = estimate_homography(line_seg1, line_seg2, tol_px)
+
     # Compute the homography estimation error
-    corners = np.array([[0, 0],
-                        [0, img_size[1] - 1],
-                        [img_size[0] - 1, 0],
-                        [img_size[0] - 1, img_size[1] - 1]], dtype=float)
+    corners = np.array(
+        [
+            [0, 0],
+            [0, img_size[1] - 1],
+            [img_size[0] - 1, 0],
+            [img_size[0] - 1, img_size[1] - 1],
+        ],
+        dtype=float,
+    )
     warped_corners = warp_points(corners, H_gt)
     pred_corners = warp_points(warped_corners, H)
     error = np.linalg.norm(corners - pred_corners, axis=1).mean()

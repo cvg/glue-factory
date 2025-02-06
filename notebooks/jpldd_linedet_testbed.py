@@ -5,22 +5,23 @@ Usage:
     python -m notebooks.jpldd_linedet_testbed.py
 """
 
+import os
+import random
+from pprint import pprint
 
-from gluefactory.models import get_model
+import cv2
+import flow_vis
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from omegaconf import OmegaConf
+from tqdm import tqdm
+
 from gluefactory.datasets import get_dataset
+from gluefactory.models import get_model
 from gluefactory.models.deeplsd_inference import DeepLSD
 from gluefactory.models.lines.pold2_extractor import LineExtractor
 from gluefactory.settings import DATA_PATH
-import torch
-import numpy as np
-import random
-from tqdm import tqdm
-from pprint import pprint
-import cv2
-import os
-import matplotlib.pyplot as plt
-import flow_vis
-from omegaconf import OmegaConf
 
 # Configs and Constants
 DEBUG_DIR = "tmp_testbed"
@@ -49,7 +50,6 @@ jpldd_conf = {
             "min_line_length": 6,
             "max_line_length": None,
             "samples": [24],
-
             "distance_map": {
                 "max_value": 5,
                 "threshold": 0.45,
@@ -60,60 +60,56 @@ jpldd_conf = {
                 "inlier_ratio": 0.7,
                 "max_accepted_mean_value": 0.5,
             },
-
             "brute_force_df": {
-                "use": True,                       # Use brute force sampling for distance field in the second stage
-                "image_size": 800,                  # Image size for which the coefficients are generated
-                "inlier_ratio": 0.8,                # Ratio of inliers
-                "max_accepted_mean_value": 0.3,     # Maximum accepted DF mean value along the line
+                "use": True,  # Use brute force sampling for distance field in the second stage
+                "image_size": 800,  # Image size for which the coefficients are generated
+                "inlier_ratio": 0.8,  # Ratio of inliers
+                "max_accepted_mean_value": 0.3,  # Maximum accepted DF mean value along the line
             },
-
             "angle_map": {
-                "threshold": 0.1,                   # Threshold for deciding if a line angle is correct
-                "inlier_ratio": 1.0,                # Ratio of inliers
-                "max_accepted_mean_value": 0.1,     # Maximum difference in AF mean value with line angle
+                "threshold": 0.1,  # Threshold for deciding if a line angle is correct
+                "inlier_ratio": 1.0,  # Ratio of inliers
+                "max_accepted_mean_value": 0.1,  # Maximum difference in AF mean value with line angle
             },
-
             "mlp_conf": {
                 "has_angle_field": True,
-                "has_distance_field": True, 
-                
-                "num_line_samples": 30,    # number of sampled points between line endpoints
+                "has_distance_field": True,
+                "num_line_samples": 30,  # number of sampled points between line endpoints
                 "brute_force_samples": True,  # sample all points between line endpoints
-                "image_size": 800,         # size of the input image, relevant only if brute_force_samples is True
-
-                "num_bands": 5,            # number of bands to sample along the line
-                "band_width": 1,           # width of the band to sample along the line
-
-                "mlp_hidden_dims": [512, 256, 128, 64, 32], # hidden dimensions of the MLP
-
-                "cnn_1d": {              # 1D CNN to extract features from the input
+                "image_size": 800,  # size of the input image, relevant only if brute_force_samples is True
+                "num_bands": 5,  # number of bands to sample along the line
+                "band_width": 1,  # width of the band to sample along the line
+                "mlp_hidden_dims": [
+                    512,
+                    256,
+                    128,
+                    64,
+                    32,
+                ],  # hidden dimensions of the MLP
+                "cnn_1d": {  # 1D CNN to extract features from the input
                     "mode": "shared",  # separate CNNs for angle and distance fields, disjoint or shared
                     "merge_mode": "concat",  # how to merge the features from angle and distance fields
                     "kernel_size": 11,
                     "stride": 1,
                     "padding": "same",
                     "channels": [16, 8, 4, 1],  # number of channels in each layer
-                },           
-
-                "pred_threshold": 0.8,            
+                },
+                "pred_threshold": 0.8,
                 "weights": None,
             },
-
             "filters": {
                 "distance_field": True,
                 "angle_field": False,
                 "brute_force_df": True,
                 "mlp": False,
             },
-
             "nms": False,
             "debug": True,
             "debug_dir": DEBUG_DIR,
             # "device": "cpu"
-        }
+        },
     },
-    "checkpoint": "/local/home/Point-Line/outputs/training/oxparis_800_focal/checkpoint_best.tar"
+    "checkpoint": "/local/home/Point-Line/outputs/training/oxparis_800_focal/checkpoint_best.tar",
 }
 
 dset_conf = {
@@ -121,7 +117,7 @@ dset_conf = {
     "multiscale_learning": {
         "do": False,
         "scales_list": [800, 600, 400],
-        "scale_selection": 'round-robin' # random or round-robin
+        "scale_selection": "round-robin",  # random or round-robin
     },
     "load_features": {
         "do": True,
@@ -135,21 +131,21 @@ dset_conf = {
             "enforce_threshold": 5.0,  # Enforce values in distance field to be no greater than this value
         },
     },
-    #"debug": True
+    # "debug": True
 }
 
 harris_conf = {
-    "blockSize": 5,     # neighborhood size
-    "ksize": 5,         # aperture parameter for the Sobel operator
-    "k": 0.04,          # Harris detector free parameter
-    "thresh": 0.01,     # threshold for corner detection on harris corner response
-    "zeroZone": -1,     # 0 means that no extra zero pixels are used
-    "winSize": 5,       # window size for cornerSubPix
-    "criteria": {       # termination criteria for cornerSubPix
+    "blockSize": 5,  # neighborhood size
+    "ksize": 5,  # aperture parameter for the Sobel operator
+    "k": 0.04,  # Harris detector free parameter
+    "thresh": 0.01,  # threshold for corner detection on harris corner response
+    "zeroZone": -1,  # 0 means that no extra zero pixels are used
+    "winSize": 5,  # window size for cornerSubPix
+    "criteria": {  # termination criteria for cornerSubPix
         "type": "cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER",
         "maxCount": 100,
-        "epsilon": 0.001
-    }
+        "epsilon": 0.001,
+    },
 }
 harris_conf = OmegaConf.create(harris_conf)
 
@@ -159,8 +155,9 @@ visualizations = {
     "deeplsd": True,
     "pold2+deeplsd": False,
     "pold2+harris": False,
-    "jpldd+lsd": False
+    "jpldd+lsd": False,
 }
+
 
 # Plotting functions
 def show_points(image, points):
@@ -169,14 +166,15 @@ def show_points(image, points):
 
     return image
 
-def show_lines(image, lines, color='green'):
-    if color == 'green':
+
+def show_lines(image, lines, color="green"):
+    if color == "green":
         cval = (0, 255, 0)
-    elif color == 'red':
+    elif color == "red":
         cval = (0, 0, 255)
-    elif color == 'yellow':
+    elif color == "yellow":
         cval = (0, 255, 255)
-    elif color == 'blue':
+    elif color == "blue":
         cval = (255, 0, 0)
     else:
         cval = (0, 255, 0)
@@ -185,30 +183,33 @@ def show_lines(image, lines, color='green'):
 
     return image
 
+
 def get_flow_vis(df, ang, line_neighborhood=5):
     norm = line_neighborhood + 1 - np.clip(df, 0, line_neighborhood)
     flow_uv = np.stack([norm * np.cos(ang), norm * np.sin(ang)], axis=-1)
     flow_img = flow_vis.flow_to_color(flow_uv, convert_to_bgr=False)
     return flow_img
 
+
 def visualize_img_and_pred(keypoints, heatmap, distance_field, angle_field, img):
     _, ax = plt.subplots(1, 4, figsize=(20, 20))
-    ax[0].axis('off')
-    ax[0].set_title('Heatmap')
+    ax[0].axis("off")
+    ax[0].set_title("Heatmap")
     ax[0].imshow(heatmap)
 
-    ax[1].axis('off')
-    ax[1].set_title('Distance Field')
+    ax[1].axis("off")
+    ax[1].set_title("Distance Field")
     ax[1].imshow(distance_field)
 
-    ax[2].axis('off')
-    ax[2].set_title('Angle Field')
+    ax[2].axis("off")
+    ax[2].set_title("Angle Field")
     ax[2].imshow(get_flow_vis(distance_field, angle_field))
 
-    ax[3].axis('off')
-    ax[3].set_title('Original')
-    ax[3].imshow(img.permute(1,2,0))
-    ax[3].scatter(keypoints[:,0],keypoints[:,1], marker="o", color="red", s=3)
+    ax[3].axis("off")
+    ax[3].set_title("Original")
+    ax[3].imshow(img.permute(1, 2, 0))
+    ax[3].scatter(keypoints[:, 0], keypoints[:, 1], marker="o", color="red", s=3)
+
 
 def detect_harris_corners(image, conf):
     gray = np.float32(image)
@@ -218,9 +219,16 @@ def detect_harris_corners(image, conf):
     dst = np.uint8(dst)
     _, _, _, centroids = cv2.connectedComponentsWithStats(dst)
     criteria = (eval(conf.criteria.type), conf.criteria.maxCount, conf.criteria.epsilon)
-    corners = cv2.cornerSubPix(gray, np.float32(centroids), (conf.winSize, conf.winSize), (conf.zeroZone, conf.zeroZone), criteria)
+    corners = cv2.cornerSubPix(
+        gray,
+        np.float32(centroids),
+        (conf.winSize, conf.winSize),
+        (conf.zeroZone, conf.zeroZone),
+        criteria,
+    )
 
     return corners
+
 
 # Set Output Directory
 if os.path.exists(f"{DEBUG_DIR}"):
@@ -230,11 +238,11 @@ os.makedirs(f"{DEBUG_DIR}", exist_ok=True)
 
 # Set device
 if torch.cuda.is_available():
-    device = 'cuda'
+    device = "cuda"
 elif torch.backends.mps.is_built():
-    device = 'mps'
+    device = "mps"
 else:
-    device = 'cpu'
+    device = "cpu"
 print(f"Device Used: {device}")
 
 ## DeepLSD Model
@@ -266,14 +274,20 @@ af = elem["deeplsd_angle_field"]
 df = elem["deeplsd_distance_field"]
 hmap = elem["superpoint_heatmap"]
 
-print(f"AF: type: {type(af)}, shape: {af.shape}, min: {torch.min(af)}, max: {torch.max(af)}")
-print(f"DF: type: {type(df)}, shape: {df.shape}, min: {torch.min(df)}, max: {torch.max(df)}")
-print(f"KP-HMAP: type: {type(hmap)}, shape: {hmap.shape}, min: {torch.min(hmap)}, max: {torch.max(hmap)}, sum: {torch.sum(hmap)}")
+print(
+    f"AF: type: {type(af)}, shape: {af.shape}, min: {torch.min(af)}, max: {torch.max(af)}"
+)
+print(
+    f"DF: type: {type(df)}, shape: {df.shape}, min: {torch.min(df)}, max: {torch.max(df)}"
+)
+print(
+    f"KP-HMAP: type: {type(hmap)}, shape: {hmap.shape}, min: {torch.min(hmap)}, max: {torch.max(hmap)}, sum: {torch.sum(hmap)}"
+)
 
 ## Inference - Random 300 samples [Get FPS]
 # Comment while inspecting binary_distance_field
 random.seed(42)
-rand_idx = random.sample(range(0, len(ds)), 300) 
+rand_idx = random.sample(range(0, len(ds)), 300)
 """
 for i in rand_idx:
     img_torch = ds[i]["image"].to(device).unsqueeze(0)
@@ -299,22 +313,44 @@ for i in tqdm(rand_idx):
     lines = output_model["lines"][0].cpu().numpy().astype(int)
     points = output_model["keypoints"][0].cpu().numpy().astype(int)
 
-    viz_img = np.zeros((c_img.shape[0]+50, 0, 3), dtype=np.uint8)
+    viz_img = np.zeros((c_img.shape[0] + 50, 0, 3), dtype=np.uint8)
 
     if visualizations["jpldd_lines"]:
         img = c_img.copy()
         img = show_points(img, points)
         img = show_lines(img, lines)
-        img = cv2.copyMakeBorder(img, 50, 0, 0, 0, cv2.BORDER_CONSTANT, value=(128, 128, 128))
-        img = cv2.putText(img, "Pold2 + JPLDD Points", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+        img = cv2.copyMakeBorder(
+            img, 50, 0, 0, 0, cv2.BORDER_CONSTANT, value=(128, 128, 128)
+        )
+        img = cv2.putText(
+            img,
+            "Pold2 + JPLDD Points",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (0, 255, 0),
+            2,
+            cv2.LINE_AA,
+        )
 
         viz_img = np.concatenate([viz_img, img], axis=1)
 
         df = output_model["line_distancefield"][0].cpu().numpy()
         df = (df / np.max(df) * 255).astype(np.uint8)
         df = cv2.applyColorMap(df, cv2.COLORMAP_JET)
-        df = cv2.copyMakeBorder(df, 50, 0, 0, 0, cv2.BORDER_CONSTANT, value=(128, 128, 128))
-        df = cv2.putText(df, "JPLDD Distance Field", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+        df = cv2.copyMakeBorder(
+            df, 50, 0, 0, 0, cv2.BORDER_CONSTANT, value=(128, 128, 128)
+        )
+        df = cv2.putText(
+            df,
+            "JPLDD Distance Field",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (0, 255, 0),
+            2,
+            cv2.LINE_AA,
+        )
 
         viz_img = np.concatenate([df, viz_img], axis=1)
         print("--------------JPLDD OVER--------------")
@@ -338,9 +374,20 @@ for i in tqdm(rand_idx):
 
         d_img = c_img.copy()
         d_img = show_points(d_img, points)
-        d_img = show_lines(d_img, deeplsd_lines, color='red')
-        d_img = cv2.copyMakeBorder(d_img, 50, 0, 0, 0, cv2.BORDER_CONSTANT, value=(128, 128, 128))
-        d_img = cv2.putText(d_img, "DeepLSD", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+        d_img = show_lines(d_img, deeplsd_lines, color="red")
+        d_img = cv2.copyMakeBorder(
+            d_img, 50, 0, 0, 0, cv2.BORDER_CONSTANT, value=(128, 128, 128)
+        )
+        d_img = cv2.putText(
+            d_img,
+            "DeepLSD",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (0, 0, 255),
+            2,
+            cv2.LINE_AA,
+        )
 
         viz_img = np.concatenate([viz_img, d_img], axis=1)
         print("--------------DEELSD OVER--------------")
@@ -359,8 +406,19 @@ for i in tqdm(rand_idx):
         p_img = c_img.copy()
         p_img = show_points(p_img, dpoints)
         p_img = show_lines(p_img, pold2_lines)
-        p_img = cv2.copyMakeBorder(p_img, 50, 0, 0, 0, cv2.BORDER_CONSTANT, value=(128, 128, 128))
-        p_img = cv2.putText(p_img, "Pold2 + DeepLSD Points", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
+        p_img = cv2.copyMakeBorder(
+            p_img, 50, 0, 0, 0, cv2.BORDER_CONSTANT, value=(128, 128, 128)
+        )
+        p_img = cv2.putText(
+            p_img,
+            "Pold2 + DeepLSD Points",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (255, 0, 0),
+            2,
+            cv2.LINE_AA,
+        )
 
         viz_img = np.concatenate([viz_img, p_img], axis=1)
         print("--------------POLD2+DEELSD OVER--------------")
@@ -380,7 +438,9 @@ for i in tqdm(rand_idx):
             "distance_map": output_model["line_distancefield"][0].clone(),
             "angle_map": output_model["line_anglefield"][0].clone(),
             # "descriptors": torch.zeros(hpoints.shape[0] + dpoints.shape[0], 128).to(device),
-            "descriptors": torch.zeros(hpoints.shape[0] + points.shape[0], 128).to(device),
+            "descriptors": torch.zeros(hpoints.shape[0] + points.shape[0], 128).to(
+                device
+            ),
             # "descriptors": torch.zeros(hpoints.shape[0], 128).to(device),
         }
         pold2_lines = line_extractor(line_extractor_input)["lines"].cpu()
@@ -390,8 +450,19 @@ for i in tqdm(rand_idx):
         h_img = c_img.copy()
         h_img = show_points(h_img, harris_points.astype(int))
         h_img = show_lines(h_img, pold2_lines)
-        h_img = cv2.copyMakeBorder(h_img, 50, 0, 0, 0, cv2.BORDER_CONSTANT, value=(128, 128, 128))
-        h_img = cv2.putText(h_img, "Pold2 + Harris + JPLDD Points", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
+        h_img = cv2.copyMakeBorder(
+            h_img, 50, 0, 0, 0, cv2.BORDER_CONSTANT, value=(128, 128, 128)
+        )
+        h_img = cv2.putText(
+            h_img,
+            "Pold2 + Harris + JPLDD Points",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (255, 0, 0),
+            2,
+            cv2.LINE_AA,
+        )
 
         viz_img = np.concatenate([viz_img, h_img], axis=1)
         print("--------------POLD2+HARRIS OVER--------------")
@@ -409,30 +480,37 @@ for i in tqdm(rand_idx):
             lsd_lines.append(line.astype(int))
         l_img = c_img.copy()
         l_img = show_points(l_img, points)
-        l_img = show_lines(l_img, lsd_lines[0], color='yellow')
-        l_img = cv2.copyMakeBorder(l_img, 50, 0, 0, 0, cv2.BORDER_CONSTANT, value=(128, 128, 128))
-        l_img = cv2.putText(l_img, "JPLDD + LSD", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
+        l_img = show_lines(l_img, lsd_lines[0], color="yellow")
+        l_img = cv2.copyMakeBorder(
+            l_img, 50, 0, 0, 0, cv2.BORDER_CONSTANT, value=(128, 128, 128)
+        )
+        l_img = cv2.putText(
+            l_img,
+            "JPLDD + LSD",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (255, 0, 0),
+            2,
+            cv2.LINE_AA,
+        )
 
         viz_img = np.concatenate([viz_img, l_img], axis=1)
         print("--------------JPLDD+LSD OVER--------------")
 
-    cv2.imwrite(f'{DEBUG_DIR}/{IDX}_lines.png', viz_img)
+    cv2.imwrite(f"{DEBUG_DIR}/{IDX}_lines.png", viz_img)
 
     # Save the distance field and angle field
     if visualizations["jpldd_fields"]:
         keypoints = output_model["keypoints"][0].cpu().numpy()
         heatmap = output_model["keypoint_and_junction_score_map"][0].cpu().numpy()
-        distance_field = output_model["line_distancefield"][0].cpu().numpy()#
+        distance_field = output_model["line_distancefield"][0].cpu().numpy()  #
         angle_field = output_model["line_anglefield"][0].cpu().numpy()
 
         visualize_img_and_pred(
-            keypoints,
-            heatmap,
-            distance_field,
-            angle_field,
-            img_torch[0].cpu()
+            keypoints, heatmap, distance_field, angle_field, img_torch[0].cpu()
         )
-        plt.savefig(f'{DEBUG_DIR}/{IDX}_fields.png')
+        plt.savefig(f"{DEBUG_DIR}/{IDX}_fields.png")
         plt.close()
 
     IDX += 1

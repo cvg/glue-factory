@@ -1,3 +1,4 @@
+import os
 from collections import defaultdict
 from pathlib import Path
 from pprint import pprint
@@ -5,26 +6,29 @@ from pprint import pprint
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from omegaconf import OmegaConf
 import torch.utils
 import torch.utils.data
+from omegaconf import OmegaConf
 from tqdm import tqdm
 
+from gluefactory.datasets import get_dataset
+from gluefactory.eval.eval_pipeline import (
+    EvalPipeline,
+    exists_eval,
+    load_eval,
+    save_eval,
+)
+from gluefactory.eval.io import get_eval_parser, load_model, parse_eval_args
+from gluefactory.models import BaseModel
+from gluefactory.models.cache_loader import CacheLoader
 from gluefactory.models.utils.metrics_lines import (
     compute_loc_error,
     compute_repeatability,
 )
-import os
-
-from gluefactory.datasets import get_dataset
-from gluefactory.models.cache_loader import CacheLoader
 from gluefactory.settings import EVAL_PATH
 from gluefactory.utils.export_predictions import export_predictions
 from gluefactory.utils.tensor import map_tensor
-from gluefactory.eval.eval_pipeline import EvalPipeline,exists_eval,save_eval,load_eval
 from gluefactory.visualization.viz2d import plot_images, plot_lines, save_plot
-from gluefactory.eval.io import get_eval_parser, load_model, parse_eval_args
-from gluefactory.models import BaseModel
 
 
 class HPatchesPipeline(EvalPipeline):
@@ -94,7 +98,12 @@ class HPatchesPipeline(EvalPipeline):
         dataset = get_dataset("hpatches")(data_conf)
         return dataset.get_data_loader("test")
 
-    def get_predictions(self, experiment_dir: Path, model:BaseModel|None=None, overwrite: bool=False) -> Path:
+    def get_predictions(
+        self,
+        experiment_dir: Path,
+        model: BaseModel | None = None,
+        overwrite: bool = False,
+    ) -> Path:
         pred_file = experiment_dir / "predictions.h5"
         if not pred_file.exists() or overwrite:
             if model is None:
@@ -107,8 +116,15 @@ class HPatchesPipeline(EvalPipeline):
                 optional_keys=self.optional_export_keys,
             )
         return pred_file
-    
-    def run(self, experiment_dir: Path, model:BaseModel|None=None, overwrite=False, overwrite_eval=False, plot=False):
+
+    def run(
+        self,
+        experiment_dir: Path,
+        model: BaseModel | None = None,
+        overwrite=False,
+        overwrite_eval=False,
+        plot=False,
+    ):
         """Run export+eval loop"""
         self.save_conf(
             experiment_dir, overwrite=overwrite, overwrite_eval=overwrite_eval
@@ -124,7 +140,9 @@ class HPatchesPipeline(EvalPipeline):
         s, r = load_eval(experiment_dir)
         return s, f, r
 
-    def run_eval(self, loader: torch.utils.data.DataLoader, pred_file: Path, plot: bool):
+    def run_eval(
+        self, loader: torch.utils.data.DataLoader, pred_file: Path, plot: bool
+    ):
         assert pred_file.exists()
         results = defaultdict(list)
 
@@ -149,9 +167,15 @@ class HPatchesPipeline(EvalPipeline):
                 lines1 = pred["lines1"].cpu()
 
                 if plot:
-                    plot_images([data['view0']['image'].permute(1,2,0), data['view1']['image'].permute(1,2,0)], ['H0', 'H1'])
-                    plot_lines(lines= [pred['orig_lines0'], pred['orig_lines1']])
-                    save_plot(os.path.join('./match_score/', f'{i}.jpg'))
+                    plot_images(
+                        [
+                            data["view0"]["image"].permute(1, 2, 0),
+                            data["view1"]["image"].permute(1, 2, 0),
+                        ],
+                        ["H0", "H1"],
+                    )
+                    plot_lines(lines=[pred["orig_lines0"], pred["orig_lines1"]])
+                    save_plot(os.path.join("./match_score/", f"{i}.jpg"))
                     plt.close()
 
                 results_i["repeatability"] = compute_repeatability(
@@ -217,7 +241,10 @@ if __name__ == "__main__":
 
     pipeline = HPatchesPipeline(conf)
     s, f, r = pipeline.run(
-        experiment_dir, overwrite=args.overwrite, overwrite_eval=args.overwrite_eval, plot=args.plot
+        experiment_dir,
+        overwrite=args.overwrite,
+        overwrite_eval=args.overwrite_eval,
+        plot=args.plot,
     )
 
     # print results

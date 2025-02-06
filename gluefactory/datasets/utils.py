@@ -1,9 +1,10 @@
-import cv2
-import numpy as np
-import torch
-import kornia
 import csv
 from pathlib import Path
+
+import cv2
+import kornia
+import numpy as np
+import torch
 
 
 def read_image(path, grayscale=False):
@@ -114,13 +115,13 @@ def resize_img_kornia(img: torch.Tensor, size: int) -> torch.Tensor:
         torch.Tensor: reshaped image
     """
     resized = kornia.geometry.transform.resize(
-            img,
-            size,
-            side="long",
-            antialias=True,
-            align_corners=None,
-            interpolation='bilinear',
-        )
+        img,
+        size,
+        side="long",
+        antialias=True,
+        align_corners=None,
+        interpolation="bilinear",
+    )
     return resized
 
 
@@ -333,22 +334,22 @@ def warp_lines(lines, H):
     """Warp lines of the shape [N, 2, 2] by an homography H."""
     return warp_points(lines.reshape(-1, 2), H).reshape(-1, 2, 2)
 
-def read_timestamps(text_file: Path) -> dict[str,list[float]]:
+
+def read_timestamps(text_file: Path) -> dict[str, list[float]]:
     """
     Read a text file containing the timestamps of images
     and return a dictionary matching the name of the image
     to its timestamp.
     """
-    timestamps = {'name': [], 'date': [], 'hour': [],
-                  'minute': [], 'time': []}
-    with open(text_file, 'r') as csvfile:
-        reader = csv.reader(csvfile, delimiter=' ')
+    timestamps = {"name": [], "date": [], "hour": [], "minute": [], "time": []}
+    with open(text_file, "r") as csvfile:
+        reader = csv.reader(csvfile, delimiter=" ")
         for row in reader:
-            timestamps['name'].append(row[0])
-            timestamps['date'].append(row[1])
+            timestamps["name"].append(row[0])
+            timestamps["date"].append(row[1])
             hour = int(row[2])
-            timestamps['hour'].append(hour)
+            timestamps["hour"].append(hour)
             minute = int(row[3])
-            timestamps['minute'].append(minute)
-            timestamps['time'].append(hour + minute / 60.)
+            timestamps["minute"].append(minute)
+            timestamps["time"].append(hour + minute / 60.0)
     return timestamps

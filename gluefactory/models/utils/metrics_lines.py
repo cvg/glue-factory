@@ -3,6 +3,7 @@ import torch
 from scipy.optimize import linear_sum_assignment
 
 from gluefactory.datasets.homographies_deeplsd import warp_lines, warp_points
+from gluefactory.models.lines.lbd import PyTLBD
 from gluefactory.models.lines.line_distances import (
     angular_distance,
     get_area_line_dist,
@@ -12,7 +13,6 @@ from gluefactory.models.lines.line_distances import (
     overlap_distance_sym,
 )
 from gluefactory.models.lines.line_utils import get_common_lines
-from gluefactory.models.lines.lbd import PyTLBD
 
 NUM_LINES_THRESHOLDS = [10, 25, 50, 100, 300]
 PIXEL_THRESHOLDS = [1, 2, 3, 4, 5]
@@ -167,7 +167,7 @@ def compute_repeatability(
     for t in thresholds:
         correct = distances <= t
         if rep_type == "num":
-            rep = (torch.sum(correct) / min(n1, n2))
+            rep = torch.sum(correct) / min(n1, n2)
         elif rep_type == "length":
             len1 = torch.linalg.norm(segs1[:, 0] - segs1[:, 1], axis=1)
             len2 = torch.linalg.norm(segs2[:, 0] - segs2[:, 1], axis=1)
@@ -379,9 +379,8 @@ def get_recall_AUC(gt_vp, pred_vp, K):
     return recalls, auc
 
 
-def H_estimation(line_seg1, line_seg2, H_gt, img_size,
-                 reproj_thresh=3, tol_px=5):
-    """ Given matching line segments from pairs of images, estimate
+def H_estimation(line_seg1, line_seg2, H_gt, img_size, reproj_thresh=3, tol_px=5):
+    """Given matching line segments from pairs of images, estimate
         a homography and compare it to the ground truth homography.
     Args:
         line_seg1, line_seg2: the matching set of line segments.
@@ -393,14 +392,18 @@ def H_estimation(line_seg1, line_seg2, H_gt, img_size,
         The percentage of correctly estimated homographies.
     """
     # Estimate the homography
-    H, inliers, reproj_error = estimate_homography(line_seg1, line_seg2,
-                                                   tol_px)
+    H, inliers, reproj_error = estimate_homography(line_seg1, line_seg2, tol_px)
 
     # Compute the homography estimation error
-    corners = np.array([[0, 0],
-                        [0, img_size[1] - 1],
-                        [img_size[0] - 1, 0],
-                        [img_size[0] - 1, img_size[1] - 1]], dtype=float)
+    corners = np.array(
+        [
+            [0, 0],
+            [0, img_size[1] - 1],
+            [img_size[0] - 1, 0],
+            [img_size[0] - 1, img_size[1] - 1],
+        ],
+        dtype=float,
+    )
     warped_corners = warp_points(corners, H_gt)
     pred_corners = warp_points(warped_corners, H)
     error = np.linalg.norm(corners - pred_corners, axis=1).mean()
@@ -408,24 +411,26 @@ def H_estimation(line_seg1, line_seg2, H_gt, img_size,
 
 
 def match_segments_lbd(img, line_seg1, line_seg2, H, img_size):
-    """ Match two sets of line segments with LBD. """
+    """Match two sets of line segments with LBD."""
     lbd = PyTLBD()
 
     # Gather lines in common between the two views and warp lines1 to img0
     segs1, segs2 = get_common_lines(line_seg1, line_seg2, H, img_size)
 
     if len(segs1) == 0 or len(segs2) == 0:
-        return (np.empty((0, 2, 2)), np.empty((0, 2, 2)),
-                np.empty(0), np.empty(0))
+        return (np.empty((0, 2, 2)), np.empty((0, 2, 2)), np.empty(0), np.empty(0))
 
     # Compute line descriptors
     desc1 = lbd.compute_descriptors(img, segs1[:, :, [1, 0]].reshape(-1, 4))
     desc2 = lbd.compute_descriptors(img, segs2[:, :, [1, 0]].reshape(-1, 4))
 
     # Match them
-    matches = lbd.match_lines(segs1[:, :, [1, 0]].reshape(-1, 4),
-                              segs2[:, :, [1, 0]].reshape(-1, 4),
-                              desc1, desc2)
+    matches = lbd.match_lines(
+        segs1[:, :, [1, 0]].reshape(-1, 4),
+        segs2[:, :, [1, 0]].reshape(-1, 4),
+        desc1,
+        desc2,
+    )
     matched_idx1 = np.where(matches != -1)[0]
     matched_idx2 = matches[matched_idx1]
 
