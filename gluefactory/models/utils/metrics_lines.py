@@ -12,7 +12,6 @@ from gluefactory.models.lines.line_distances import (
     overlap_distance_sym,
 )
 from gluefactory.models.lines.line_utils import get_common_lines
-from gluefactory.models.lines.lbd import PyTLBD
 
 NUM_LINES_THRESHOLDS = [10, 25, 50, 100, 300]
 PIXEL_THRESHOLDS = [1, 2, 3, 4, 5]
@@ -408,6 +407,8 @@ def H_estimation(line_seg1, line_seg2, H_gt, img_size,
 
 
 def match_segments_lbd(img, line_seg1, line_seg2, H, img_size):
+    # imoprt Locally to prevent GF from crashing
+    from gluefactory.models.lines.lbd import PyTLBD
     """ Match two sets of line segments with LBD. """
     lbd = PyTLBD()
 
