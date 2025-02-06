@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from kornia.geometry.transform import warp_perspective
 from omegaconf import OmegaConf
 
-import gluefactory.models.utils.metrics_lines as LineMetrics
+from gluefactory.models.utils.metrics_lines import get_rep_and_loc_error
 from gluefactory.datasets.homographies_deeplsd import sample_homography
 from gluefactory.models import get_model
 from gluefactory.models.backbones.backbone_encoder import AlikedEncoder, aliked_cfgs
@@ -105,7 +105,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
     required_data_keys = ["image"]
 
-    def _init(self, conf):
+    def _init(self, conf) -> None:
         logger.debug(f"final config dict(type={type(conf)}): {conf}")
         # set loss fn
         assert self.conf.training.loss.kp_loss_name in [
@@ -273,13 +273,13 @@ class JointPointLineDetectorDescriptor(BaseModel):
             self.deeplsd = deeplsd_net.to(device).eval()
 
     # Utility methods for line df and af with deepLSD
-    def normalize_df(self, df):
+    def normalize_df(self, df: torch.Tensor) -> torch.Tensor:
         return -torch.log(df / self.conf.line_neighborhood + 1e-6)
 
-    def denormalize_df(self, df_norm):
+    def denormalize_df(self, df_norm: torch.Tensor) -> torch.Tensor:
         return torch.exp(-df_norm) * self.conf.line_neighborhood
 
-    def _forward(self, data):
+    def _forward(self, data: dict) -> torch.Tensor:
         """
         Perform a forward pass. Certain things are only executed NOT in training mode.
         Returned:
@@ -515,13 +515,13 @@ class JointPointLineDetectorDescriptor(BaseModel):
             self.timings["total-makespan"].append(sync_and_time() - total_start)
         return output
 
-    def weighted_bce_loss(self, prediction, target):
+    def weighted_bce_loss(self, prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         epsilon = 1e-6
         return -self.lambda_valid_kp * target * torch.log(prediction + epsilon) - (
             1 - target
         ) * torch.log(1 - prediction + epsilon)
 
-    def focal_loss(self, prediction, target):
+    def focal_loss(self, prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         alpha = self.conf.training.loss.kp_loss_parameters.focal_alpha
         gamma = self.conf.training.loss.kp_loss_parameters.focal_gamma
         epsilon = 1e-6  # Small value to avoid log(0)
@@ -540,7 +540,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         loss = target * pos_part + (1 - target) * neg_part
         return loss
 
-    def loss(self, pred, data):
+    def loss(self, pred: dict, data:dict) -> dict:
         """
         format of data: B x H x W
         perform loss calculation based on prediction and data(=groundtruth) for a batch.
@@ -622,7 +622,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             metrics = self.metrics(pred, data)
         return losses, metrics
 
-    def get_groundtruth_descriptors(self, pred: dict):
+    def get_groundtruth_descriptors(self, pred: dict) -> torch.Tensor:
         """
         Takes keypoints from predictions + computes ground-truth descriptors for it.
         """
@@ -634,7 +634,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             descriptors = self.aliked_lw(pred)
         return descriptors
 
-    def load_pretrained_aliked_elements(self):
+    def load_pretrained_aliked_elements(self) -> None:
         """
         Loads ALIKED weights for backbone encoder, score_head(SMH) and SDDH
         """
@@ -662,9 +662,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
         # load values
         self.load_state_dict(aliked_state_dict, strict=False)
 
-    def count_trainable_parameters(self):
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
-
     def state_dict(self, *args, **kwargs):
         """
         Custom state dict to exclude aliked_lw module from checkpoint.
@@ -677,7 +674,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
                     del sd[k]
         return sd
 
-    def get_current_timings(self, reset=False):
+    def get_current_timings(self, reset: bool=False) -> dict:
         """
         ONLY USE IF TIMEIT ACTIVATED. It returns the average of the current times in a dictionary for
         all the single network parts.
@@ -691,7 +688,8 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 self.timings[k] = []
         return results
 
-    def get_pr(self, pred_kp: torch.Tensor, gt_kp: torch.Tensor, tol=3):
+    @staticmethod
+    def get_pr(pred_kp: torch.Tensor, gt_kp: torch.Tensor, tol:int=3) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute the precision and recall, based on GT KP.
         """
@@ -708,7 +706,15 @@ class JointPointLineDetectorDescriptor(BaseModel):
             recall = close.max(dim=0)[0].mean()
         return precision, recall
 
-    def metrics(self, pred, data):
+    def metrics(self, pred: dict, data: dict) -> dict:
+        """
+        Compute evaluation metrics for points. Also for lines if they are contained in the output
+        Args:
+            pred: dict, containing predictions made by the model
+            data: dict containing image data and ground truth
+
+        Returns: dict, containing the computed metrics
+        """
         device = pred["keypoint_and_junction_score_map"].device
         gt = data["superpoint_heatmap"].cpu().numpy()
         predictions = pred["keypoint_and_junction_score_map"].cpu().numpy()
@@ -736,7 +742,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         if "lines" in warped_outputs:
             lines = pred["lines"]
             warped_lines = warped_outputs["lines"]
-            rep_lines, loc_error_lines = LineMetrics.get_rep_and_loc_error(
+            rep_lines, loc_error_lines = get_rep_and_loc_error(
                 lines, warped_lines, Hs, predictions[0].shape, [50], [3]
             )
             out["repeatability_lines"] = torch.tensor(
