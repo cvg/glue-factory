@@ -233,7 +233,9 @@ class _Dataset(torch.utils.data.Dataset):
         self.img_dir = DATA_PATH / conf.data_dir
         self.dlsd_kp_gt_folder = self.img_dir.parent / "deeplsd_kp_gt"
         # Extract image paths
-        self.image_sub_paths = image_sub_paths
+        self.image_sub_paths = [
+            i.relative_to(self.img_dir) for i in image_sub_paths.copy()
+        ]
 
         # making them relative for system independent names in export files (path used as name in export)
         if len(self.image_sub_paths) == 0:
@@ -292,11 +294,10 @@ class _Dataset(torch.utils.data.Dataset):
             }
         )
 
-    def _read_image(self, idx, enforce_batch_dim=False):
+    def _read_image(self, img_path, enforce_batch_dim=False):
         """
         Read image as tensor and puts it on device
         """
-        img_path = self.image_sub_paths[idx]
         img = load_image(img_path, grayscale=self.grayscale)
         if enforce_batch_dim:
             if img.ndim < 4:
@@ -439,11 +440,12 @@ class _Dataset(torch.utils.data.Dataset):
         """
         Dataloader is usually just returning one datapoint by design. Batching is done in Loader normally.
         """
-        img = self._read_image(idx)
+        img_path = self.img_dir / self.image_sub_paths[idx]
+        img = self._read_image(img_path)
         orig_shape = img.shape[-1], img.shape[-2]
         size_to_reshape_to = self.select_resize_shape(orig_shape)
         data = {
-            "name": self.image_sub_paths[idx],
+            "name": str(self.image_sub_paths[idx]),
         }  # keys: 'name', 'scales', 'image_size', 'transform', 'original_image_size', 'image'
         if size_to_reshape_to == orig_shape:
             data["image"] = img
@@ -451,7 +453,7 @@ class _Dataset(torch.utils.data.Dataset):
             data = {**data, **self.preprocessors[size_to_reshape_to](img)}
         if self.conf.load_features.do:
             gt = self._read_groundtruth(
-                Path(self.image_sub_paths[idx]).parent, # TODO: check gt loading once its generated
+                Path(img_path).parent, # TODO: check gt loading once its generated
                 None if size_to_reshape_to == orig_shape else size_to_reshape_to,
             )
             data = {**data, **gt}
