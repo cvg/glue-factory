@@ -1,9 +1,11 @@
 import logging
+import math
 import pickle
 import random
 import shutil
 from pathlib import Path
 import zipfile
+from collections import defaultdict
 
 import numpy as np
 import torch
@@ -110,26 +112,88 @@ class Scannet(BaseDataset):
 
     def sample_images(self):
         """
-        Read train and val scenes from respective files and sample names.
+        Read train and val scenes from respective files and sample names. Currently sampling less than one image per
+        scene is not supported.
+
+        1. Read all images for all train and val scenes
+        2. filter scenes and images by equidistant sampling rules
+
+        Equidistant sampling:
+            - for scenes that have <= num of fair share images per scene - take them all
+            - the remaining number of images is distributed among other scenes
+            - for each of these scenes: take random shuffled images if no equal distance between samples possible
+            - otherwise sample with fixed distance.
         """
-        # TODO add per scene sampling according to number wanted if not doing it upfront
-        self.train_images = []
-        self.val_images = []
-        for s in self.train_scene_list:
-            scene_folder = DATA_PATH / self.conf.data_dir / s / "color"
-            self.train_images += list(Path(scene_folder).glob("**/*.jpg"))
-        for s in self.val_scene_list:
-            scene_folder = DATA_PATH / self.conf.data_dir / s / "color"
-            self.val_images += list(Path(scene_folder).glob("**/*.jpg"))
+        self.train_images = self._sample_split(self.conf.train_size, self.train_scene_list)
+        self.val_images = self._sample_split(self.conf.val_size, self.val_scene_list)
         # randomize if wanted
         if self.conf.rand_shuffle_seed is not None:
             np.random.RandomState(self.conf.shuffle_seed).shuffle(self.train_images)
             np.random.RandomState(self.conf.shuffle_seed).shuffle(self.val_images)
-        # select subset
-        if self.conf.train_size is not None:
-            self.train_images = self.train_images[:self.conf.train_size]
-        if self.conf.val_size is not None:
-            self.val_images = self.val_images[:self.conf.val_size]
+
+    def _sample_split(self, num_images_needed, scenes):
+        """
+        Given a split of the dataset as scene list (scene list of train or val) sample images based on rules described
+        in sample_images() method. Adds those images to the list ref provided
+        Args:
+            img_list_final_images: list ref to store sampled images in
+            num_images: number of images to sample
+            scenes: a list of scenes that contain the image candidates
+        """
+        img_list_final_images = list()
+        # initialize scenes with image paths
+        remaining_scenes = dict()
+        for s in scenes:
+            scene_folder = DATA_PATH / self.conf.data_dir / s / "color"
+            scene_image_paths = list(Path(scene_folder).glob("**/*.jpg"))
+            remaining_scenes[s] = scene_image_paths
+
+        # sample so we have
+        while len(img_list_final_images) < num_images_needed and remaining_scenes:
+            remaining_needed = num_images_needed - len(img_list_final_images)
+            fair_share = math.ceil(remaining_needed / len(remaining_scenes))
+            scenes_to_remove = list()
+
+            for s, paths in remaining_scenes.items():
+                if len(paths) <= fair_share:
+                    img_list_final_images += paths
+                    scenes_to_remove.append(s)
+                else:
+                    img_list_final_images += self._sample_with_equi_distance(paths, fair_share, delete_taken=True)
+
+            if len(img_list_final_images) >= num_images_needed:
+                break
+
+            # remove fully taken scenes
+            for s in scenes_to_remove:
+                del remaining_scenes[s]
+        # Finally remove possible little overshoot
+        return img_list_final_images[:num_images_needed]
+
+    @staticmethod
+    def _sample_with_equi_distance(img_paths: list, num_to_sample: int, delete_taken: bool = True):
+        """
+        Takes a list of images and samples from this the number of images wanted while having maximum distance between
+        them (in terms of index position).
+        """
+        # Return empty list if nothing to sample
+        if not img_paths or num_to_sample <= 0:
+            return []
+        # Return all elements if
+        if num_to_sample >= len(img_paths):
+            return img_paths.copy() if not delete_taken else img_paths
+        # Calculate the ideal distance between samples
+        step = (len(img_paths) - 1) / (num_to_sample - 1) if num_to_sample > 1 else 0
+        # Generate the indices we want to sample
+        indices = [round(i * step) for i in range(num_to_sample)]
+        # Get the images at these indices
+        sampled = [img_paths[i] for i in indices]
+        # If delete_taken is True, remove the sampled images from the original list
+        if delete_taken:
+            # Remove items in reverse order to maintain correct indices
+            for idx in sorted(indices, reverse=True):
+                img_paths.pop(idx)
+        return sampled
 
     def get_dataset(self, split):
         assert split in ["train", "val", "all"]
@@ -255,7 +319,6 @@ class _Dataset(torch.utils.data.Dataset):
         shape: shape to reshape img to if it is not None
         """
         # Load config and local variables
-        original_size = None
         reshape_scales = None
         reshaped_size = None
         heatmap_gt_key_name = self.conf.load_features.point_gt.data_keys[0]
@@ -388,7 +451,7 @@ class _Dataset(torch.utils.data.Dataset):
             data = {**data, **self.preprocessors[size_to_reshape_to](img)}
         if self.conf.load_features.do:
             gt = self._read_groundtruth(
-                folder_path,
+                Path(self.image_sub_paths[idx]).parent, # TODO: check gt loading once its generated
                 None if size_to_reshape_to == orig_shape else size_to_reshape_to,
             )
             data = {**data, **gt}
