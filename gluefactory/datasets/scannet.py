@@ -17,7 +17,7 @@ from gluefactory.utils.image import ImagePreprocessor, load_image, read_image
 logger = logging.getLogger(__name__)
 
 
-DOWNLOAD_URL = "https://polybox.ethz.ch/index.php/s/N3J7SfnE6NEt8Nu"
+DOWNLOAD_URL = "https://polybox.ethz.ch/index.php/s/N3J7SfnE6NEt8Nu/download"
 
 class Scannet(BaseDataset):
     """
@@ -108,7 +108,7 @@ class Scannet(BaseDataset):
         torch.hub.download_url_to_file(DOWNLOAD_URL, zip_path)
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
             zip_ref.extractall(tmp_dir)
-        shutil.move(tmp_dir / zip_name.split(".")[0], str(data_dir))
+        shutil.move(tmp_dir / "scannet_frames_25k", str(data_dir))
 
     def sample_images(self):
         """
