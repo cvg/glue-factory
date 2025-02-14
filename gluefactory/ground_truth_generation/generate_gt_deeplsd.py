@@ -61,7 +61,6 @@ def generate_ground_truth_with_homography_adaptation(
     n_mini_batch = int(np.ceil(num_H / bs))
     dfs = torch.empty((num_H, h, w), dtype=torch.float, device=device)
     angles = torch.empty((num_H, h, w), dtype=torch.float, device=device)
-    offsets = torch.empty((num_H, h, w, 2), dtype=torch.float, device=device)
     counts = torch.empty((num_H, h, w), dtype=torch.float, device=device)
     for i in range(n_mini_batch):
         H = Hs[i * bs : (i + 1) * bs]
@@ -93,26 +92,14 @@ def generate_ground_truth_with_homography_adaptation(
         # Aggregate the results
         dfs[i * bs : (i + 1) * bs] = df
         angles[i * bs : (i + 1) * bs] = angle
-        offsets[i * bs : (i + 1) * bs] = offset
         counts[i * bs : (i + 1) * bs] = count
 
-    # dfs = dfs.cpu()
-    # angles = angles.cpu()
-    # offsets = offsets.cpu()
-    # counts = counts.cpu()
     # Aggregate the results
     if aggregation == "mean":
         df = (dfs * counts).sum(dim=0) / counts.sum(dim=0)
-        offset = (offsets * counts.unsqueeze(-1)).sum(dim=0) / counts.sum(
-            dim=0
-        ).unsqueeze(-1)
     elif aggregation == "median":
         dfs[counts == 0] = float("nan")
         df = torch.nanmedian(dfs, dim=0)[0]
-        offsets[counts == 0] = float("nan")
-        offset = torch.nanmedian(offsets, dim=0)[0]
-        # df = masked_median(dfs, counts)
-        # offset = masked_median(offsets, counts[..., None].repeat(1, 1, 1, 2))
     else:
         raise ValueError("Unknown aggregation method: " + aggregation)
 
@@ -127,12 +114,10 @@ def generate_ground_truth_with_homography_adaptation(
         torch.ones_like(angles[:, circ_bound]) * np.pi,
         torch.zeros_like(angles[:, circ_bound]),
     )
-    # angle = torch.remainder(masked_median(angles, counts),
-    #                         np.pi).reshape(h, w)
     angles[counts == 0] = float("nan")
     angle = torch.remainder(torch.nanmedian(angles, dim=0)[0], np.pi).reshape(h, w)
-    del angles, counts, dfs, offsets
-    return df, angle, offset
+    del angles, counts, dfs
+    return df, angle
 
 
 def warp_points(points, H):
