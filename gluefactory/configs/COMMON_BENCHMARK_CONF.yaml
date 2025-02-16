@@ -6,14 +6,14 @@ model:  # TODO: REPLACE MODEL WITH YOU MODEL CFG YOU WANT TO BENCHMARK
     max_num_keypoints: 1500  # setting for training, for eval: -1
     detection_threshold: 0.0 # set to <= 0 for training, for eval without fixed num of kp, do set to a good value
     nms_radius: 3
-    subpixel_refinement: True
+    subpixel_refinement: true
     # use_deeplsd_endpoints: true
     line_df_decoder_channels: 32  # adapt to your checkpoint!!
     line_af_decoder_channels: 32
-    use_line_anglefield: True
+    use_line_anglefield: true
     training:
-      do: False
-    timeit: False  # override timeit: False from BaseModel
+      do: false
+    timeit: false  # override timeit: False from BaseModel
     line_detection:
         do: True
         conf:
@@ -49,11 +49,11 @@ model:  # TODO: REPLACE MODEL WITH YOU MODEL CFG YOU WANT TO BENCHMARK
 
             mlp_conf:
                 name: gluefactory.models.lines.pold2_mlp
-                has_angle_field: True
-                has_distance_field: True
+                has_angle_field: true
+                has_distance_field: true
 
                 num_line_samples: 30    # number of sampled points between line endpoints
-                brute_force_samples: False  # sample all points between line endpoints
+                brute_force_samples: false  # sample all points between line endpoints
                 image_size: null         # size of the input image relevant only if brute_force_samples is True
 
                 num_bands: 3            # number of bands to sample along the line
@@ -81,10 +81,10 @@ model:  # TODO: REPLACE MODEL WITH YOU MODEL CFG YOU WANT TO BENCHMARK
                 weights: /local/home/Point-Line/outputs/training/pold2_cnn1d_NS-30_NB-3_disjoint/checkpoint_best.tar
 
             filters:
-                distance_field: True
-                angle_field: False
-                brute_force_df: True
-                mlp: False
+                distance_field: true
+                angle_field: false
+                brute_force_df: true
+                mlp: false
 
             nms: false
             debug: false
