@@ -2,6 +2,7 @@ import numpy as np
 import torch
 
 from gluefactory.models.utils.metrics_lines import match_segments_1_to_1
+
 from ..base_model import BaseModel
 
 
@@ -27,10 +28,12 @@ class LineMatcher(BaseModel):
         lines0 = data["lines0"][0][:, :, [1, 0]].cpu()
         lines1 = data["lines1"][0][:, :, [1, 0]].cpu()
         lines0 = lines0[
-            torch.linalg.norm(lines0[:, 1] - lines0[:, 0], axis=1) > self.conf.min_length
+            torch.linalg.norm(lines0[:, 1] - lines0[:, 0], axis=1)
+            > self.conf.min_length
         ]
         lines1 = lines1[
-            torch.linalg.norm(lines1[:, 1] - lines1[:, 0], axis=1) > self.conf.min_length
+            torch.linalg.norm(lines1[:, 1] - lines1[:, 0], axis=1)
+            > self.conf.min_length
         ]
         # The data elements come in lists and therefore they are unpacked
         segs1, segs2, matched_idx1, matched_idx2, distances = match_segments_1_to_1(

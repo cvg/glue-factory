@@ -93,7 +93,11 @@ def merge_line_cluster_torch(lines, return_indices=False):
     a, b, c = cov[0, 0], cov[0, 1], cov[1, 1]
     # Principal component of a 2x2 symmetric matrix
     if b == 0:
-        u = torch.tensor([1, 0], device=device) if a >= c else torch.tensor([0, 1], device=device)
+        u = (
+            torch.tensor([1, 0], device=device)
+            if a >= c
+            else torch.tensor([0, 1], device=device)
+        )
     else:
         m = (c - a + torch.sqrt((a - c) ** 2 + 4 * b**2)) / (2 * b)
         u = torch.tensor([1, m], device=device) / torch.sqrt(1 + m**2)

@@ -73,7 +73,7 @@ default_train_conf = {
     "pr_curves": {},
     "plot": None,
     "submodules": [],
-    "use_gpu": True
+    "use_gpu": True,
 }
 default_train_conf = OmegaConf.create(default_train_conf)
 
@@ -248,7 +248,9 @@ def training(rank, conf, output_dir, args):
             if "batch_size" in data_conf:
                 data_conf.batch_size = int(data_conf.batch_size / args.n_gpus)
             if "train_batch_size" in data_conf:
-                data_conf.train_batch_size = int(data_conf.train_batch_size / args.n_gpus)
+                data_conf.train_batch_size = int(
+                    data_conf.train_batch_size / args.n_gpus
+                )
             if "num_workers" in data_conf:
                 data_conf.num_workers = int(
                     (data_conf.num_workers + args.n_gpus - 1) / args.n_gpus

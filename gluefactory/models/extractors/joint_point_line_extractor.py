@@ -1,28 +1,28 @@
 import logging
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from kornia.geometry.transform import warp_perspective
 from omegaconf import OmegaConf
-import cv2
 
-import gluefactory.models.utils.metrics_lines as LineMetrics
+from gluefactory.models.utils.metrics_lines import get_rep_and_loc_error
 from gluefactory.datasets.homographies_deeplsd import sample_homography
 from gluefactory.models import get_model
 from gluefactory.models.backbones.backbone_encoder import AlikedEncoder, aliked_cfgs
 from gluefactory.models.base_model import BaseModel
-from gluefactory.models.extractors.aliked import SDDH, SMH, InputPadder, DKD
-from gluefactory.models.lines.pold2_extractor import LineExtractor
 from gluefactory.models.deeplsd_inference import DeepLSD
-from gluefactory.settings import DATA_PATH
+from gluefactory.models.extractors.aliked import DKD, SDDH, SMH, InputPadder
+from gluefactory.models.lines.pold2_extractor import LineExtractor
 from gluefactory.models.utils.metrics_points import (
     compute_loc_error,
     compute_pr,
     compute_repeatability,
 )
+from gluefactory.settings import DATA_PATH
 from gluefactory.utils.misc import change_dict_key, sync_and_time
 
 # Parameters for calculating point metrics in validation loss
@@ -52,7 +52,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         "max_num_keypoints": 1024,  # setting for training, for eval: -1
         "detection_threshold": -1,  # setting for training, for eval: 0.2
         "nms_radius": 3,
-        "subpixel_refinement": True, # perform subpixel refinement after detection
+        "subpixel_refinement": True,  # perform subpixel refinement after detection
         "force_num_keypoints": False,
         "training": {  # training settings
             "do": False,  # switch to turn off other settings regarding training = "training mode"
@@ -81,8 +81,8 @@ class JointPointLineDetectorDescriptor(BaseModel):
         "line_detection": {  # by default we use the POLD2 Line Extractor (MLP with Angle Field)
             "do": True,
             "conf": LineExtractor.default_conf,
-            "use_deeplsd_kp": False, # whether we should use DeepLSD line endpoints as junction candidates. Otherwise use JPLDD keypoints
-            "use_deeplsd_df_af": False # whether we should use Distance and Angle Field from JPLDD or DeepLSD
+            "use_deeplsd_kp": False,  # whether we should use DeepLSD line endpoints as junction candidates. Otherwise use JPLDD keypoints
+            "use_deeplsd_df_af": False,  # whether we should use Distance and Angle Field from JPLDD or DeepLSD
         },
         "checkpoint": None,  # if given and non-null, load model checkpoint if local path load locally if standard url download it.
         "line_neighborhood": 5,  # used to normalize / denormalize line distance field
@@ -105,7 +105,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
     required_data_keys = ["image"]
 
-    def _init(self, conf):
+    def _init(self, conf) -> None:
         logger.debug(f"final config dict(type={type(conf)}): {conf}")
         # set loss fn
         assert self.conf.training.loss.kp_loss_name in [
@@ -220,10 +220,16 @@ class JointPointLineDetectorDescriptor(BaseModel):
             chkpt = torch.load(conf.checkpoint, map_location=torch.device("cpu"))
 
             # remove mlp weights from line detection TODO: remove them when storing instead of filter on load
-            chkpt["model"] = {k: v for k, v in chkpt["model"].items() if not ("mlp" in k)}
+            chkpt["model"] = {
+                k: v for k, v in chkpt["model"].items() if not ("mlp" in k)
+            }
             # if angle field is not wanted we filter out its weights if existent so we can also load old checkpoints including this branch
             if not self.conf.use_line_anglefield:
-                chkpt["model"] = {k: v for k, v in chkpt["model"].items() if not ("angle_field_branch" in k)}
+                chkpt["model"] = {
+                    k: v
+                    for k, v in chkpt["model"].items()
+                    if not ("angle_field_branch" in k)
+                }
 
             self.load_state_dict(
                 chkpt["model"], strict=True
@@ -233,15 +239,19 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 conf.checkpoint, map_location=torch.device("cpu")
             )
             self.load_state_dict(chkpt["model"], strict=False)
-        
-        # Load line extractor if line detection is used
+
+        # Load line extractor and import line metrics if line detection is used
         if self.conf.line_detection.do:
+
             self.line_extractor = LineExtractor(
                 self.conf.line_detection.conf,
             )
 
         # only load deeplsd model if we perform ablation or development
-        if self.conf.line_detection.do and (self.conf.line_detection.use_deeplsd_kp or self.conf.line_detection.use_deeplsd_df_af):
+        if self.conf.line_detection.do and (
+            self.conf.line_detection.use_deeplsd_kp
+            or self.conf.line_detection.use_deeplsd_df_af
+        ):
             deeplsd_conf = {
                 "detect_lines": True,
                 "line_detection_params": {
@@ -254,21 +264,22 @@ class JointPointLineDetectorDescriptor(BaseModel):
             }
             deeplsd_conf = OmegaConf.create(deeplsd_conf)
             ckpt_path = DATA_PATH / deeplsd_conf.weights
-            ckpt = torch.load(str(ckpt_path), map_location=torch.device("cpu"), weights_only=False)
+            ckpt = torch.load(
+                str(ckpt_path), map_location=torch.device("cpu"), weights_only=False
+            )
             deeplsd_net = DeepLSD(deeplsd_conf)
             deeplsd_net.load_state_dict(ckpt["model"])
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             self.deeplsd = deeplsd_net.to(device).eval()
 
-
     # Utility methods for line df and af with deepLSD
-    def normalize_df(self, df):
+    def normalize_df(self, df: torch.Tensor) -> torch.Tensor:
         return -torch.log(df / self.conf.line_neighborhood + 1e-6)
 
-    def denormalize_df(self, df_norm):
+    def denormalize_df(self, df_norm: torch.Tensor) -> torch.Tensor:
         return torch.exp(-df_norm) * self.conf.line_neighborhood
 
-    def _forward(self, data):
+    def _forward(self, data: dict) -> torch.Tensor:
         """
         Perform a forward pass. Certain things are only executed NOT in training mode.
         Returned:
@@ -336,9 +347,14 @@ class JointPointLineDetectorDescriptor(BaseModel):
         if self.conf.timeit:
             start_line_df = sync_and_time()
         line_distance_field = self.denormalize_df(
-            self.distance_field_branch(feature_map)) # denormalize as NN outputs normalized version
+            self.distance_field_branch(feature_map)
+        )  # denormalize as NN outputs normalized version
         # remove additional dimensions of size 1 if not having batchsize one
-        line_distance_field = line_distance_field.squeeze(1) if line_distance_field.shape[0] == 1 else line_distance_field.squeeze()
+        line_distance_field = (
+            line_distance_field.squeeze(1)
+            if line_distance_field.shape[0] == 1
+            else line_distance_field.squeeze()
+        )
         if self.conf.timeit:
             self.timings["line-df"].append(sync_and_time() - start_line_df)
         output["line_distancefield"] = line_distance_field
@@ -351,7 +367,11 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 self.angle_field_branch(feature_map) * torch.pi
             )  # multipy with pi as output is in [0, 1] and we want angle
             # remove additional dimensions of size 1 if not having batchsize one
-            line_angle_field = line_angle_field.squeeze(1) if line_distance_field.shape[0] == 1 else line_angle_field.squeeze()
+            line_angle_field = (
+                line_angle_field.squeeze(1)
+                if line_distance_field.shape[0] == 1
+                else line_angle_field.squeeze()
+            )
             if self.conf.timeit:
                 self.timings["line-af"].append(sync_and_time() - start_line_af)
             output["line_anglefield"] = line_angle_field
@@ -363,7 +383,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         # Keypoint detection also removes kp at border. it can return topk keypoints or threshold.
         keypoints, _, kptscores = self.dkd(
             keypoint_and_junction_score_map,
-            sub_pixel=bool(self.conf.subpixel_refinement)
+            sub_pixel=bool(self.conf.subpixel_refinement),
         )
         if self.conf.timeit:
             self.timings["keypoint-detection"].append(sync_and_time() - start_keypoints)
@@ -379,7 +399,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
         rescaled_kp = wh * (torch.stack(keypoints) + 1.0) / 2.0
         output["keypoints"] = rescaled_kp
         output["keypoint_scores"] = torch.stack(kptscores)
-
 
         # Keypoint descriptors
         if self.conf.timeit:
@@ -406,43 +425,72 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 # create dummy so that zipping works
                 line_angle_field = torch.zeros_like(line_distance_field)
 
-            for df, af, kp, desc in zip(line_distance_field, line_angle_field, rescaled_kp, keypoint_descriptors):
-                '''
-                            "line_detection": {  # by default we use the POLD2 Line Extractor (MLP with Angle Field)
-                                "do": True,
-                                "conf": LineExtractor.default_conf,
-                                "use_deeplsd_kp": False, # whether we should use DeepLSD line endpoints as junction candidates. Otherwise use JPLDD keypoints
-                                "use_deeplsd_df_af": False # whether we should use Distance and Angle Field from JPLDD or DeepLSD
-                            },
-                '''
+            for df, af, kp, desc in zip(
+                line_distance_field, line_angle_field, rescaled_kp, keypoint_descriptors
+            ):
+                """
+                "line_detection": {  # by default we use the POLD2 Line Extractor (MLP with Angle Field)
+                    "do": True,
+                    "conf": LineExtractor.default_conf,
+                    "use_deeplsd_kp": False, # whether we should use DeepLSD line endpoints as junction candidates. Otherwise use JPLDD keypoints
+                    "use_deeplsd_df_af": False # whether we should use Distance and Angle Field from JPLDD or DeepLSD
+                },
+                """
                 # Only use deeplsd if explicitly activated
-                if self.conf.line_detection.use_deeplsd_kp or self.conf.line_detection.use_deeplsd_df_af:
-                    img = (image[0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+                if (
+                    self.conf.line_detection.use_deeplsd_kp
+                    or self.conf.line_detection.use_deeplsd_df_af
+                ):
+                    img = (image[0].permute(1, 2, 0).cpu().numpy() * 255).astype(
+                        np.uint8
+                    )
                     c_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                     gray_img = cv2.cvtColor(c_img, cv2.COLOR_BGR2GRAY)
                     inputs = {
-                       "image": torch.tensor(gray_img, dtype=torch.float, device=padded_img.device)[
-                           None, None
-                       ]
-                       / 255.0
+                        "image": torch.tensor(
+                            gray_img, dtype=torch.float, device=padded_img.device
+                        )[None, None]
+                        / 255.0
                     }
                     with torch.no_grad():
                         deeplsd_output = self.deeplsd(inputs)
                     deeplsd_lines = np.array(deeplsd_output["lines"][0]).astype(int)
 
                     deeplsd_lines_torch = torch.tensor(deeplsd_lines).cuda()
-                    deeplsd_lines_torch[:,:,0] = torch.clamp(deeplsd_lines_torch[:,:,0],0,img.shape[1])
-                    deeplsd_lines_torch[:,:,1] = torch.clamp(deeplsd_lines_torch[:,:,1],0,img.shape[0])
-                    keypoints_deeplsd = torch.cat((deeplsd_lines_torch[:,0],deeplsd_lines_torch[:,1]))
+                    deeplsd_lines_torch[:, :, 0] = torch.clamp(
+                        deeplsd_lines_torch[:, :, 0], 0, img.shape[1]
+                    )
+                    deeplsd_lines_torch[:, :, 1] = torch.clamp(
+                        deeplsd_lines_torch[:, :, 1], 0, img.shape[0]
+                    )
+                    keypoints_deeplsd = torch.cat(
+                        (deeplsd_lines_torch[:, 0], deeplsd_lines_torch[:, 1])
+                    )
                 # prepare line data for line detection!
                 line_data = {
-                     "points": torch.clone(kp) if not self.conf.line_detection.use_deeplsd_kp else keypoints_deeplsd,
-                     "distance_map": torch.clone(df) if not self.conf.line_detection.use_deeplsd_df_af else deeplsd_output["df"][0],
-                     "descriptors": torch.clone(desc) if not self.conf.line_detection.use_deeplsd_kp else torch.zeros((keypoints_deeplsd.shape[0],128)).cuda(),
-                     "angle_map": None
+                    "points": (
+                        torch.clone(kp)
+                        if not self.conf.line_detection.use_deeplsd_kp
+                        else keypoints_deeplsd
+                    ),
+                    "distance_map": (
+                        torch.clone(df)
+                        if not self.conf.line_detection.use_deeplsd_df_af
+                        else deeplsd_output["df"][0]
+                    ),
+                    "descriptors": (
+                        torch.clone(desc)
+                        if not self.conf.line_detection.use_deeplsd_kp
+                        else torch.zeros((keypoints_deeplsd.shape[0], 128)).cuda()
+                    ),
+                    "angle_map": None,
                 }
                 if self.conf.use_line_anglefield:
-                    line_data["angle_map"] = torch.clone(af) if not self.conf.line_detection.use_deeplsd_df_af else deeplsd_output["line_level"][0]
+                    line_data["angle_map"] = (
+                        torch.clone(af)
+                        if not self.conf.line_detection.use_deeplsd_df_af
+                        else deeplsd_output["line_level"][0]
+                    )
 
                 line_pred = self.line_extractor(line_data)
                 lines.append(line_pred["lines"])
@@ -467,13 +515,13 @@ class JointPointLineDetectorDescriptor(BaseModel):
             self.timings["total-makespan"].append(sync_and_time() - total_start)
         return output
 
-    def weighted_bce_loss(self, prediction, target):
+    def weighted_bce_loss(self, prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         epsilon = 1e-6
         return -self.lambda_valid_kp * target * torch.log(prediction + epsilon) - (
             1 - target
         ) * torch.log(1 - prediction + epsilon)
 
-    def focal_loss(self, prediction, target):
+    def focal_loss(self, prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         alpha = self.conf.training.loss.kp_loss_parameters.focal_alpha
         gamma = self.conf.training.loss.kp_loss_parameters.focal_gamma
         epsilon = 1e-6  # Small value to avoid log(0)
@@ -490,10 +538,9 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
         # Combine the parts to get the total loss
         loss = target * pos_part + (1 - target) * neg_part
-
         return loss
 
-    def loss(self, pred, data):
+    def loss(self, pred: dict, data:dict) -> dict:
         """
         format of data: B x H x W
         perform loss calculation based on prediction and data(=groundtruth) for a batch.
@@ -508,11 +555,14 @@ class JointPointLineDetectorDescriptor(BaseModel):
         metrics = {}
 
         # define padding mask which is only ones if no padding is used -> makes loss compatible with any scaling technique and whether padding is used or not
-        padding_mask = data.get("padding_mask", torch.ones_like(data['image']))[:, 0, :, :].int()
-        
+        padding_mask = data.get("padding_mask", torch.ones_like(data["image"]))[
+            :, 0, :, :
+        ].int()
+
         # Use Weighted BCE Loss for Point Heatmap
         keypoint_scoremap_loss = self.loss_fn(
-            pred["keypoint_and_junction_score_map"] * padding_mask, data["superpoint_heatmap"] * padding_mask
+            pred["keypoint_and_junction_score_map"] * padding_mask,
+            data["superpoint_heatmap"] * padding_mask,
         ).mean(dim=(1, 2))
 
         losses["keypoint_and_junction_score_map"] = keypoint_scoremap_loss
@@ -531,8 +581,11 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
         # use angular loss for anglefield, if use of af is activated
         if self.conf.use_line_anglefield:
-            af_diff = (data["deeplsd_angle_field"] - pred["line_anglefield"])
-            line_af_loss = (torch.minimum(af_diff**2, (torch.pi - af_diff.abs()) ** 2) * padding_mask).mean(
+            af_diff = data["deeplsd_angle_field"] - pred["line_anglefield"]
+            line_af_loss = (
+                torch.minimum(af_diff**2, (torch.pi - af_diff.abs()) ** 2)
+                * padding_mask
+            ).mean(
                 dim=(1, 2)
             )  # pixelwise minimum
             losses["line_anglefield"] = line_af_loss
@@ -554,7 +607,9 @@ class JointPointLineDetectorDescriptor(BaseModel):
             + self.conf.training.loss.loss_weights.line_df_weight * line_df_loss
         )
         if self.conf.use_line_anglefield:
-            overall_loss += (self.conf.training.loss.loss_weights.line_af_weight * line_af_loss)
+            overall_loss += (
+                self.conf.training.loss.loss_weights.line_af_weight * line_af_loss
+            )
         if self.conf.training.train_descriptors.do:
             overall_loss += (
                 self.conf.training.loss.loss_weights.descriptor_weight
@@ -567,7 +622,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             metrics = self.metrics(pred, data)
         return losses, metrics
 
-    def get_groundtruth_descriptors(self, pred: dict):
+    def get_groundtruth_descriptors(self, pred: dict) -> torch.Tensor:
         """
         Takes keypoints from predictions + computes ground-truth descriptors for it.
         """
@@ -579,7 +634,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             descriptors = self.aliked_lw(pred)
         return descriptors
 
-    def load_pretrained_aliked_elements(self):
+    def load_pretrained_aliked_elements(self) -> None:
         """
         Loads ALIKED weights for backbone encoder, score_head(SMH) and SDDH
         """
@@ -607,9 +662,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
         # load values
         self.load_state_dict(aliked_state_dict, strict=False)
 
-    def count_trainable_parameters(self):
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
-
     def state_dict(self, *args, **kwargs):
         """
         Custom state dict to exclude aliked_lw module from checkpoint.
@@ -622,7 +674,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
                     del sd[k]
         return sd
 
-    def get_current_timings(self, reset=False):
+    def get_current_timings(self, reset: bool=False) -> dict:
         """
         ONLY USE IF TIMEIT ACTIVATED. It returns the average of the current times in a dictionary for
         all the single network parts.
@@ -636,8 +688,11 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 self.timings[k] = []
         return results
 
-    def get_pr(self, pred_kp: torch.Tensor, gt_kp: torch.Tensor, tol=3):
-        """Compute the precision and recall, based on GT KP."""
+    @staticmethod
+    def get_pr(pred_kp: torch.Tensor, gt_kp: torch.Tensor, tol:int=3) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute the precision and recall, based on GT KP.
+        """
         if len(gt_kp) == 0:
             precision = float(len(pred_kp) == 0)
             recall = 1.0
@@ -651,7 +706,15 @@ class JointPointLineDetectorDescriptor(BaseModel):
             recall = close.max(dim=0)[0].mean()
         return precision, recall
 
-    def metrics(self, pred, data):
+    def metrics(self, pred: dict, data: dict) -> dict:
+        """
+        Compute evaluation metrics for points. Also for lines if they are contained in the output
+        Args:
+            pred: dict, containing predictions made by the model
+            data: dict containing image data and ground truth
+
+        Returns: dict, containing the computed metrics
+        """
         device = pred["keypoint_and_junction_score_map"].device
         gt = data["superpoint_heatmap"].cpu().numpy()
         predictions = pred["keypoint_and_junction_score_map"].cpu().numpy()
@@ -679,7 +742,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         if "lines" in warped_outputs:
             lines = pred["lines"]
             warped_lines = warped_outputs["lines"]
-            rep_lines, loc_error_lines = LineMetrics.get_rep_and_loc_error(
+            rep_lines, loc_error_lines = get_rep_and_loc_error(
                 lines, warped_lines, Hs, predictions[0].shape, [50], [3]
             )
             out["repeatability_lines"] = torch.tensor(

@@ -9,18 +9,17 @@ import torch
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
+from gluefactory.datasets import get_dataset
+from gluefactory.eval.eval_pipeline import EvalPipeline
+from gluefactory.eval.io import get_eval_parser, load_model, parse_eval_args
+from gluefactory.models.cache_loader import CacheLoader
 from gluefactory.models.utils.metrics_lines import (
     compute_loc_error,
     compute_repeatability,
 )
-
-from gluefactory.datasets import get_dataset
-from gluefactory.models.cache_loader import CacheLoader
 from gluefactory.settings import EVAL_PATH
 from gluefactory.utils.export_predictions import export_predictions
 from gluefactory.utils.tensor import map_tensor
-from gluefactory.eval.eval_pipeline import EvalPipeline
-from gluefactory.eval.io import get_eval_parser, load_model, parse_eval_args
 
 
 class RDNIMPipeline(EvalPipeline):

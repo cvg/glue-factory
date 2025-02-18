@@ -7,19 +7,21 @@ Usage:
     python -m notebooks.gen_MLP_lines_fields.py
 """
 
-from gluefactory.models.deeplsd_inference import DeepLSD
-from gluefactory.models import get_model
-from gluefactory.datasets import get_dataset
-from gluefactory.settings import DATA_PATH
-import torch
-import numpy as np
-import random
-from tqdm import tqdm
-from pprint import pprint
-import cv2
 import glob
-from omegaconf import OmegaConf
+import random
+from pprint import pprint
+
+import cv2
 import h5py as h5
+import numpy as np
+import torch
+from omegaconf import OmegaConf
+from tqdm import tqdm
+
+from gluefactory.datasets import get_dataset
+from gluefactory.models import get_model
+from gluefactory.models.deeplsd_inference import DeepLSD
+from gluefactory.settings import DATA_PATH
 
 # Configs and Constants
 deeplsd_conf = {
@@ -42,20 +44,20 @@ jpldd_conf = {
     "line_detection": {
         "do": False,
     },
-    "checkpoint": "/local/home/Point-Line/outputs/training/focal_loss_experiments/rk_focal_threshDF_focal/checkpoint_best.tar"
-    #"checkpoint": "/local/home/rkreft/shared_team_folder/outputs/training/rk_oxparis_focal_hard_gt/checkpoint_best.tar"
-    #"checkpoint": "/local/home/rkreft/shared_team_folder/outputs/training/rk_pold2gt_oxparis_base_hard_gt/checkpoint_best.tar"
+    "checkpoint": "/local/home/Point-Line/outputs/training/focal_loss_experiments/rk_focal_threshDF_focal/checkpoint_best.tar",
+    # "checkpoint": "/local/home/rkreft/shared_team_folder/outputs/training/rk_oxparis_focal_hard_gt/checkpoint_best.tar"
+    # "checkpoint": "/local/home/rkreft/shared_team_folder/outputs/training/rk_pold2gt_oxparis_base_hard_gt/checkpoint_best.tar"
 }
 
 dset_conf = {
-    "reshape": [800, 800], # ex [800, 800]
+    "reshape": [800, 800],  # ex [800, 800]
     "load_features": {
         "do": False,
     },
-    "debug": False
+    "debug": False,
 }
 
-SAVE_PATH = DATA_PATH / 'DeepLSD-Outputs-OXPA' / 'DeepLSD-Outputs-OXPA.h5'
+SAVE_PATH = DATA_PATH / "DeepLSD-Outputs-OXPA" / "DeepLSD-Outputs-OXPA.h5"
 IMG_GLOB = DATA_PATH / "revisitop1m_POLD2/jpg/**/base_image.jpg"
 NUM_IMGS = -1  # Number of images to process, -1 for all
 
@@ -69,11 +71,11 @@ random.seed(seed)
 
 # Set device
 if torch.cuda.is_available():
-    device = 'cuda'
+    device = "cuda"
 elif torch.backends.mps.is_built():
-    device = 'mps'
+    device = "mps"
 else:
-    device = 'cpu'
+    device = "cpu"
 print(f"Device Used: {device}")
 
 ## DeepLSD Model
@@ -125,16 +127,24 @@ for i in tqdm(idx):
         }
         deeplsd_output = deeplsd_net(inputs)
 
-    with h5.File(SAVE_PATH, 'a') as f:
+    with h5.File(SAVE_PATH, "a") as f:
         if f"img_{i}" in f:
             del f[f"img_{i}"]
         f.create_group(f"img_{i}")
         f[f"img_{i}"].create_dataset("img", data=img)
         f[f"img_{i}"].create_dataset("deeplsd_lines", data=deeplsd_output["lines"][0])
-        f[f"img_{i}"].create_dataset("deeplsd_df", data=deeplsd_output["df"][0].cpu().numpy())
-        f[f"img_{i}"].create_dataset("deeplsd_af", data=deeplsd_output["line_level"][0].cpu().numpy())
+        f[f"img_{i}"].create_dataset(
+            "deeplsd_df", data=deeplsd_output["df"][0].cpu().numpy()
+        )
+        f[f"img_{i}"].create_dataset(
+            "deeplsd_af", data=deeplsd_output["line_level"][0].cpu().numpy()
+        )
 
-        f[f"img_{i}"].create_dataset("jpldd_df", data=jpldd_output["line_distancefield"][0].cpu().numpy())
-        f[f"img_{i}"].create_dataset("jpldd_af", data=jpldd_output["line_anglefield"][0].cpu().numpy())
+        f[f"img_{i}"].create_dataset(
+            "jpldd_df", data=jpldd_output["line_distancefield"][0].cpu().numpy()
+        )
+        f[f"img_{i}"].create_dataset(
+            "jpldd_af", data=jpldd_output["line_anglefield"][0].cpu().numpy()
+        )
 
 print(f"DeepLSD outputs saved at {SAVE_PATH}")

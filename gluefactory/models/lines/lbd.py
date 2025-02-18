@@ -1,8 +1,9 @@
-import numpy as np
 import cv2
-
+import numpy as np
+import pytlbd
 
 ETH_EPS = 1e-10
+
 
 class PyTLBD(object):
     def __init__(self):
@@ -13,7 +14,9 @@ class PyTLBD(object):
         ms_lines = []
         for l in lines.reshape(-1, 4):
             ll = np.append(l, [0, np.linalg.norm(l[:2] - l[2:4])])
-            ms_lines.append([(0, ll)] + [(i, ll / (i * np.sqrt(2))) for i in range(1, 5)])
+            ms_lines.append(
+                [(0, ll)] + [(i, ll / (i * np.sqrt(2))) for i in range(1, 5)]
+            )
         return ms_lines
 
     @staticmethod
@@ -53,7 +56,7 @@ class PyTLBD(object):
         # Compute multi-scale descriptors
         desc = self.get_lbg_descrs(img, lines.reshape(-1, 4))
         return np.array(desc)
-    
+
     def match_lines(self, lines0, lines1, desc0, desc1):
         # imoprt Locally to prevent GF from crashing
         import pytlbd
@@ -61,18 +64,23 @@ class PyTLBD(object):
         multiscale_lines0 = PyTLBD.to_multiscale_lines(lines0)
         multiscale_lines1 = PyTLBD.to_multiscale_lines(lines1)
         try:
-            my_matches = np.array(pytlbd.lbd_matching_multiscale(
-                multiscale_lines0, multiscale_lines1,
-                list(desc0), list(desc1)))
+            my_matches = np.array(
+                pytlbd.lbd_matching_multiscale(
+                    multiscale_lines0, multiscale_lines1, list(desc0), list(desc1)
+                )
+            )
             pred_matches = -np.ones((len(desc0)), dtype=int)
             if len(my_matches) > 0:
-                pred_matches[my_matches[:, 0].astype(np.int32)] = my_matches[:, 1].astype(np.int32)
+                pred_matches[my_matches[:, 0].astype(np.int32)] = my_matches[
+                    :, 1
+                ].astype(np.int32)
             return pred_matches
         except RuntimeError:
             return -np.ones((len(desc0)), dtype=int)
 
 
 ### Util functions for LBD heuristic matcher
+
 
 def get_img_pyramid(img, n_levels=5, level_scale=np.sqrt(2)):
     octave_img = img.copy()
@@ -81,15 +89,19 @@ def get_img_pyramid(img, n_levels=5, level_scale=np.sqrt(2)):
     pyramid = []
     for i in range(n_levels):
         increase_sigma = np.sqrt(cur_sigma2 - pre_sigma2)
-        blurred = cv2.GaussianBlur(octave_img, (5, 5), increase_sigma,
-                                   borderType=cv2.BORDER_REPLICATE)
+        blurred = cv2.GaussianBlur(
+            octave_img, (5, 5), increase_sigma, borderType=cv2.BORDER_REPLICATE
+        )
         pyramid.append(blurred)
 
         # down sample the current octave image to get the next octave image
-        new_size = (int(octave_img.shape[1] / level_scale),
-                    int(octave_img.shape[0] / level_scale))
-        octave_img = cv2.resize(blurred, new_size, 0, 0,
-                                interpolation=cv2.INTER_NEAREST)
+        new_size = (
+            int(octave_img.shape[1] / level_scale),
+            int(octave_img.shape[0] / level_scale),
+        )
+        octave_img = cv2.resize(
+            blurred, new_size, 0, 0, interpolation=cv2.INTER_NEAREST
+        )
         pre_sigma2 = cur_sigma2
         cur_sigma2 = cur_sigma2 * 2
 
@@ -144,8 +156,9 @@ def matlab_like_desc_distance(distances_mat):
 
 # TODO This distance is always between 0 and 1 :-(
 def hellinger_dist(mean1, std1, mean2, std2):
-    h2 = 1 - np.sqrt((2 * std1 * std2) / (ETH_EPS + std1 ** 2 + std2 ** 2)) * np.exp(
-        -0.25 * (mean1 - mean2) ** 2 / (ETH_EPS + std1 ** 2 + std2 ** 2))
+    h2 = 1 - np.sqrt((2 * std1 * std2) / (ETH_EPS + std1**2 + std2**2)) * np.exp(
+        -0.25 * (mean1 - mean2) ** 2 / (ETH_EPS + std1**2 + std2**2)
+    )
     return np.sqrt(h2)
 
 
@@ -167,14 +180,24 @@ def multiscale_helinger_dist(descriptorsL, descriptorsR):
     ndims = descriptorsL[0].shape[1]
 
     maxR = np.max(list(map(lambda d: len(d), descriptorsR)))
-    descriptorsR = np.array(list(map(
-        lambda d: np.vstack([np.array(d), np.full((maxR - len(d), ndims), 0, np.float32)]), descriptorsR)))
+    descriptorsR = np.array(
+        list(
+            map(
+                lambda d: np.vstack(
+                    [np.array(d), np.full((maxR - len(d), ndims), 0, np.float32)]
+                ),
+                descriptorsR,
+            )
+        )
+    )
 
     # Compute the L2 distance matrix and use it to find the matches
     D = np.zeros((len(descriptorsL), len(descriptorsR)), dtype=np.float32)
     # for r in tqdm(range(len(descriptorsL))):
     for r in range(len(descriptorsL)):
-        D[r] = descriptors_hellinger_dist(descriptorsL[r], descriptorsR[:, :, np.newaxis]).min(axis=(1, 2))
+        D[r] = descriptors_hellinger_dist(
+            descriptorsL[r], descriptorsR[:, :, np.newaxis]
+        ).min(axis=(1, 2))
 
     return D
 
@@ -184,12 +207,22 @@ def multiscale_descr_dist(descriptors_l, descriptors_r):
     max_r = np.max(list(map(lambda d: len(d), descriptors_r)))
 
     descriptors_l = list(map(lambda d: np.array(d), descriptors_l))
-    descriptors_r = np.array(list(map(
-        lambda d: np.vstack([np.array(d), np.full((max_r - len(d), 72), np.inf, np.float32)]), descriptors_r)))
+    descriptors_r = np.array(
+        list(
+            map(
+                lambda d: np.vstack(
+                    [np.array(d), np.full((max_r - len(d), 72), np.inf, np.float32)]
+                ),
+                descriptors_r,
+            )
+        )
+    )
 
     # Compute the L2 distance matrix and use it to find the matches
     D = np.zeros((len(descriptors_l), len(descriptors_r)), dtype=np.float32)
     for r in range(len(descriptors_l)):
-        D[r] = np.linalg.norm(descriptors_l[r] - descriptors_r[:, :, np.newaxis], axis=-1).min(axis=(1, 2))
+        D[r] = np.linalg.norm(
+            descriptors_l[r] - descriptors_r[:, :, np.newaxis], axis=-1
+        ).min(axis=(1, 2))
 
     return D
