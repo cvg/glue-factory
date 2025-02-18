@@ -9,7 +9,6 @@ from torch.nn.functional import pixel_shuffle, softmax
 from gluefactory.datasets.homographies_deeplsd import warp_lines, warp_points
 from gluefactory.geometry.homography import warp_lines_torch
 from gluefactory.utils.image import compute_image_grad
-from homography_est import LineSegment, ransac_line_homography
 
 UPM_EPS = 1e-8
 
@@ -599,6 +598,8 @@ def estimate_homography(line_seg1, line_seg2, tol_px=5):
     Returns:
         The estimated homography, mask of inliers, and reprojection error.
     """
+    # To Account for optional libraries
+    from homography_est import LineSegment, ransac_line_homography
     # Initialize the line segments C++ bindings
     lines1 = [LineSegment(l[0, [1, 0]], l[1, [1, 0]]) for l in line_seg1]
     lines2 = [LineSegment(l[0, [1, 0]], l[1, [1, 0]]) for l in line_seg2]
