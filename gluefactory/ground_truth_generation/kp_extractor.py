@@ -113,7 +113,8 @@ class KPExtractor:
         assert scores.shape[0] > 5
         return keypoints, scores
 
-    def extract_keypoints_dkd(self, sp_heatmap):
+    def extract_keypoints_dkd(self, sp_heatmap, device="cpu"):
+        sp_heatmap = sp_heatmap.to(device)
         keypoints, _, scores = self.dkd_extractor(sp_heatmap.unsqueeze(0), sub_pixel=True)
         # sort
         _, h, w = sp_heatmap.shape
@@ -135,12 +136,12 @@ def read_datasets_from_h5(keys: list, file) -> dict:
         )  # nan_to_num needed because of weird sp gt format
     return data
 
-def extract_keypoints(hdf5_path, extractor, debug: bool = False):
+def extract_keypoints(hdf5_path, extractor, debug: bool = False, device="cpu"):
     with h5py.File(hdf5_path, "r") as hmap_file:
         sp_gt_heatmap = read_datasets_from_h5(
             ["superpoint_heatmap"], hmap_file  # loaded tensor has shape 2 x N
         )["superpoint_heatmap"].unsqueeze(0)
-    keypoints, scores = extractor.extract_keypoints_dkd(sp_gt_heatmap)
+    keypoints, scores = extractor.extract_keypoints_dkd(sp_gt_heatmap, device)
     if debug:
         print("Heatmap_shape:", sp_gt_heatmap.shape)
         print("Scores_shape:", scores.shape)
@@ -148,6 +149,8 @@ def extract_keypoints(hdf5_path, extractor, debug: bool = False):
         print("Max/Min y: ", keypoints[:, 0].max(), keypoints[:, 0].min())
         print("Max/Min x: ", keypoints[:, 1].max(), keypoints[:, 1].min())
     # concat keypoints and scores
+    keypoints = keypoints.cpu()
+    scores = scores.cpu()
     to_store = np.concatenate((keypoints, scores.unsqueeze(1)), axis=1)
     if debug:
         print("to_store.shape:", to_store.shape)
@@ -158,6 +161,7 @@ if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument("path", type=str)
     arg_parser.add_argument("--debug", action="store_true")
+    arg_parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda", "mps"])
     arguments = arg_parser.parse_args()
 
     input_path = Path(arguments.path)
@@ -169,6 +173,6 @@ if __name__ == "__main__":
     extractor = KPExtractor({})
 
     for f in tqdm(heatmap_files):
-        extract_keypoints(f, extractor, bool(arguments.debug))
+        extract_keypoints(f, extractor, bool(arguments.debug), arguments.device)
 
     print("Finish Extracting Keypoints!")
