@@ -1,19 +1,18 @@
 import logging
 import math
-import pickle
 import random
 import shutil
 from pathlib import Path
 import zipfile
-from collections import defaultdict
 
 import h5py
 import numpy as np
 import torch
 
 from gluefactory.datasets import BaseDataset
+from gluefactory.models.extractors.superpoint import top_k_keypoints
 from gluefactory.settings import DATA_PATH, root
-from gluefactory.utils.image import ImagePreprocessor, load_image, read_image
+from gluefactory.utils.image import ImagePreprocessor, load_image
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ class Scannet(BaseDataset):
     """
 
     default_conf = {
-        "data_dir": "scannet_dataset",  # as subdirectory of DATA_PATH(defined in settings.py)
+        "data_dir": "scannet",  # as subdirectory of DATA_PATH(defined in settings.py)
         "grayscale": False,
         "train_batch_size": 2,  # prefix must match split
         "test_batch_size": 1,
@@ -35,6 +34,7 @@ class Scannet(BaseDataset):
         "all_batch_size": 1,
         "split": "train",  # train, val
         "seed": 0,
+        "device": None,
         "num_workers": 0,  # number of workers used by the Dataloader
         "prefetch_factor": None,
         "reshape": None,  # ex 800  # if reshape is activated AND multiscale learning is activated -> reshape has prevalence
@@ -58,12 +58,14 @@ class Scannet(BaseDataset):
                     "gt_keypoints",
                     "gt_keypoints_scores",
                 ],
-                "use_score_heatmap": True,
-                "max_num_keypoints": 63,  # the number of gt_keypoints used for training. The heatmap is generated using all kp. (IN KP GT KP ARE SORTED BY SCORE)
+                "load_points": False,  # load keypoint locations separately and return then as list (heatmap constructed from keypoints is loaded anyway)
+                "max_num_keypoints": 63,  # topk keypoints returned as gt keypoint locations (-1 - return all)
+                "use_score_heatmap": False, # the heatmap created from gt kypoints gets probability value assigned instead of 1.0
+                "max_num_heatmap_keypoints": -1, # topk keypoints used to create the heatmap (-1 = all are used)
                 # -> Can also be set to None to return all points but this can only be used when batchsize=1. Min num kp in oxparis: 63
-                "use_superpoint_kp_gt": True,  # set true to use default HA-Superpoint groundtruth
             },
             "line_gt": {
+                "load_lines": False,
                 "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field", "deeplsd_lines"],
                 "enforce_threshold": 5.0,  # Enforce values in distance field to be no greater than this value
             },
@@ -85,10 +87,12 @@ class Scannet(BaseDataset):
             self.train_scene_list = [file_name.strip("\n") for file_name in f.readlines()]
         with open(root / self.conf.val_scene_list, "r") as f:
             self.val_scene_list = [file_name.strip("\n") for file_name in f.readlines()]
-        # sample images
-        self.sample_images()
+
         self.dset_dir = DATA_PATH / self.conf.data_dir
         self.img_dir = self.dset_dir / "images"
+
+        # sample images
+        self.sample_images()
 
         self.images = {
             "train": self.train_images,
@@ -208,8 +212,6 @@ class _Dataset(torch.utils.data.Dataset):
         self.grayscale = bool(conf.grayscale)
         self.max_num_gt_kp = conf.load_features.point_gt.max_num_keypoints
 
-        self.use_superpoint_kp_gt = conf.load_features.point_gt.use_superpoint_kp_gt
-
         # Initialize Image Preprocessors for square padding and resizing
         self.preprocessors = {}  # stores preprocessor for each reshape size
         if self.conf.reshape is not None:
@@ -252,11 +254,10 @@ class _Dataset(torch.utils.data.Dataset):
                     new_img_path_list.append(img_sub_path)
                     continue
                 # perform checks
-                kp_heatmap_gt_file = self.sp_gt_folder / f"{img_sub_path.stem}.hdf5"
-                kp_points_gt_file = self.dlsd_gt_folder / f"{img_sub_path.stem}.npy"
-                df_af_gt_file = self.dlsd_gt_folder / f"{img_sub_path.stem}.hdf5"
-                dlsd_lines_gt_file = self.dlsd_gt_folder / f"{img_sub_path.stem}.npy"
-
+                kp_heatmap_gt_file = self.sp_gt_folder / img_sub_path.parent / f"{img_sub_path.stem}.hdf5"
+                kp_points_gt_file = self.sp_gt_folder / img_sub_path.parent / f"{img_sub_path.stem}.npy"
+                df_af_gt_file = self.dlsd_gt_folder / img_sub_path.parent / f"{img_sub_path.stem}.hdf5"
+                dlsd_lines_gt_file = self.dlsd_gt_folder/ img_sub_path.parent / f"{img_sub_path.stem}.npy"
                 if kp_heatmap_gt_file.exists() and kp_points_gt_file.exists() and df_af_gt_file.exists() and dlsd_lines_gt_file.exists():
                     new_img_path_list.append(img_sub_path)
 
@@ -295,18 +296,15 @@ class _Dataset(torch.utils.data.Dataset):
             img = img.to(self.conf.device)
         return img
 
-    def read_datasets_from_h5(self, keys, file):
+    def read_datasets_from_h5(self, keys: list, file) -> dict:
         """
-        Read datasets from h5 file, expects dsets to be in torch format.
+        Read datasets from h5 file. Expects np arrays in h5py files.
         """
         data = {}
         for key in keys:
-            d = file[key]
-            assert type(d) is torch.Tensor
-            if self.conf.load_features.device is not None:
-                data[key] = d.to(self.conf.load_features.device)
-            else:
-                data[key] = d
+            data[key] = torch.from_numpy(
+                np.nan_to_num(file[key].__array__())
+            )  # nan_to_num needed because of weird sp gt format
         return data
 
     def _read_groundtruth(self, img_sub_path, shape: int = None) -> dict:
@@ -333,10 +331,10 @@ class _Dataset(torch.utils.data.Dataset):
 
         ground_truth = {}
         # load keypoint gt file paths
-        kp_heatmap_gt_file = self.sp_gt_folder / f"{img_sub_path.stem}.hdf5"
-        kp_points_gt_file = self.dlsd_gt_folder / f"{img_sub_path.stem}.npy"
-        df_af_gt_file = self.dlsd_gt_folder / f"{img_sub_path.stem}.hdf5"
-        dlsd_lines_gt_file = self.dlsd_gt_folder / f"{img_sub_path.stem}.npy"
+        #kp_heatmap_gt_file = self.sp_gt_folder / img_sub_path.parent / f"{img_sub_path.stem}.hdf5"
+        kp_points_gt_file = self.sp_gt_folder / img_sub_path.parent / f"{img_sub_path.stem}.npy"
+        df_af_gt_file = self.dlsd_gt_folder / img_sub_path.parent / f"{img_sub_path.stem}.hdf5"
+        dlsd_lines_gt_file = self.dlsd_gt_folder / img_sub_path.parent / f"{img_sub_path.stem}.npy"
 
         # Load Line GT
         with h5py.File(df_af_gt_file, "r") as line_file:
@@ -346,12 +344,13 @@ class _Dataset(torch.utils.data.Dataset):
                 ),
                 **ground_truth,
             }
+
         # threshold df if wanted
         df_img = ground_truth[df_gt_key]
         thres = self.conf.load_features.line_gt.enforce_threshold
         if thres is not None:
             df_img = np.where(df_img > thres, thres, df_img)
-        df = df_img.to(dtype=torch.float32)
+        df = torch.from_numpy(df_img).to(dtype=torch.float32)
 
         af_img = ground_truth[af_gt_key]
         af = af_img.to(dtype=torch.float32)
@@ -369,29 +368,33 @@ class _Dataset(torch.utils.data.Dataset):
                 0
             )  # only store image here as padding map will be stored by preprocessing image
             af = self.preprocessors[shape](af.unsqueeze(0))["image"].squeeze(0)
+            if self.conf.load_features.line_gt.load_lines:
+                ground_truth[dlsd_lines_key] = lines * reshape_scales if reshape_scales is not None else lines
+                # TODO: is reshaping lines working properly? check!
+                # todo: capping lines needed? Generate binary heatmap directly?
 
         ground_truth[df_gt_key] = df
         ground_truth[af_gt_key] = af
 
-        if self.conf.load_features.line_gt.load_lines:
-            ground_truth[dlsd_lines_key] = lines * reshape_scales if reshape_scales is not None else lines
-            # TODO: is reshaping lines working properly? check!
-         # todo: capping lines needed? Generate binary heatmap directly
+        # Load Keypoint GT hape: N x 2 (one kp per row), we assume them to be already sorted!
+        kp_and_scores = torch.from_numpy(np.load(kp_points_gt_file)).to(dtype=torch.float32)
 
-        # Load Keypoint GT (superpoint gt and deeplsd line ep as kp can be loaded)
-        orig_kp = None
-        kps = None
-        if self.use_superpoint_kp_gt:
-            orig_kp = torch.from_numpy(np.load(kp_points_gt_file)).to(dtype=torch.float32)
-            # TODO add heatmap if needed ex for scores or direct heatmap supervision
+        original_kp = kp_and_scores[:, [0,1]]
+        keypoint_scores = kp_and_scores[:, 2]
 
-        # rescale kp if needed
-        keypoints = orig_kp * reshape_scales if reshape_scales is not None else orig_kp
-        # create heatmap
+        # rescale keypoints if reshape is activated
+        keypoints = original_kp * reshape_scales if reshape_scales is not None else original_kp
+
+        # CREATE HEATMAP
         heatmap = np.zeros_like(df)
         integer_kp_coordinates = torch.round(keypoints).to(dtype=torch.int)
+
+        # select topk keypoints for creation of heatmap if configured like this
+        if self.conf.load_features.point_gt.max_num_heatmap_keypoints > 0:
+            num_selected_kp = min([self.conf.load_features.point_gt.max_num_heatmap_keypoints, keypoint_scores.shape[0]])
+            integer_kp_coordinates = integer_kp_coordinates[:num_selected_kp]
+        # if reshaping is done clamp of rounded coordinates is necessary
         if reshaped_size is not None:
-            # if reshaping is done clamp of rounded coordinates is necessary
             integer_kp_coordinates = torch.stack(
                 [
                     torch.clamp(
@@ -403,25 +406,26 @@ class _Dataset(torch.utils.data.Dataset):
                 ],
                 dim=1,
             )
-        #if self.conf.load_features.point_gt.use_score_heatmap:
-        #    heatmap[integer_kp_coordinates[:, 1], integer_kp_coordinates[:, 0]] = kps
-        #else:
-        #    heatmap[integer_kp_coordinates[:, 1], integer_kp_coordinates[:, 0]] = 1.0
+        if self.conf.load_features.point_gt.use_score_heatmap:
+            heatmap[integer_kp_coordinates[:, 1], integer_kp_coordinates[:, 0]] = keypoint_scores
+        else:
+            heatmap[integer_kp_coordinates[:, 1], integer_kp_coordinates[:, 0]] = 1.0
 
-        heatmap[integer_kp_coordinates[:, 1], integer_kp_coordinates[:, 0]] = 1.0
         heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
 
         ground_truth[heatmap_gt_key_name] = heatmap
-        # TODO: load keypoints at all? if yes eed to look for topk sorting and efficient way to batch withount capping at minimum
+        # TODO: does batching work with loaded points
         # choose max num keypoints if wanted. Attention: we dont sort by score here! If dlsd kp gt is used all scores of these are 1!
-        ground_truth[kp_gt_key_name] = (
-            keypoints[: self.max_num_gt_kp, :]
-            if self.max_num_gt_kp is not None
-            else keypoints
-        )
-        ground_truth[kp_score_gt_key_name] = (
-            kps[: self.max_num_gt_kp] if self.max_num_gt_kp is not None else kps
-        )
+        if self.conf.load_features.point_gt.load_points:
+            num_selected_kp = min([self.max_num_gt_kp, keypoint_scores.shape[0]])
+            ground_truth[kp_gt_key_name] = (
+                keypoints[:num_selected_kp, :]
+                if self.max_num_gt_kp is not None
+                else keypoints
+            )
+            ground_truth[kp_score_gt_key_name] = (
+                keypoint_scores[:num_selected_kp] if self.max_num_gt_kp is not None else keypoint_scores
+            )
 
         return ground_truth
 
