@@ -1,10 +1,10 @@
 # This is a basic config for the merged dataset with combining minidepth and oxparis with multiscale training. I copied the datasets configs(minidepth, oxparis) from the respective base configs
 data:
     name: gluefactory.datasets.merge_datasets
-    train_batch_size: 4  # prefix must match split
-    val_batch_size: 4
-    num_workers: 6  # number of workers used by the Dataloader
-    prefetch_factor: 8
+    train_batch_size: 8  # batch size is for all GPUS
+    val_batch_size: 8
+    num_workers: 16  # number of workers used by the Dataloader: recommended 4 * n_gpus (also given for all gpus)
+    prefetch_factor: 2 # preload 2 batches per worker
     inter_dataset_shuffle: True  # if True, all images are shuffled (from all datasets) -> scale selection needs to be random in this case as otherwise datsaets will have always choosing same size
     use_multiscale_learning: False  # if True, we assume that all datasets included use multiscale learning. -> will make the datasets output same size for a batch
     datasets: # Here list datasets with their (file)name. As an example we have Oxparis and Minidepth here
@@ -21,9 +21,11 @@ data:
                 do: True
                 check_exists: True
                 point_gt:
-                    max_num_keypoints: 63  # the number of gt_keypoints used for training. The heatmap is generated using all kp. (IN KP GT KP ARE SORTED BY SCORE)
+                    load_points: False  # load actual keypoint locations or not (the heatmap constructed from kp  is loaded anyway)
+                    max_num_keypoints: 1500
+                    max_num_heatmap_keypoints: 1500
                     # -> Can also be set to None to return all points but this can only be used when batchsize=1. Min num kp in oxparis: 63
-                    use_superpoint_kp_gt: true  # set true to use default HA-Superpoint groundtruth
+                    use_score_heatmap: False
                 line_gt:
                     load_lines: False # load ground truth deeplsd lines
                     enforce_threshold: 5.0  # Enforce values in distance field to be no greater than this value
@@ -47,13 +49,14 @@ data:
                 check_exists: True
                 point_gt:
                     # ATTENTION: if deeplsd line ep are used as kp gt, using score heatmap is discouraged, as deeplsd does not assign scores to line ep and thus we set all to one
-                    data_keys: [ "superpoint_heatmap", "gt_keypoints", "gt_keypoints_scores" ]
+                    load_points: False
                     use_score_heatmap: False
+                    max_num_heatmap_keypoints: -1
                     max_num_keypoints: 63
                     use_deeplsd_lineendpoints_as_kp_gt: False  # set true to use deep-lsd line endpoints as keypoint groundtruth
                     use_superpoint_kp_gt: True  # set true to use default HA-Superpoint groundtruth
                 line_gt:
-                    data_keys: [ "deeplsd_distance_field", "deeplsd_angle_field" ]
+                    enforce_threshold: 5.0
                 augment: # activate or deactivate data augmentation
                     do: False
                     type: "dark" # choose identity, dark or lg
@@ -64,12 +67,11 @@ model:
     name: joint_point_line_extractor
     model_name: "aliked-n16"
     line_neighborhood: 5
-    max_num_keypoints: 1000  # setting for training, for eval: -1
+    max_num_keypoints: 1500  # setting for training, for eval: -1
     subpixel_refinement: True
-    use_line_anglefield: True   # if set to false, model will be initialized without AF branch and AF will not be output or considered in inference or training
+    use_line_anglefield: False   # if set to false, model will be initialized without AF branch and AF will not be output or considered in inference or training
                                 # In that case make sure the line detection does not expect AF input!
     line_df_decoder_channels: 64  # number of channels in CNN for af/df decoder branches
-    line_af_decoder_channels: 64
     training:
         do: True
         aliked_pretrained: True
@@ -78,7 +80,7 @@ model:
             do: True # if train is True, initialize ALIKED Light model form OTF Descriptor GT
             gt_aliked_model: "aliked-n32"
         loss:
-            kp_loss_name: "weighted_bce"
+            kp_loss_name: "focal_loss"
             kp_loss_parameters:
                 lambda_weighted_bce: 200
                 focal_alpha: 0.25

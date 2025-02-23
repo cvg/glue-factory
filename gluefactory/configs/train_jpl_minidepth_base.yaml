@@ -2,14 +2,14 @@ data:
     name: gluefactory.datasets.minidepth
     data_dir: "minidepth"  # as subdirectory of DATA_PATH(defined in settings.py)
     grayscale: False
-    num_workers: 8  # defines processes used in Dataloader
-    train_batch_size: 8  # per GPU
+    num_workers: 16  # number of workers used by the Dataloader: recommended 4 * n_gpus (also given for all gpus)
+    train_batch_size: 8  # given for all gpus
     val_batch_size: 8
-    prefetch_factor: 8
-    reshape: null  # new resizing keeps aspect ratio so quadratic image is not guaranteed
-    square_pad: True  # thus for a batchsize > 1 square padding needs to be activated for batching
+    prefetch_factor: 2 # preload 2 batches per worker
+    reshape: 800  # new resizing keeps aspect ratio so quadratic image is not guaranteed
+    square_pad: True # thus for a batchsize > 1 square padding needs to be activated for batching
     multiscale_learning:
-        do: True  # to use multiscale training, reshape must be set to false
+        do: False  # to use multiscale training, reshape must be set to false
         scales_list: [1000, 800, 600, 400]
         scale_selection: 'random' # random or round-robin
     load_features:
@@ -17,15 +17,15 @@ data:
         check_exists: True
         point_gt:            
             # ATTENTION: if deeplsd line ep are used as kp gt, using score heatmap is discouraged, as deeplsd does not assign scores to line ep and thus we set all to one
-            data_keys: [ "superpoint_heatmap", "gt_keypoints", "gt_keypoints_scores" ]
             use_score_heatmap: False
-            max_num_keypoints: 76  # how many gt keypoints are loaded (could be used for kp losses later on). The heatmap is generated with all kp anyway.
-            use_deeplsd_lineendpoints_as_kp_gt: True  # set true to use deep-lsd line endpoints as keypoint groundtruth
+            max_num_keypoints: 1500
+            max_num_heatmap_keypoints: 1500
+            use_deeplsd_lineendpoints_as_kp_gt: False  # set true to use deep-lsd line endpoints as keypoint groundtruth
             use_superpoint_kp_gt: True  # set true to use default HA-Superpoint groundtruth
         line_gt:
-            data_keys: [ "deeplsd_distance_field", "deeplsd_angle_field" ]
+            enforce_threshold: 5.0
         augment: # activate or deactivate data augmentation
-            do: True
+            do: False
             type: "dark" # choose identity, dark or lg
     train_scenes_file_path: "gluefactory/datasets/minidepth_train_scenes.txt"  # path to training scenes file where train scenes from megadepth1500 are excluded, based on repo root
     val_scenes_file_path: "gluefactory/datasets/minidepth_val_scenes.txt"
@@ -34,12 +34,11 @@ model:
     name: joint_point_line_extractor
     model_name: "aliked-n16"
     line_neighborhood: 5
-    max_num_keypoints: 1000  # setting for training, for eval: -1
+    max_num_keypoints: 1500  # setting for training, for eval: -1
     subpixel_refinement: True
-    use_line_anglefield: True   # if set to false, model will be initialized without AF branch and AF will not be output or considered in inference or training
+    use_line_anglefield: False   # if set to false, model will be initialized without AF branch and AF will not be output or considered in inference or training
                                 # In that case make sure the line detection does not expect AF input!
     line_df_decoder_channels: 64  # number of channels in CNN for af/df decoder branches
-    line_af_decoder_channels: 64
     training:
         do: True
         aliked_pretrained: True
@@ -48,7 +47,7 @@ model:
             do: True # if train is True, initialize ALIKED Light model form OTF Descriptor GT
             gt_aliked_model: "aliked-n32"
         loss:
-            kp_loss_name: "weighted_bce"
+            kp_loss_name: "focal_loss"
             kp_loss_parameters:
                 lambda_weighted_bce: 200
                 focal_alpha: 0.25
@@ -65,7 +64,7 @@ model:
 train:
     load_experiment: null  # initialize the model from a previous experiment (take weights)
     seed: 7
-    epochs: 40
+    epochs: 60
     log_every_iter: 8
     eval_every_iter: 15000 # automatically creates new checkpoint if new best eval metric is reached -> set > #batches to not eval except at the end of each epoch
     save_every_iter: 10000
