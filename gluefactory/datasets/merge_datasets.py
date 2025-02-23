@@ -9,6 +9,7 @@ from gluefactory.datasets.minidepth import MiniDepthDataset
 from gluefactory.datasets.oxford_paris_mini_1view_jpldd import (
     OxfordParisMiniOneViewJPLDD,
 )
+from gluefactory.datasets.scannet import Scannet
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,10 @@ class MergedDataset(BaseDataset):
                 "name": "gluefactory.datasets.oxford_paris_mini_1view_jpldd",
                 **OxfordParisMiniOneViewJPLDD.default_conf,
             },
+            "scannet": {
+                "name": "gluefactory.datasets.scannet",
+                **Scannet.default_conf,
+            }
         },
     }
 
