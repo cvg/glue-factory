@@ -15,11 +15,30 @@ from kornia.geometry.transform import warp_perspective
 from kornia.morphology import erosion
 from omegaconf import OmegaConf
 from tqdm import tqdm
+from scipy.ndimage import maximum_filter
 
 from gluefactory.datasets import get_dataset
 from gluefactory.geometry.homography import sample_homography_corners
 from gluefactory.models.extractors.superpoint_open import SuperPoint
 from gluefactory.settings import EVAL_PATH
+
+
+class KPExtractor:
+    def __init__(self, config):
+        self.threshold_type = config.get('threshold_type', 'nms')
+        self.threshold_value = config.get('threshold_value', 0.015)
+        self.max_keypoints = config.get('max_keypoints', None)  # Default to None if not provided
+
+    def extract_keypoints(self, sp_heatmap):
+        nms = (sp_heatmap == maximum_filter(sp_heatmap, size=3)) & (sp_heatmap > self.threshold_value)
+        keypoints = np.argwhere(nms)  # (row, col)
+        scores = sp_heatmap[nms]  # Extract scores
+
+        if self.max_keypoints is not None and len(keypoints) > self.max_keypoints:
+            idx = np.argsort(scores)[::-1][:self.max_keypoints]
+            keypoints = keypoints[idx]
+
+        return keypoints
 
 conf = {
     "patch_shape": [800, 800],
@@ -77,13 +96,13 @@ def get_dataset_and_loader(
     config = {
         "name": dataset,  # name of dataset class in gluefactory > datasets
         "grayscale": True,  # commented out things -> dataset must also have these keys but has not
-        "preprocessing": {"resize": [800, 800]},
+        "reshape": None, # keep original shape
         "train_batch_size": 1,  # prefix must match split mode
         "val_batch_size": 1,  # prefix must match split mode
         "all_batch_size": 1,
         "num_workers": num_workers,
         "split": (
-            "all" if dataset == "minidepth" else "train"
+            "all" if dataset in ["minidepth", "scannet"] else "train"
         ),  # if implemented by dataset class gives different splits
     }
     omega_conf = OmegaConf.create(config)
@@ -210,43 +229,50 @@ def ha_forward(img, num=100):
     return scoremap
 
 
-def process_image(img_data, num_H, output_folder_path):
+def process_image(img_data, num_H, output_folder_path, store_points: bool = False):
+    """
+    Perform homography adaptation with superpoint for a given image and store results.
+    """
     img = img_data["image"]  # B x C x H x W
     img_npy = img.numpy()
     img_npy = img_npy[0, :, :, :]
     img_npy = np.transpose(img_npy, (1, 2, 0))  # H x W x C
-    # Run homography adaptation
 
+    # Run homography adaptation
     # convert to superpoint format: img_npy to 0-255, uint8 and h * w
     sp_image = (img_npy[:, :, 0] * 255).astype(np.uint8)
     superpoint_heatmap = ha_forward(sp_image, num=num_H)
     superpoint_heatmap = superpoint_heatmap.cpu()
 
     assert len(img_data["name"]) == 1  # Currently expect batch size one!
-    # store gt in same structure as images of minidepth
-
     complete_out_folder = (output_folder_path / str(img_data["name"][0])).parent
     complete_out_folder.mkdir(parents=True, exist_ok=True)
-    output_file_path = (
+    output_file_path_hmap = (
         complete_out_folder / f"{Path(img_data['name'][0]).name.split('.')[0]}.hdf5"
     )
 
     # Save the DF in a hdf5 file
-    with h5py.File(output_file_path, "w") as f:
+    with h5py.File(output_file_path_hmap, "w") as f:
         f.create_dataset("superpoint_heatmap", data=superpoint_heatmap)
+    # store actual keypoints if wanted
+    if store_points:
+        output_file_path = (complete_out_folder / f"{Path(img_data['name'][0]).name.split('.')[0]}.npy")
+        kp_extr = KPExtractor({})
+        kp = kp_extr.extract_keypoints(superpoint_heatmap)
+        np.save(output_file_path, kp)
 
 
-def export_ha(data_loader, output_folder_path, num_H, n_jobs):
+def export_ha(data_loader, output_folder_path, num_H: int, n_jobs: int, store_points: bool = False):
     # Process each image in parallel
     Parallel(n_jobs=n_jobs, backend="multiprocessing")(
-        delayed(process_image)(img_data, num_H, output_folder_path)
+        delayed(process_image)(img_data, num_H, output_folder_path, store_points)
         for img_data in tqdm(data_loader, total=len(data_loader))
     )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("dataset", choices=["minidepth", "oxford_paris_mini"])
+    parser.add_argument("dataset", choices=["minidepth", "oxford_paris_mini", "scannet"])
     parser.add_argument(
         "--output_folder", type=str, help="Output folder.", default="superpoint_gt"
     )
@@ -262,8 +288,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n_jobs_dataloader",
         type=int,
-        default=1,
+        default=2,
         help="Number of jobs the dataloader uses to load images",
+    )
+    parser.add_argument(
+        "--store_points",
+        action="store_true"
     )
     args = parser.parse_args()
 
@@ -277,5 +307,5 @@ if __name__ == "__main__":
     print("N DATALOADER JOBS: ", args.n_jobs_dataloader)
 
     dataloader = get_dataset_and_loader(args.n_jobs_dataloader, args.dataset)
-    export_ha(dataloader, out_folder_path, args.num_H, args.n_jobs)
+    export_ha(dataloader, out_folder_path, args.num_H, args.n_jobs, bool(args.store_points))
     print("Done !")

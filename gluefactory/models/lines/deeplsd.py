@@ -115,5 +115,46 @@ class DeepLSD(BaseModel):
             outputs = self.net({"image": image})
         return outputs
 
+    def line_detection_single_image(self, image: torch.Tensor, angle_field: torch.Tensor, distance_field: torch.Tensor) -> dict:
+        """
+        Standalone line detection based on angle and distance field for use on HA produced af/df.
+        Only works for a single image!!
+        """
+        print("Line Detection...")
+        np_img = (image.cpu().numpy()[:, 0] * 255).astype(np.uint8).squeeze(0)
+        np_df = distance_field.cpu().numpy()
+        np_ll = angle_field.cpu().numpy()
+        lines = self.net.detect_afm_lines(
+            np_img, np_df, np_ll, **self.net.conf.line_detection_params
+            )
+        # Filter detected lines
+        lengths = np.linalg.norm(lines[:, 0] - lines[:, 1], axis=1)
+        segs = lines[lengths >= self.conf.min_length]
+        scores = np.sqrt(lengths[lengths >= self.conf.min_length])
+
+        # Keep the best lines
+        indices = np.argsort(-scores)
+        if self.conf.max_num_lines is not None:
+            indices = indices[: self.conf.max_num_lines]
+            segs = segs[indices]
+            scores = scores[indices]
+
+        # Pad if necessary
+        n = len(segs)
+        valid_mask = np.ones(n, dtype=bool)
+        if self.conf.force_num_lines:
+            pad = self.conf.max_num_lines - n
+            segs = np.concatenate(
+                [segs, np.zeros((pad, 2, 2), dtype=np.float32)], axis=0
+            )
+            scores = np.concatenate(
+                [scores, np.zeros(pad, dtype=np.float32)], axis=0
+            )
+            valid_mask = np.concatenate(
+                [valid_mask, np.zeros(pad, dtype=bool)], axis=0
+            )
+
+        return {"lines": segs, "line_scores": scores, "valid_lines": valid_mask}
+
     def loss(self, pred, data):
         raise NotImplementedError

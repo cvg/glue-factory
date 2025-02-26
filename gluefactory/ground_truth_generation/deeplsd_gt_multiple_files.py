@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 import h5py
+import numpy as np
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -56,76 +57,90 @@ homography_params = {
 
 
 def get_dataset_and_loader(
-    num_workers, distributed: bool = False
+    dataset: str,
+    num_workers: int, distributed: bool = False
 ):  # folder where dataset images are placed
+    print("Loading Dataset {}...".format(dataset))
     config = {
-        "name": "oxford_paris_mini",  # name of dataset class in gluefactory > datasets
+        "name": dataset,  # name of dataset class in gluefactory > datasets
         "grayscale": True,  # commented out things -> dataset must also have these keys but has not
-        "preprocessing": {"resize": [800, 800]},
+        "reshape": None,  # keep original shape
         "train_batch_size": 1,  # prefix must match split mode
+        "val_batch_size": 1,  # prefix must match split mode
+        "all_batch_size": 1,
         "num_workers": num_workers,
-        "split": "train",  # if implemented by dataset class gives different splits
-        "prefetch_factor": None if num_workers == 0 else 2,
+        "split": (
+            "all" if dataset in ["minidepth", "scannet"] else "train"
+        ),  # if implemented by dataset class gives different splits
     }
     omega_conf = OmegaConf.create(config)
     dataset = get_dataset(omega_conf.name)(omega_conf)
     loader = dataset.get_data_loader(
-        omega_conf.get("split", "train"), shuffle=False, distributed=distributed
+        omega_conf.get("split", "all"), shuffle=False, distributed=distributed
     )
     return loader
 
 
-def process_image(img_data, net, num_H, output_folder_path, device):
+def process_image(img_data: dict, net, num_H: int, output_folder_path: str, device: str, store_lines: bool = False):
     img = img_data["image"].to(device)  # B x C x H x W
     # Run homography adaptation
-    distance_field, angle_field, _ = generate_ground_truth_with_homography_adaptation(
+    distance_field, angle_field = generate_ground_truth_with_homography_adaptation(
         img, net, num_H=num_H, bs=6
     )
     assert (
         len(img_data["name"]) == 1
     ), f"Image data name is {img_data['name']}"  # Currently expect batch size one!
-    # store gt in same structure as images of minidepth
+    # store gt in same structure as images of the dataset folder
     img_name = img_data["name"][0]
     complete_out_folder = (output_folder_path / img_name).parent
     complete_out_folder.mkdir(parents=True, exist_ok=True)
-    output_file_path = complete_out_folder / f"{Path(img_name).name.split('.')[0]}.hdf5"
-    # Save the DF in a hdf5 file
+    output_file_path_hdf5 = complete_out_folder / f"{Path(img_name).name.split('.')[0]}.hdf5"
+    # Save the AF/DF in a hdf5 file
     distance_field = distance_field.cpu()
     angle_field = angle_field.cpu()
-    with h5py.File(output_file_path, "w") as f:
+    with h5py.File(output_file_path_hdf5, "w") as f:
         f.create_dataset("deeplsd_distance_field", data=distance_field)
         f.create_dataset("deeplsd_angle_field", data=angle_field)
-    del distance_field, angle_field
+
+    # detect and store lines
+    if store_lines:
+        output_file_path_npy = complete_out_folder / f"{Path(img_name).name.split('.')[0]}.npy"
+        line_res_dict = net.line_detection_single_image(img, angle_field, distance_field)
+        np.save(output_file_path_npy, line_res_dict["lines"])
+
+    del distance_field, angle_field, line_res_dict
 
 
-def export_ha(output_folder_path, num_H, n_gpus, image_name_list):
+def export_ha(dataset: str, output_folder_path, num_H, n_gpus, image_name_list, store_lines: bool = False):
     if n_gpus > 1:
         mpmanager = multiprocessing.Manager()
         lock = mpmanager.Lock()
         mp.spawn(
             export_ha_parallel,
             args=(
+                dataset,
                 n_gpus,
                 output_folder_path,
                 num_H,
                 image_name_list,
                 lock,
+                store_lines,
             ),
             nprocs=n_gpus,
             join=True,
         )
     else:
-        data_loader = get_dataset_and_loader(args.n_jobs_dataloader, distributed=False)
+        data_loader = get_dataset_and_loader(dataset, num_workers=2, distributed=False)
         device = "cuda" if torch.cuda.is_available() and n_gpus > 0 else "cpu"
-        export_ha_seq(data_loader, output_folder_path, num_H, device, image_name_list)
+        export_ha_seq(data_loader, output_folder_path, num_H, device, image_name_list, store_lines)
 
 
 def export_ha_parallel(
-    rank, world_size, output_folder_path, num_H, image_name_list, lock
+    dataset, rank, world_size, output_folder_path, num_H, image_name_list, lock, store_lines: bool = False
 ):
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
     print(f"Hello from rank {rank}")
-    data_loader = get_dataset_and_loader(0, distributed=True)
+    data_loader = get_dataset_and_loader(dataset, num_workers=2, distributed=True)
     device = f"cuda:{rank}"
     with open(image_name_list, "r") as f:
         image_list = f.readlines()
@@ -139,7 +154,7 @@ def export_ha_parallel(
                 flush=True,
             )
             continue
-        process_image(img_data, net, num_H, output_folder_path, device)
+        process_image(img_data, net, num_H, output_folder_path, device, store_lines)
         lock.acquire()
         with open(image_name_list, "a") as f:
             f.write(img_data["name"][0] + "\n")
@@ -150,7 +165,7 @@ def export_ha_parallel(
         )
 
 
-def export_ha_seq(data_loader, output_folder_path, num_H, device, image_name_list: str):
+def export_ha_seq(data_loader, output_folder_path, num_H, device, image_name_list: str, store_lines: bool = False):
     net = DeepLSD({}).to(device)
     with open(image_name_list, "r") as f:
         image_list = f.readlines()
@@ -163,7 +178,7 @@ def export_ha_seq(data_loader, output_folder_path, num_H, device, image_name_lis
                 flush=True,
             )
             continue
-        process_image(img_data, net, num_H, output_folder_path, device)
+        process_image(img_data, net, num_H, output_folder_path, device, store_lines)
         with open(image_name_list, "a") as f:
             f.write(img_data["name"][0] + "\n")
         index += 1
@@ -172,6 +187,7 @@ def export_ha_seq(data_loader, output_folder_path, num_H, device, image_name_lis
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("dataset", type=str, choices=["minidepth", "scannet"])
     parser.add_argument(
         "--output_folder", type=str, help="Output folder.", default="deeplsd_gt"
     )
@@ -192,6 +208,7 @@ if __name__ == "__main__":
         type=str,
         help="File with list of names of images that have been generated, relative to our team folder",
     )
+    parser.add_argument("--store_lines", action="store_true")
     args = parser.parse_args()
     image_name_list = DATA_PATH / args.image_name_list
     if not os.path.exists(image_name_list):
@@ -203,10 +220,11 @@ if __name__ == "__main__":
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "12355"
 
+    print("DATASET: ", args.dataset)
     print("OUTPUT PATH: ", out_folder_path)
     print("NUMBER OF HOMOGRAPHIES: ", args.num_H)
     print("N DATALOADER JOBS: ", args.n_jobs_dataloader)
     print("N GPUS: ", args.n_gpus)
 
-    export_ha(out_folder_path, args.num_H, args.n_gpus, image_name_list)
+    export_ha(args.dataset, out_folder_path, args.num_H, args.n_gpus, image_name_list, bool(args.store_lines))
     print("Done !")

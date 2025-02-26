@@ -9,6 +9,7 @@ from gluefactory.datasets.minidepth import MiniDepthDataset
 from gluefactory.datasets.oxford_paris_mini_1view_jpldd import (
     OxfordParisMiniOneViewJPLDD,
 )
+from gluefactory.datasets.scannet import Scannet
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +34,18 @@ class MergedDataset(BaseDataset):
         "inter_dataset_shuffle": True,  # if True, all images are shuffled (from all datasets) -> scale selection needs to be random in this case as otherwise datsaets will have always choosing same size
         "use_multiscale_learning": True,  # if True, we assume that all datasets included use multiscale learning. -> will make the datasets output same size for a batch
         "datasets": {  # Here list datasets with their (file)name. As an example we have Oxparis and Minidepth here
-            "minidepth": {
-                "name": "gluefactory.datasets.minidepth",
-                **MiniDepthDataset.default_conf,
-            },
+            #"minidepth": {
+            #    "name": "gluefactory.datasets.minidepth",
+            #    **MiniDepthDataset.default_conf,
+            #},
             "oxparis": {
                 "name": "gluefactory.datasets.oxford_paris_mini_1view_jpldd",
                 **OxfordParisMiniOneViewJPLDD.default_conf,
             },
+            "scannet": {
+                "name": "gluefactory.datasets.scannet",
+                **Scannet.default_conf,
+            }
         },
     }
 
@@ -73,20 +78,21 @@ class _Dataset(torch.utils.data.Dataset):
             f"Initialize Merged Dataset with following datasets: {conf['datasets'].keys()}"
         )
         for key, dset_conf in conf["datasets"].items():
-            # 1st check if mulitscale learning scale selection is random for all
-            scale_selection = dset_conf["multiscale_learning"]["scale_selection"]
-            assert scale_selection == "random"
-            # 2nd set batch size of sub datasets to overall batch size so that sub datasets don't change scale mid loading
-            if OmegaConf.is_readonly(dset_conf):
-                OmegaConf.set_readonly(dset_conf, False)
-            OmegaConf.update(
-                dset_conf,
-                f"{split}_batch_size",
-                self.relevant_batch_size,
-                force_add=True,
-            )
-            OmegaConf.set_readonly(dset_conf, True)
-            assert dset_conf[f"{split}_batch_size"] == self.relevant_batch_size
+            if self.conf.use_multiscale_learning:
+                # 1st check if mulitscale learning scale selection is random for all
+                scale_selection = dset_conf["multiscale_learning"]["scale_selection"]
+                assert scale_selection == "random"
+                # 2nd set batch size of sub datasets to overall batch size so that sub datasets don't change scale mid loading
+                if OmegaConf.is_readonly(dset_conf):
+                    OmegaConf.set_readonly(dset_conf, False)
+                OmegaConf.update(
+                    dset_conf,
+                    f"{split}_batch_size",
+                    self.relevant_batch_size,
+                    force_add=True,
+                )
+                OmegaConf.set_readonly(dset_conf, True)
+                assert dset_conf[f"{split}_batch_size"] == self.relevant_batch_size
             # Now initialize
             dset = get_dataset(dset_conf.name)(dset_conf)
             dset_initialized = dset.get_dataset(split)

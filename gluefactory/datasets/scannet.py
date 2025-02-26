@@ -1,43 +1,40 @@
 import logging
-import os
-import pickle
+import math
 import random
 import shutil
-import tarfile
 from pathlib import Path
+import zipfile
 
+import h5py
 import numpy as np
 import torch
-from tqdm import tqdm
 
-from gluefactory.datasets import BaseDataset, augmentations
+from gluefactory.datasets import BaseDataset
+from gluefactory.models.extractors.superpoint import top_k_keypoints
 from gluefactory.settings import DATA_PATH, root
-from gluefactory.utils.image import ImagePreprocessor, load_image, read_image
+from gluefactory.utils.image import ImagePreprocessor, load_image
 
 logger = logging.getLogger(__name__)
 
 
-class OxfordParisMiniOneViewJPLDD(BaseDataset):
-    """
-    Subset of the Oxford Paris dataset as defined here: https://cmp.felk.cvut.cz/revisitop/
-    Supports loading groundtruth and only serves images for that gt exists.
-    Dataset only deals with loading one element. Batching is done by Dataloader!
+DOWNLOAD_URL = "https://polybox.ethz.ch/index.php/s/N3J7SfnE6NEt8Nu/download"
 
-    Adapted to use POLD2 structure of files -> Files and gt in same folder besides each other
-    Some facts:
-    - Pold2 gt is generated same size as original image and can be resized
+class Scannet(BaseDataset):
+    """
+    Subset of the full scannet dataset used as dataset for indoor scenes training. The dataset excludes scenes used
+    in the scannet-1500 evaluation and samples images from each scene until we reach 12000 images (as oxparis mini).
     """
 
     default_conf = {
-        "data_dir": "revisitop1m_POLD2/jpg",  # as subdirectory of DATA_PATH(defined in settings.py)
+        "data_dir": "scannet",  # as subdirectory of DATA_PATH(defined in settings.py)
         "grayscale": False,
         "train_batch_size": 2,  # prefix must match split
         "test_batch_size": 1,
         "val_batch_size": 1,
         "all_batch_size": 1,
-        "device": None,  # specify device to move image data to. if None is given, just read, skip move to device
-        "split": "train",  # train, val, test
+        "split": "train",  # train, val
         "seed": 0,
+        "device": None,
         "num_workers": 0,  # number of workers used by the Dataloader
         "prefetch_factor": None,
         "reshape": None,  # ex 800  # if reshape is activated AND multiscale learning is activated -> reshape has prevalence
@@ -61,112 +58,159 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
                     "gt_keypoints",
                     "gt_keypoints_scores",
                 ],
-                "load_points": False,
-                "use_score_heatmap": True,
-                "max_num_heatmap_keypoints": -1, # topk keypoints used to create the heatmap (-1 = all are used)
+                "load_points": False,  # load keypoint locations separately and return then as list (heatmap constructed from keypoints is loaded anyway)
                 "max_num_keypoints": 63,  # topk keypoints returned as gt keypoint locations (-1 - return all)
+                "use_score_heatmap": False, # the heatmap created from gt kypoints gets probability value assigned instead of 1.0
+                "max_num_heatmap_keypoints": -1, # topk keypoints used to create the heatmap (-1 = all are used)
                 # -> Can also be set to None to return all points but this can only be used when batchsize=1. Min num kp in oxparis: 63
-                "use_deeplsd_lineendpoints_as_kp_gt": False,  # set true to use deep-lsd line endpoints as keypoint groundtruth
-                "use_superpoint_kp_gt": True,  # set true to use default HA-Superpoint groundtruth
             },
             "line_gt": {
-                "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field"],
+                "load_lines": False,
+                "data_keys": ["deeplsd_distance_field", "deeplsd_angle_field", "deeplsd_lines"],
                 "enforce_threshold": 5.0,  # Enforce values in distance field to be no greater than this value
             },
-            "augment": {  # there is the option to use data augmentation. It is not enlarging dataset but applies the augmentation to an Image with certain probability
-                "do": False,
-                "type": "dark",  # choose "identity" for no augmentation; other options are "lg", "dark"
-            },
         },
-        "img_list": "gluefactory/datasets/oxford_paris_images.txt",
+        "train_scene_list": "gluefactory/datasets/scannetv2_train.txt",
+        "val_scene_list": "gluefactory/datasets/scannetv2_val.txt",
         # img list path from repo root -> use checked in file list, it is similar to pold2 file
         "rand_shuffle_seed": None,  # seed to randomly shuffle before split in train and val
-        "val_size": 500,  # size of validation set given
-        "train_size": 11500,
+        "val_size": 500,  # number of val images
+        "train_size": 11500,  # number of train images
     }
 
     def _init(self, conf):
-        with open(root / self.conf.img_list, "r") as f:
-            self.img_list = [file_name.strip("\n") for file_name in f.readlines()]
         # Auto-download the dataset if not existing
         if not (DATA_PATH / conf.data_dir).exists():
-            self.download_oxford_paris_mini()
+            self.download_scannet()
         # load image names
-        images = self.img_list
-        if self.conf.rand_shuffle_seed is not None:
-            np.random.RandomState(conf.shuffle_seed).shuffle(images)
-        train_images = images[: conf.train_size]
-        val_images = images[conf.train_size : conf.train_size + conf.val_size]
+        with open(root / self.conf.train_scene_list, "r") as f:
+            self.train_scene_list = [file_name.strip("\n") for file_name in f.readlines()]
+        with open(root / self.conf.val_scene_list, "r") as f:
+            self.val_scene_list = [file_name.strip("\n") for file_name in f.readlines()]
+
+        self.dset_dir = DATA_PATH / self.conf.data_dir
+        self.img_dir = self.dset_dir / "images"
+
+        # sample images
+        self.sample_images()
+
         self.images = {
-            "train": train_images,
-            "val": val_images,
-            "test": images,
-            "all": images,
+            "train": self.train_images,
+            "val": self.val_images,
+            "all": self.train_images + self.val_images,
         }
-        print(f"DATASET OVERALL(NO-SPLIT) IMAGES: {len(images)}")
+        print(f"DATASET OVERALL(NO-SPLIT) IMAGES: {len(self.images["all"])}")
 
-        augmentation_map = {
-            "dark": augmentations.DarkAugmentation,
-            "lg": augmentations.LGAugmentation,
-            "identity": augmentations.IdentityAugmentation,
-        }
-
-        self.augmentation = augmentation_map[self.conf.load_features.augment.type]()
-
-    def download_oxford_paris_mini(self):
-        logger.info("Downloading the OxfordParis Mini dataset...")
-        data_dir = DATA_PATH / self.conf.data_dir
-        tmp_dir = data_dir.parent / "oxpa_tmp"
+    def download_scannet(self):
+        logger.info("Downloading the Scannet dataset...")
+        tmp_dir = self.dset_dir.parent / "scannet_tmp"
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir)
         tmp_dir.mkdir(exist_ok=True, parents=True)
-        url_base = "http://ptak.felk.cvut.cz/revisitop/revisitop1m/"
-        num_parts = 100
-        # go through dataset parts, one by one and only keep wanted images in img_list
-        for i in tqdm(range(num_parts), position=1):
-            tar_name = f"revisitop1m.{i + 1}.tar.gz"
-            tar_url = url_base + "jpg/" + tar_name
-            tmp_tar_path = tmp_dir / tar_name
-            torch.hub.download_url_to_file(tar_url, tmp_tar_path)
-            with tarfile.open(tmp_tar_path) as tar:
-                tar.extractall(path=data_dir)
-            tmp_tar_path.unlink()
-            # Delete unwanted files
-            existing_files = set(
-                [str(i.relative_to(data_dir)) for i in data_dir.glob("**/*.jpg")]
-            )
-            to_del = existing_files - set(self.img_list)
-            for d in to_del:
-                Path(data_dir / d).unlink()
+        zip_name = "scannet_subset.zip"
+        zip_path = tmp_dir / zip_name
+        torch.hub.download_url_to_file(DOWNLOAD_URL, zip_path)
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            zip_ref.extractall(tmp_dir)
+        shutil.move(tmp_dir / "scannet_frames_25k", str(self.dset_dir))
 
-        shutil.rmtree(tmp_dir)
+    def sample_images(self):
+        """
+        Read train and val scenes from respective files and sample names. Currently sampling less than one image per
+        scene is not supported.
 
-        # remove empty directories
-        for file in os.listdir(data_dir):
-            cur_file: Path = data_dir / file
-            if cur_file.is_file():
-                continue
-            if len(os.listdir(cur_file)) == 0:
-                shutil.rmtree(cur_file)
+        1. Read all images for all train and val scenes
+        2. filter scenes and images by equidistant sampling rules
+
+        Equidistant sampling:
+            - for scenes that have <= num of fair share images per scene - take them all
+            - the remaining number of images is distributed among other scenes
+            - for each of these scenes: take random shuffled images if no equal distance between samples possible
+            - otherwise sample with fixed distance.
+        """
+        self.train_images = self._sample_split(self.conf.train_size, self.train_scene_list)
+        self.val_images = self._sample_split(self.conf.val_size, self.val_scene_list)
+        # randomize if wanted
+        if self.conf.rand_shuffle_seed is not None:
+            np.random.RandomState(self.conf.shuffle_seed).shuffle(self.train_images)
+            np.random.RandomState(self.conf.shuffle_seed).shuffle(self.val_images)
+
+    def _sample_split(self, num_images_needed, scenes):
+        """
+        Given a split of the dataset as scene list (scene list of train or val) sample images based on rules described
+        in sample_images() method. Adds those images to the list ref provided
+        Args:
+            img_list_final_images: list ref to store sampled images in
+            num_images: number of images to sample
+            scenes: a list of scenes that contain the image candidates
+        """
+        img_list_final_images = list()
+        # initialize scenes with image paths
+        remaining_scenes = dict()
+        for s in scenes:
+            scene_folder = self.img_dir / s / "color"
+            scene_image_paths = list(Path(scene_folder).glob("**/*.jpg"))
+            remaining_scenes[s] = scene_image_paths
+
+        # sample so we have
+        while len(img_list_final_images) < num_images_needed and remaining_scenes:
+            remaining_needed = num_images_needed - len(img_list_final_images)
+            fair_share = math.ceil(remaining_needed / len(remaining_scenes))
+            scenes_to_remove = list()
+
+            for s, paths in remaining_scenes.items():
+                if len(paths) <= fair_share:
+                    img_list_final_images += paths
+                    scenes_to_remove.append(s)
+                else:
+                    img_list_final_images += self._sample_with_equi_distance(paths, fair_share, delete_taken=True)
+
+            if len(img_list_final_images) >= num_images_needed:
+                break
+
+            # remove fully taken scenes
+            for s in scenes_to_remove:
+                del remaining_scenes[s]
+        # Finally remove possible little overshoot
+        return img_list_final_images[:num_images_needed]
+
+    @staticmethod
+    def _sample_with_equi_distance(img_paths: list, num_to_sample: int, delete_taken: bool = True):
+        """
+        Takes a list of images and samples from this the number of images wanted while having maximum distance between
+        them (in terms of index position).
+        """
+        # Return empty list if nothing to sample
+        if not img_paths or num_to_sample <= 0:
+            return []
+        # Return all elements if
+        if num_to_sample >= len(img_paths):
+            return img_paths.copy() if not delete_taken else img_paths
+        # Calculate the ideal distance between samples
+        step = (len(img_paths) - 1) / (num_to_sample - 1) if num_to_sample > 1 else 0
+        # Generate the indices we want to sample
+        indices = [round(i * step) for i in range(num_to_sample)]
+        # Get the images at these indices
+        sampled = [img_paths[i] for i in indices]
+        # If delete_taken is True, remove the sampled images from the original list
+        if delete_taken:
+            # Remove items in reverse order to maintain correct indices
+            for idx in sorted(indices, reverse=True):
+                img_paths.pop(idx)
+        return sampled
 
     def get_dataset(self, split):
-        assert split in ["train", "val", "test", "all"]
-        return _Dataset(self.conf, self.images[split], split, self.augmentation)
+        assert split in ["train", "val", "all"]
+        return _Dataset(self.conf, self.images[split], split)
 
 
 class _Dataset(torch.utils.data.Dataset):
-    def __init__(self, conf, image_sub_paths: list[str], split, augmentation):
+    def __init__(self, conf, image_sub_paths: list[str], split):
         super().__init__()
         self.split = split
         self.conf = conf
-        self.augmentation = augmentation
         self.grayscale = bool(conf.grayscale)
         self.max_num_gt_kp = conf.load_features.point_gt.max_num_keypoints
-
-        self.use_superpoint_kp_gt = conf.load_features.point_gt.use_superpoint_kp_gt
-        self.use_dlsd_ep_as_kp_gt = (
-            conf.load_features.point_gt.use_deeplsd_lineendpoints_as_kp_gt
-        )
 
         # Initialize Image Preprocessors for square padding and resizing
         self.preprocessors = {}  # stores preprocessor for each reshape size
@@ -185,11 +229,14 @@ class _Dataset(torch.utils.data.Dataset):
         # we need to make sure that the appropriate batch size for the dataset conf is set correctly.
         self.relevant_batch_size = self.conf[f"{split}_batch_size"]
 
-        self.img_dir = DATA_PATH / conf.data_dir
-        self.dlsd_kp_gt_folder = self.img_dir.parent / "deeplsd_kp_gt"
-
+        self.dset_dir = DATA_PATH / conf.data_dir
+        self.img_dir = self.dset_dir / "images"
+        self.dlsd_gt_folder = self.dset_dir / "deeplsd_gt"
+        self.sp_gt_folder = self.dset_dir / "superpoint_gt"
         # Extract image paths
-        self.image_sub_paths = image_sub_paths  # [Path(i) for i in image_sub_paths]
+        self.image_sub_paths = [
+            i.relative_to(self.img_dir) for i in image_sub_paths.copy()
+        ]
 
         # making them relative for system independent names in export files (path used as name in export)
         if len(self.image_sub_paths) == 0:
@@ -202,29 +249,17 @@ class _Dataset(torch.utils.data.Dataset):
         if conf.load_features.do:
             # filter out where missing groundtruth
             new_img_path_list = []
-            for img_path in self.image_sub_paths:
+            for img_sub_path in self.image_sub_paths:
                 if not self.conf.load_features.check_exists:
-                    new_img_path_list.append(img_path)
+                    new_img_path_list.append(img_sub_path)
                     continue
                 # perform checks
-                full_artificial_img_path = Path(self.img_dir / img_path)
-                img_folder = (
-                    full_artificial_img_path.parent / full_artificial_img_path.stem
-                )
-                keypoint_file = img_folder / "keypoint_scores.npy"
-                af_file = img_folder / "angle.jpg"
-                df_file = img_folder / "df.jpg"
-
-                dlsd_kp_subfolder = (
-                    self.dlsd_kp_gt_folder / full_artificial_img_path.stem
-                )
-                dlsd_kp_file = dlsd_kp_subfolder / "base_image.npy"
-
-                if keypoint_file.exists() and af_file.exists() and df_file.exists():
-                    if self.use_dlsd_ep_as_kp_gt and dlsd_kp_file.exists():
-                        new_img_path_list.append(img_path)
-                        continue
-                    new_img_path_list.append(img_path)
+                kp_heatmap_gt_file = self.sp_gt_folder / img_sub_path.parent / f"{img_sub_path.stem}.hdf5"
+                kp_points_gt_file = self.sp_gt_folder / img_sub_path.parent / f"{img_sub_path.stem}.npy"
+                df_af_gt_file = self.dlsd_gt_folder / img_sub_path.parent / f"{img_sub_path.stem}.hdf5"
+                dlsd_lines_gt_file = self.dlsd_gt_folder/ img_sub_path.parent / f"{img_sub_path.stem}.npy"
+                if kp_heatmap_gt_file.exists() and kp_points_gt_file.exists() and df_af_gt_file.exists() and dlsd_lines_gt_file.exists():
+                    new_img_path_list.append(img_sub_path)
 
             self.image_sub_paths = new_img_path_list
             logger.info(f"NUMBER OF IMAGES WITH GT: {len(self.image_sub_paths)}")
@@ -248,11 +283,10 @@ class _Dataset(torch.utils.data.Dataset):
             }
         )
 
-    def _read_image(self, img_folder_path, enforce_batch_dim=False):
+    def _read_image(self, img_path, enforce_batch_dim=False):
         """
         Read image as tensor and puts it on device
         """
-        img_path = img_folder_path / "base_image.jpg"
         img = load_image(img_path, grayscale=self.grayscale)
         if enforce_batch_dim:
             if img.ndim < 4:
@@ -262,7 +296,18 @@ class _Dataset(torch.utils.data.Dataset):
             img = img.to(self.conf.device)
         return img
 
-    def _read_groundtruth(self, image_folder_path, shape: int = None) -> dict:
+    def read_datasets_from_h5(self, keys: list, file) -> dict:
+        """
+        Read datasets from h5 file. Expects np arrays in h5py files.
+        """
+        data = {}
+        for key in keys:
+            data[key] = torch.from_numpy(
+                np.nan_to_num(file[key].__array__())
+            )  # nan_to_num needed because of weird sp gt format
+        return data
+
+    def _read_groundtruth(self, img_sub_path, shape: int = None) -> dict:
         """
         Reads groundtruth for points and lines from respective files
         We can assume that gt files are existing at this point->checked in init!
@@ -270,7 +315,7 @@ class _Dataset(torch.utils.data.Dataset):
         DeepLSD line endpoints can be loaded and used as keypoint groundtruth. This can be configured in the dataset config.
         One can also choose to only use deepLSD line endpoints.
 
-        image_folder_path: full image folder path to get the gt data from
+        image_folder_path: image subpath relative from img_dir
         original_img_size: format w,h original image size to be able to create heatmaps.
         shape: shape to reshape img to if it is not None
         """
@@ -282,37 +327,39 @@ class _Dataset(torch.utils.data.Dataset):
         kp_score_gt_key_name = self.conf.load_features.point_gt.data_keys[2]
         df_gt_key = self.conf.load_features.line_gt.data_keys[0]
         af_gt_key = self.conf.load_features.line_gt.data_keys[1]
+        dlsd_lines_key = self.conf.load_features.line_gt.data_keys[2]
 
-        features = {}
+        ground_truth = {}
         # load keypoint gt file paths
-        kp_file = image_folder_path / "keypoints.npy"
-        kps_file = image_folder_path / "keypoint_scores.npy"
-        dlsd_kp_gt_file = (
-            self.dlsd_kp_gt_folder / image_folder_path.name / "base_image.npy"
-        )
+        #kp_heatmap_gt_file = self.sp_gt_folder / img_sub_path.parent / f"{img_sub_path.stem}.hdf5"
+        kp_points_gt_file = self.sp_gt_folder / img_sub_path.parent / f"{img_sub_path.stem}.npy"
+        df_af_gt_file = self.dlsd_gt_folder / img_sub_path.parent / f"{img_sub_path.stem}.hdf5"
+        dlsd_lines_gt_file = self.dlsd_gt_folder / img_sub_path.parent / f"{img_sub_path.stem}.npy"
 
         # Load Line GT
-        # Load pickle file for DF max and min values
-        with open(image_folder_path / "values.pkl", "rb") as f:
-            values = pickle.load(f)
+        with h5py.File(df_af_gt_file, "r") as line_file:
+            ground_truth = {
+                **self.read_datasets_from_h5(
+                    list(self.conf.load_features.line_gt.data_keys[0:2]), line_file  # only select af and df here
+                ),
+                **ground_truth,
+            }
 
-        # Load DF
-        df_img = read_image(image_folder_path / "df.jpg", True)
-        df_img = df_img.astype(np.float32) / 255.0
-        df_img *= values["max_df"]
+        # threshold df if wanted
+        df_img = ground_truth[df_gt_key]
         thres = self.conf.load_features.line_gt.enforce_threshold
         if thres is not None:
             df_img = np.where(df_img > thres, thres, df_img)
-
-        # Load AF
-        af_img = read_image(image_folder_path / "angle.jpg", True)
-        af_img = af_img.astype(np.float32) / 255.0
-        af_img *= np.pi
-
         df = torch.from_numpy(df_img).to(dtype=torch.float32)
-        af = torch.from_numpy(af_img).to(dtype=torch.float32)
-        original_size = df.shape
-        # reshape AF and DF if needed
+
+        af_img = ground_truth[af_gt_key]
+        af = af_img.to(dtype=torch.float32)
+
+        # loaded lines have shape N x 2 x 2, each line is parametrized as its two endpoints one stored in each row
+        if self.conf.load_features.line_gt.load_lines:
+            lines = torch.from_numpy(np.load(dlsd_lines_gt_file)).to(dtype=torch.float32)
+
+        # reshape AF/DF and lines if reshape is activated
         if shape is not None:
             preprocessor_df_out = self.preprocessors[shape](df.unsqueeze(0))
             reshape_scales = preprocessor_df_out["scales"]
@@ -321,53 +368,33 @@ class _Dataset(torch.utils.data.Dataset):
                 0
             )  # only store image here as padding map will be stored by preprocessing image
             af = self.preprocessors[shape](af.unsqueeze(0))["image"].squeeze(0)
-        features[df_gt_key] = df
-        features[af_gt_key] = af
+            if self.conf.load_features.line_gt.load_lines:
+                ground_truth[dlsd_lines_key] = lines * reshape_scales if reshape_scales is not None else lines
+                # TODO: is reshaping lines working properly? check!
+                # todo: capping lines needed? Generate binary heatmap directly?
 
-        # Load Keypoint GT (superpoint gt and deeplsd line ep as kp can be loaded)
-        orig_kp = None
-        kps = None
-        if self.use_superpoint_kp_gt:
-            orig_kp = torch.from_numpy(np.load(kp_file)).to(dtype=torch.float32)
-            kps = torch.from_numpy(np.load(kps_file)).to(dtype=torch.float32)
-        if self.use_dlsd_ep_as_kp_gt:
-            # need to clamp values as deeplsd also predicts line endpoints outside the image
-            dlsd_kp_gt = torch.from_numpy(np.load(dlsd_kp_gt_file)).to(
-                dtype=torch.float32
-            )
-            dlsd_kp_gt = torch.stack(
-                [
-                    torch.clamp(dlsd_kp_gt[:, 0], min=0, max=(original_size[1] - 1)),
-                    torch.clamp(dlsd_kp_gt[:, 1], min=0, max=(original_size[0] - 1)),
-                ],
-                dim=1,
-            )
-            orig_kp = (
-                torch.vstack([orig_kp, dlsd_kp_gt[:, [0, 1]]])
-                if orig_kp is not None
-                else dlsd_kp_gt[:, [0, 1]]
-            )
-            # no scores given so set to one (recommend to not use score heatmap)
-            kps = (
-                torch.hstack([kps, torch.ones((dlsd_kp_gt.shape[0]))])
-                if kps is not None
-                else torch.ones((dlsd_kp_gt.shape[0]))
-            )
+        ground_truth[df_gt_key] = df
+        ground_truth[af_gt_key] = af
 
-        # rescale kp if needed
-        keypoints = orig_kp * reshape_scales if reshape_scales is not None else orig_kp
-        # create heatmap
+        # Load Keypoint GT hape: N x 2 (one kp per row), we assume them to be already sorted!
+        kp_and_scores = torch.from_numpy(np.load(kp_points_gt_file)).to(dtype=torch.float32)
+
+        original_kp = kp_and_scores[:, [0,1]]
+        keypoint_scores = kp_and_scores[:, 2]
+
+        # rescale keypoints if reshape is activated
+        keypoints = original_kp * reshape_scales if reshape_scales is not None else original_kp
+
+        # CREATE HEATMAP
         heatmap = np.zeros_like(df)
         integer_kp_coordinates = torch.round(keypoints).to(dtype=torch.int)
 
         # select topk keypoints for creation of heatmap if configured like this
         if self.conf.load_features.point_gt.max_num_heatmap_keypoints > 0:
-            num_selected_kp = min(
-                [self.conf.load_features.point_gt.max_num_heatmap_keypoints, kps.shape[0]])
+            num_selected_kp = min([self.conf.load_features.point_gt.max_num_heatmap_keypoints, keypoint_scores.shape[0]])
             integer_kp_coordinates = integer_kp_coordinates[:num_selected_kp]
-
+        # if reshaping is done clamp of rounded coordinates is necessary
         if reshaped_size is not None:
-            # if reshaping is done clamp of roundend coordinates is necessary
             integer_kp_coordinates = torch.stack(
                 [
                     torch.clamp(
@@ -380,43 +407,38 @@ class _Dataset(torch.utils.data.Dataset):
                 dim=1,
             )
         if self.conf.load_features.point_gt.use_score_heatmap:
-            heatmap[integer_kp_coordinates[:, 1], integer_kp_coordinates[:, 0]] = kps
+            heatmap[integer_kp_coordinates[:, 1], integer_kp_coordinates[:, 0]] = keypoint_scores
         else:
             heatmap[integer_kp_coordinates[:, 1], integer_kp_coordinates[:, 0]] = 1.0
+
         heatmap = torch.from_numpy(heatmap).to(dtype=torch.float32)
 
-        features[heatmap_gt_key_name] = heatmap
+        ground_truth[heatmap_gt_key_name] = heatmap
+        # TODO: does batching work with loaded points
         # choose max num keypoints if wanted. Attention: we dont sort by score here! If dlsd kp gt is used all scores of these are 1!
         if self.conf.load_features.point_gt.load_points:
-            num_selected_kp = min([self.max_num_gt_kp, kps.shape[0]])
-            features[kp_gt_key_name] = (
-                keypoints[: num_selected_kp, :]
-                if self.max_num_gt_kp > -1
+            num_selected_kp = min([self.max_num_gt_kp, keypoint_scores.shape[0]])
+            ground_truth[kp_gt_key_name] = (
+                keypoints[:num_selected_kp, :]
+                if self.max_num_gt_kp is not None
                 else keypoints
             )
-            features[kp_score_gt_key_name] = (
-                kps[: num_selected_kp] if self.max_num_gt_kp > -1 else kps
+            ground_truth[kp_score_gt_key_name] = (
+                keypoint_scores[:num_selected_kp] if self.max_num_gt_kp is not None else keypoint_scores
             )
 
-        return features
+        return ground_truth
 
     def __getitem__(self, idx):
         """
         Dataloader is usually just returning one datapoint by design. Batching is done in Loader normally.
         """
-        full_artificial_img_path = self.img_dir / self.image_sub_paths[idx]
-        folder_path = full_artificial_img_path.parent / full_artificial_img_path.stem
-        img = self._read_image(folder_path)
-        if self.conf.load_features.augment.do:
-            try:
-                img = img.numpy().transpose(1, 2, 0)
-                img = self.augmentation(image=img, return_tensor=True)
-            except Exception as e:
-                logging.error(f"Error in augmentation: {e}")
+        img_path = self.img_dir / self.image_sub_paths[idx]
+        img = self._read_image(img_path)
         orig_shape = img.shape[-1], img.shape[-2]
         size_to_reshape_to = self.select_resize_shape(orig_shape)
         data = {
-            "name": str(folder_path / "base_image.jpg"),
+            "name": str(self.image_sub_paths[idx]),
         }  # keys: 'name', 'scales', 'image_size', 'transform', 'original_image_size', 'image'
         if size_to_reshape_to == orig_shape:
             data["image"] = img
@@ -424,7 +446,7 @@ class _Dataset(torch.utils.data.Dataset):
             data = {**data, **self.preprocessors[size_to_reshape_to](img)}
         if self.conf.load_features.do:
             gt = self._read_groundtruth(
-                folder_path,
+                self.image_sub_paths[idx],
                 None if size_to_reshape_to == orig_shape else size_to_reshape_to,
             )
             data = {**data, **gt}
