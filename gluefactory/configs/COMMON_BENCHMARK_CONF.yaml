@@ -3,17 +3,17 @@ model:  # TODO: REPLACE MODEL WITH YOU MODEL CFG YOU WANT TO BENCHMARK
   extractor:
     name: extractors.joint_point_line_extractor
     aliked_model_name: "aliked-n16"
-    max_num_keypoints: 1500  # setting for training, for eval: -1
+    max_num_keypoints: 2048  # setting for training, for eval: -1
     detection_threshold: 0.0 # set to <= 0 for training, for eval without fixed num of kp, do set to a good value
     nms_radius: 3
-    subpixel_refinement: true
+    subpixel_refinement: True
     # use_deeplsd_endpoints: true
     line_df_decoder_channels: 32  # adapt to your checkpoint!!
     line_af_decoder_channels: 32
-    use_line_anglefield: true
+    use_line_anglefield: False
     training:
-      do: false
-    timeit: false  # override timeit: False from BaseModel
+      do: False
+    timeit: False  # override timeit: False from BaseModel
     line_detection:
         do: True
         conf:
@@ -46,9 +46,7 @@ model:  # TODO: REPLACE MODEL WITH YOU MODEL CFG YOU WANT TO BENCHMARK
             nms: false
             debug: false
 
-    checkpoint: /local/home/Point-Line/outputs/training/oxparis_800_focal/checkpoint_best.tar
-    #"checkpoint": "/local/home/rkreft/shared_team_folder/outputs/training/rk_oxparis_focal_hard_gt/checkpoint_best.tar"
-    #"checkpoint": "/local/home/rkreft/shared_team_folder/outputs/training/rk_pold2gt_oxparis_base_hard_gt/checkpoint_best.tar"
+    checkpoint: /Users/rkre/PycharmProjects/glue-factory/checkpoints/oxparis_scannet_800_focal/checkpoint_best.tar
 
   matcher:
     #name: matchers.nearest_neighbor_matcher
