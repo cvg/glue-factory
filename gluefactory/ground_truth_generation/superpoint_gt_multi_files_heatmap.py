@@ -19,6 +19,7 @@ from scipy.ndimage import maximum_filter
 
 from gluefactory.datasets import get_dataset
 from gluefactory.geometry.homography import sample_homography_corners
+from gluefactory.models.extractors.superpoint import top_k_keypoints
 from gluefactory.models.extractors.superpoint_open import SuperPoint
 from gluefactory.settings import EVAL_PATH
 
@@ -38,6 +39,106 @@ class KPExtractor:
             idx = np.argsort(scores)[::-1][:self.max_keypoints]
             keypoints = keypoints[idx]
 
+        return keypoints
+
+
+class KPExtractor:
+    @staticmethod
+    def simple_nms(scores, radius):
+        """Perform non maximum suppression on the heatmap using max-pooling.
+        This method does not suppress contiguous points that have the same score.
+        Args:
+            scores: the score heatmap of size `(B, H, W)`.
+            size: an interger scalar, the radius of the NMS window.
+        """
+
+        def max_pool(x):
+            return torch.nn.functional.max_pool2d(
+                x, kernel_size=radius * 2 + 1, stride=1, padding=radius
+            )
+
+        zeros = torch.zeros_like(scores)
+        max_mask = scores == max_pool(scores)
+        for _ in range(2):
+            supp_mask = max_pool(max_mask.float()) > 0
+            supp_scores = torch.where(supp_mask, zeros, scores)
+            new_max_mask = supp_scores == max_pool(supp_scores)
+            max_mask = max_mask | (new_max_mask & (~supp_mask))
+        return torch.where(max_mask, scores, zeros)
+
+    @staticmethod
+    def remove_borders(keypoints, b, h, w):
+        mask_h = (keypoints[1] >= b) & (keypoints[1] < (h - b))
+        mask_w = (keypoints[2] >= b) & (keypoints[2] < (w - b))
+        mask = mask_h & mask_w
+        return (keypoints[0][mask], keypoints[1][mask], keypoints[2][mask])
+
+    @staticmethod
+    def soft_argmax_refinement(keypoints, scores, radius: int):
+        width = 2 * radius + 1
+        sum_ = torch.nn.functional.avg_pool2d(
+            scores[:, None], width, 1, radius, divisor_override=1
+        )
+        sum_ = torch.clamp(sum_, min=1e-6)
+        ar = torch.arange(-radius, radius + 1).to(scores)
+        kernel_x = ar[None].expand(width, -1)[None, None]
+        dx = torch.nn.functional.conv2d(scores[:, None], kernel_x, padding=radius)
+        dy = torch.nn.functional.conv2d(
+            scores[:, None], kernel_x.transpose(2, 3), padding=radius
+        )
+        dydx = torch.stack([dy[:, 0], dx[:, 0]], -1) / sum_[:, 0, :, :, None]
+        refined_keypoints = []
+        for i, kpts in enumerate(keypoints):
+            delta = dydx[i][tuple(kpts.t())]
+            refined_keypoints.append(kpts.float() + delta)
+        return refined_keypoints
+
+    def __init__(self, config):
+        self.threshold_value = config.get('threshold_value', 0.015)
+        self.max_num_keypoints = config.get('max_keypoints', 8000)
+        self.nms_radius = config.get('nms_radius', 4)
+        self.remove_borders = config.get('remove_borders', 4)
+        self.refinement_radius = config.get('refinement_radius', 0)
+
+    def extract_keypoints(self, sp_heatmap, b_size=1):
+        """Extract keypoints as implemented in Superpoint"""
+        h, w = sp_heatmap.shape[1] // 8, sp_heatmap.shape[2] // 8
+
+        scores = self.simple_nms(sp_heatmap, self.nms_radius)
+
+        # Extract keypoints
+        best_kp = torch.where(scores > self.threshold_value)
+
+        # Discard keypoints near the image borders
+        best_kp = self.remove_borders(best_kp, self.remove_borders, h * 8, w * 8)
+        scores = scores[best_kp]
+
+        # Separate into batches
+        keypoints = [
+            torch.stack(best_kp[1:3], dim=-1)[best_kp[0] == i]
+            for i in range(b_size)
+        ]
+        scores = [scores[best_kp[0] == i] for i in range(b_size)]
+
+        # Keep the k keypoints with highest score
+        if self.max_num_keypoints > 0:
+            keypoints, scores = list(
+                zip(
+                    *[
+                        top_k_keypoints(k, s, self.max_num_keypoints)
+                        for k, s in zip(keypoints, scores)
+                    ]
+                )
+            )
+            keypoints, scores = list(keypoints), list(scores)
+
+        if self.refinement_radius > 0:
+            keypoints = self.soft_argmax_refinement(
+                keypoints, sp_heatmap, self.refinement_radius
+            )
+
+        # Convert (h, w) to (x, y)
+        keypoints = [torch.flip(k, [1]).float() for k in keypoints]
         return keypoints
 
 conf = {
