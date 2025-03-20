@@ -33,45 +33,45 @@ logger = logging.getLogger(__name__)
 class LineExtractor(BaseModel):
 
     default_conf = {
-        "samples": [8],  # Number of samples to take along the line
+        "samples": [24],  # Number of samples to take along the line
         "max_point_size": 1500,  # Maximum number of points to consider
         "min_line_length": 6,  # Minimum line length
         "max_line_length": None,  # Maximum line length
         "max_lines": 2000,  # Maximum number of lines to consider
         "distance_map": {
             "max_value": 5,  # Maximum value to which the distance map is capped [Line Neighbourhood in Extractor Config]
-            "threshold": 0.5,  # Threshold for generating binary distance map
-            "smooth_threshold": 0.95,  # Threshold for smoothened distance map
+            "threshold": 0.45,  # Threshold for generating binary distance map
+            "smooth_threshold": 0.8,  # Threshold for smoothened distance map
             "avg_filter_size": 13,  # Size of the average filter
             "avg_filter_padding": 6,  # Padding of the average filter
             "avg_filter_stride": 1,  # Stride of the average filter
-            "inlier_ratio": 1.0,  # Ratio of inliers
-            "max_accepted_mean_value": 0.4,  # Maximum accepted DF mean value along the line
+            "inlier_ratio": 0.7,  # Ratio of inliers
+            "max_accepted_mean_value": 0.5,  # Maximum accepted DF mean value along the line
         },
         "angle_map": {
             "threshold": 0.1,  # Threshold for deciding if a line angle is correct
             "inlier_ratio": 1.0,  # Ratio of inliers
-            "max_accepted_mean_value": 0.4,  # Maximum difference in AF mean value with line angle
+            "max_accepted_mean_value": 0.1,  # Maximum difference in AF mean value with line angle
         },
         "brute_force_df": {
             "use": False,  # Use brute force sampling for distance field in the second stage
             "image_size": 800,  # Image size for which the coefficients are generated
             "binary_threshold": 0.3,  # Threshold for binary distance map
-            "inlier_ratio": 0.9,  # Ratio of inliers
-            "max_accepted_mean_value": 0.4,  # Maximum accepted DF mean value along the line
+            "inlier_ratio": 0.8,  # Ratio of inliers
+            "max_accepted_mean_value": 0.3,  # Maximum accepted DF mean value along the line
         },
         "mlp_conf": POLD2_MLP.default_conf,
         "nms": True,
         "filters": {
             "distance_field": True,
-            "angle_field": True,
-            "brute_force_df": False,
-            "mlp": True,
+            "angle_field": False,
+            "brute_force_df": True,
+            "mlp": False,
         },
         "device": None,
         "coeff_dir": "line_extraction_coeffs",
         "debug": False,
-        "debug_dir": "tmp",
+        "debug_dir": "tmp_line_extraction_folder",
     }
 
     def _init(self, conf: OmegaConf):
