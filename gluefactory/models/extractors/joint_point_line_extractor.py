@@ -44,11 +44,20 @@ logger = logging.getLogger(__file__)
 
 
 class JointPointLineDetectorDescriptor(BaseModel):
+    """
+    Pipeline to jointly detect and describe keypoints and lines given an RGB image.
+
+    If a checkpoint is loaded, the config from the checkpoint is not. We could change that in the future.
+    """
+    # default checkpoint used for automatic weight loading if no other path specified
+    # currently its the oxparis-800-focal checkpoint
+    jpl_default_checkpoint_url = "https://polybox.ethz.ch/index.php/s/IN0dxL4ljUacf9K/download"
+
     default_conf = {
-        "aliked_model_name": "aliked-n16",  # aliked model determining structure of our encoder
-        "use_line_anglefield": True,  # if set to false, model will be initialized without AF branch and AF will not be output or considered in inference or training
-        "line_df_decoder_channels": 64,
-        "line_af_decoder_channels": 64,
+        "aliked_model_name": "aliked-n16",  # ALIKED model determining architecture of our backbone
+        "use_line_anglefield": False,  # if false, model will be initialized without AF branch and AF isn't considered in inference or training
+        "line_df_decoder_channels": 32,
+        "line_af_decoder_channels": 32,
         "max_num_keypoints": 1024,  # setting for training, for eval: -1
         "detection_threshold": -1,  # setting for training, for eval: 0.2
         "nms_radius": 3,
@@ -56,23 +65,23 @@ class JointPointLineDetectorDescriptor(BaseModel):
         "force_num_keypoints": False,
         "training": {  # training settings
             "do": False,  # switch to turn off other settings regarding training = "training mode"
-            "aliked_pretrained": True,
-            "pretrain_kp_decoder": True,
+            "aliked_pretrained": True, # use pretrained ALIKED weights in backbone encoder
+            "pretrain_kp_decoder": True, # use pretrained ALIKED weights for keypoint-heatmap decoder
             "train_descriptors": {
                 "do": True,  # if train is True, initialize ALIKED Light model form OTF Descriptor GT
                 "gt_aliked_model": "aliked-n32",
             },  # if train is True, initialize ALIKED Light model form OTF Descriptor GT
             "loss": {
-                "kp_loss_name": "weighted_bce",  # other options: bce, weighted_bce or focal loss
+                "kp_loss_name": "focal_loss",  # other options: bce, weighted_bce or focal loss
                 "kp_loss_parameters": {
                     "lambda_weighted_bce": 200,  # weighted bce parameter factor how to boost keypoint loss in map
-                    "focal_gamma": 5,
+                    "focal_gamma": 2,
                     # focal loss parameter controlling how strong to focus on hard examples (typical range 1-5)
-                    "focal_alpha": 0.8,  # focal loss parameter to mitigate class imbalances
+                    "focal_alpha": 0.25,  # focal loss parameter to mitigate class imbalances
                 },
                 "loss_weights": {
-                    "line_af_weight": 10,
-                    "line_df_weight": 10,
+                    "line_af_weight": 1,
+                    "line_df_weight": 1,
                     "keypoint_weight": 1,
                     "descriptor_weight": 1,
                 },
@@ -81,15 +90,16 @@ class JointPointLineDetectorDescriptor(BaseModel):
         "line_detection": {  # by default we use the POLD2 Line Extractor (MLP with Angle Field)
             "do": True,
             "conf": LineExtractor.default_conf,
+            # following options only used for ablations
             "use_deeplsd_kp": False,  # whether we should use DeepLSD line endpoints as junction candidates. Otherwise use JPLDD keypoints
             "use_deeplsd_df_af": False,  # whether we should use Distance and Angle Field from JPLDD or DeepLSD
         },
-        "checkpoint": None,  # if given and non-null, load model checkpoint if local path load locally if standard url download it.
+        "checkpoint": jpl_default_checkpoint_url,  # if given and non-null, load model checkpoint if local path load locally if standard url download it.
         "line_neighborhood": 5,  # used to normalize / denormalize line distance field
-        "timeit": True,  # override timeit: False from BaseModel
+        "timeit": False,  # override timeit: False from BaseModel
     }
 
-    # used for line detection ablation and development when we use deeplsd af/df or line endpoints
+    # used for line detection ablation and development when we use deeplsd af/df or line endpoints instead of original net output
     deeplsd_conf = {
         "detect_lines": True,
         "line_detection_params": {
@@ -129,7 +139,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         # Load Network Components
         self.encoder_backbone = AlikedEncoder(aliked_model_cfg)
         self.keypoint_and_junction_branch = SMH(dim)  # using SMH from ALIKE here
-        self.dkd = DKD(  # Not learned Point detection with subpixel refinement (remove border points, nms, refinement)
+        self.dkd = DKD(  # heuristic point-detection with subpixel refinement from ALIKE (remove border points, nms, refinement)
             radius=conf.nms_radius,
             top_k=-1 if conf.detection_threshold > 0 else conf.max_num_keypoints,
             scores_th=conf.detection_threshold,
@@ -138,12 +148,13 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 if conf.max_num_keypoints > 0
                 else self.n_limit_max
             ),
-        )  # Differentiable Keypoint Detection from ALIKE
-        # Keypoint and line descriptors
+        )
+        # Keypoint descriptor module "SDDH" from ALIKED
         self.descriptor_branch = SDDH(
             dim, K, M, gate=nn.SELU(inplace=True), conv2D=False, mask=False
         )
-        # Line Attraction Field information (Line Distance Field and Angle Field)
+        ## Line Attraction Field information (Line Distance Field and Angle Field) ##
+        # Line distance field decoder similar to that in DeepLSD
         self.distance_field_branch = nn.Sequential(
             nn.Conv2d(dim, conf.line_df_decoder_channels, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -161,6 +172,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         )
         # only use line angle-field if configured
         if self.conf.use_line_anglefield:
+            # Angle branch similar to angle field decoder in DeepLSD
             self.angle_field_branch = nn.Sequential(
                 nn.Conv2d(dim, conf.line_af_decoder_channels, kernel_size=3, padding=1),
                 nn.ReLU(),
@@ -179,6 +191,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         else:
             logger.warning("-- USE OF ANGLE FIELD IS DEACTIVATED! --")
 
+        self.timings = None
         if conf.timeit:
             self.timings = {
                 "total-makespan": [],
@@ -195,13 +208,9 @@ class JointPointLineDetectorDescriptor(BaseModel):
         # load pretrained_elements if wanted (for now that only the ALIKED parts of the network)
         if conf.training.do and conf.training.aliked_pretrained:
             logger.warning("Load pretrained weights for aliked parts...")
-            old_test_val1 = self.encoder_backbone.conv1.weight.data.clone()
             self.load_pretrained_aliked_elements()
-            assert not torch.all(
-                torch.eq(self.encoder_backbone.conv1.weight.data.clone(), old_test_val1)
-            ).item()  # test if weights really loaded!
 
-        # Initialize Lightweight ALIKED model to perform OTF GT generation for descriptors if training
+        # Initialize Lightweight ALIKED model to perform on-the-fly ground-truth generation for descriptors if training
         if conf.training.do and conf.training.train_descriptors.do:
             logger.warning("Load ALiked Lightweight model for descriptor training...")
             aliked_gt_cfg = {
@@ -215,30 +224,36 @@ class JointPointLineDetectorDescriptor(BaseModel):
             self.aliked_lw = get_model("extractors.aliked_light")(aliked_gt_cfg).eval()
 
         # load model checkpoint if given -> only load weights
-        if conf.checkpoint is not None and Path(conf.checkpoint).exists():
-            logger.warning(f"Load model parameters from checkpoint {conf.checkpoint}")
-            chkpt = torch.load(conf.checkpoint, map_location=torch.device("cpu"))
+        if conf.checkpoint is not None:
+            if Path(conf.checkpoint).exists():
+                logger.warning(f"Load model parameters from local checkpoint {conf.checkpoint}")
+                chkpt_statedict = torch.load(conf.checkpoint, map_location=torch.device("cpu"))
+            else:
+                logger.warning(f"Try Load model parameters from URL checkpoint {conf.checkpoint}")
+                chkpt_statedict = torch.hub.load_state_dict_from_url(
+                    conf.checkpoint, map_location="cpu"
+                )
 
-            # remove mlp weights from line detection TODO: remove them when storing instead of filter on load
-            chkpt["model"] = {
-                k: v for k, v in chkpt["model"].items() if not ("mlp" in k)
+            # remove mlp weights from line detection
+            chkpt_statedict["model"] = {
+                k: v for k, v in chkpt_statedict["model"].items() if not ("mlp" in k)
             }
             # if angle field is not wanted we filter out its weights if existent so we can also load old checkpoints including this branch
             if not self.conf.use_line_anglefield:
-                chkpt["model"] = {
+                chkpt_statedict["model"] = {
                     k: v
-                    for k, v in chkpt["model"].items()
+                    for k, v in chkpt_statedict["model"].items()
                     if not ("angle_field_branch" in k)
                 }
 
             self.load_state_dict(
-                chkpt["model"], strict=True
+                chkpt_statedict["model"], strict=True
             )  # set to True to check if all keys are present (mlp weights are not present as we removed them above)
         elif conf.checkpoint is not None:
-            chkpt = torch.hub.load_state_dict_from_url(
+            chkpt_statedict = torch.hub.load_state_dict_from_url(
                 conf.checkpoint, map_location=torch.device("cpu")
             )
-            self.load_state_dict(chkpt["model"], strict=False)
+            self.load_state_dict(chkpt_statedict["model"], strict=False)
 
         # Load line extractor and import line metrics if line detection is used
         if self.conf.line_detection.do:
@@ -272,7 +287,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             self.deeplsd = deeplsd_net.to(device).eval()
 
-    # Utility methods for line df and af with deepLSD
+    # Utility methods for line distance-field for (de)normalization
     def normalize_df(self, df: torch.Tensor) -> torch.Tensor:
         return -torch.log(df / self.conf.line_neighborhood + 1e-6)
 
@@ -284,15 +299,18 @@ class JointPointLineDetectorDescriptor(BaseModel):
         Perform a forward pass. Certain things are only executed NOT in training mode.
         Returned:
             - Probabilistic Keypoint Heatmap
+            - Detected Keypoints
+            - Keypoint descriptors (sparse, do one for every detected keypoint)
             - DeepLSD like Distance field (denormalized)
             - DeepLSD like Angle Field (between -Pi and Pi as radians)
+            - Detected Lines (if line detection activated)
         """
         if self.conf.timeit:
             total_start = sync_and_time()
         # output container definition
         output = {}
 
-        # load image and padder
+        # pad image
         image = data["image"]
         div_by = 2**5
         padder = InputPadder(image.shape[-2], image.shape[-1], div_by)
@@ -323,10 +341,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
         feature_map = padder.unpad(feature_map_padded_normalized)
         logger.debug(
             f"Image size: {image.shape}\nFeatureMap-unpadded: {feature_map.shape}\nFeatureMap-padded: {feature_map_padded.shape}"
-        )
-        assert (feature_map.shape[2], feature_map.shape[3]) == (
-            image.shape[2],
-            image.shape[3],
         )
         keypoint_and_junction_score_map = padder.unpad(
             score_map_padded
@@ -380,7 +394,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         if self.conf.timeit:
             start_keypoints = sync_and_time()
 
-        # Keypoint detection also removes kp at border. it can return topk keypoints or threshold.
+        # Keypoint detection also removes kp at border. it can return topk keypoints or set of thresholded kp.
         keypoints, _, kptscores = self.dkd(
             keypoint_and_junction_score_map,
             sub_pixel=bool(self.conf.subpixel_refinement),
@@ -389,7 +403,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             self.timings["keypoint-detection"].append(sync_and_time() - start_keypoints)
 
         # raw output of DKD needed to generate GT-Descriptors
-        if self.conf.training.train_descriptors.do:
+        if self.conf.training.do and self.conf.training.train_descriptors.do:
             output["keypoints_raw"] = keypoints
 
         _, _, h, w = image.shape
@@ -411,14 +425,14 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
         output["descriptors"] = torch.stack(keypoint_descriptors)  # B N D
 
-        # Extract Lines from Learned Part of the Network
+        ## Line Detection ##
         # Only Perform line detection when NOT in training mode
         if self.conf.line_detection.do and not self.training:
             if self.conf.timeit:
                 start_lines = sync_and_time()
             lines = []
             valid_lines = []
-            line_descs = []
+            line_descriptors = []
             line_indices = []
 
             if output.get("line_anglefield", None) is None:
@@ -428,14 +442,6 @@ class JointPointLineDetectorDescriptor(BaseModel):
             for df, af, kp, desc in zip(
                 line_distance_field, line_angle_field, rescaled_kp, keypoint_descriptors
             ):
-                """
-                "line_detection": {  # by default we use the POLD2 Line Extractor (MLP with Angle Field)
-                    "do": True,
-                    "conf": LineExtractor.default_conf,
-                    "use_deeplsd_kp": False, # whether we should use DeepLSD line endpoints as junction candidates. Otherwise use JPLDD keypoints
-                    "use_deeplsd_df_af": False # whether we should use Distance and Angle Field from JPLDD or DeepLSD
-                },
-                """
                 # Only use deeplsd if explicitly activated
                 if (
                     self.conf.line_detection.use_deeplsd_kp
@@ -494,7 +500,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
                 line_pred = self.line_extractor(line_data)
                 lines.append(line_pred["lines"])
-                line_descs.append(line_pred["line_descriptors"])
+                line_descriptors.append(line_pred["line_descriptors"])
                 line_indices.append(line_pred["line_endpoint_indices"])
                 # Line matchers expect the lines to be stored as line endpoints where line endpoint = coordinate of respective keypoint
                 if len(lines) == 0:
@@ -504,7 +510,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
                     torch.ones(len(lines[-1])).to(line_distance_field[-1].device)
                 )
             output["lines"] = torch.stack(lines, dim=0)
-            output["line_descriptors"] = torch.stack(line_descs, dim=0)
+            output["line_descriptors"] = torch.stack(line_descriptors, dim=0)
             output["valid_lines"] = torch.stack(valid_lines, dim=0)
 
             # Use aliked points sampled from inbetween Line endpoints?
@@ -516,12 +522,20 @@ class JointPointLineDetectorDescriptor(BaseModel):
         return output
 
     def weighted_bce_loss(self, prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Implementation of the weighted BCE loss to cope with class imbalance between keypoint- and non-keypoint pixels.
+        We use this loss for leaning the keypoint heatmap.
+        """
         epsilon = 1e-6
         return -self.lambda_valid_kp * target * torch.log(prediction + epsilon) - (
             1 - target
         ) * torch.log(1 - prediction + epsilon)
 
     def focal_loss(self, prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Implementation of the full-focal loss to cope with class imbalance between keypoint- and non-keypoint pixels and
+        to focus more on hard examples. We use this loss for leaning the keypoint heatmap.
+        """
         alpha = self.conf.training.loss.kp_loss_parameters.focal_alpha
         gamma = self.conf.training.loss.kp_loss_parameters.focal_gamma
         epsilon = 1e-6  # Small value to avoid log(0)
@@ -676,11 +690,13 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
     def get_current_timings(self, reset: bool=False) -> dict:
         """
-        ONLY USE IF TIMEIT ACTIVATED. It returns the average of the current times in a dictionary for
-        all the single network parts.
+        It returns the median of the current forward-pass timings in a dictionary for
+        all the single network parts. Raises ValueError if timings are not activated.
 
         reset: if True deletes all collected times until now
         """
+        if self.timings is None:
+            raise ValueError("Inner Timings not activated/initialized. Hence, cannot get current timings")
         results = {}
         for k, v in self.timings.items():
             results[k] = np.median(v)
@@ -754,7 +770,13 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
         return out
 
-    def _get_warped_outputs(self, data):
+    def _get_warped_outputs(self, data: dict) -> tuple[dict, list[torch.Tensor]]:
+        """
+        given image data. Generate random homographies, warp the input images with them and run the joint
+        point line detection on the warped images.
+
+        Returns: tuple - (jpl output from warped images, homographies used to warp original image)
+        """
         imgs = data["image"]
         device = data["image"].device
         batch_size = imgs.shape[0]

@@ -49,7 +49,7 @@ model:  # TODO: REPLACE MODEL WITH YOU MODEL CFG YOU WANT TO BENCHMARK
     checkpoint: /Users/rkre/PycharmProjects/glue-factory/checkpoints/oxparis_scannet_800_focal/checkpoint_best.tar
 
   matcher:
-    #name: matchers.nearest_neighbor_matcher
+    # select matcher needed for the benchmark - ex matchers.nearest_neighbor_matcher for point benchmarks
     name: matchers.line_matcher
 benchmarks:
   megadepth1500:
