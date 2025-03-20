@@ -57,8 +57,7 @@ homography_params = {
 
 
 def get_dataset_and_loader(
-    dataset: str,
-    num_workers: int, distributed: bool = False
+    dataset: str, num_workers: int, distributed: bool = False
 ):  # folder where dataset images are placed
     print("Loading Dataset {}...".format(dataset))
     config = {
@@ -81,7 +80,14 @@ def get_dataset_and_loader(
     return loader
 
 
-def process_image(img_data: dict, net, num_H: int, output_folder_path: str, device: str, store_lines: bool = False):
+def process_image(
+    img_data: dict,
+    net,
+    num_H: int,
+    output_folder_path: str,
+    device: str,
+    store_lines: bool = False,
+):
     img = img_data["image"].to(device)  # B x C x H x W
     # Run homography adaptation
     distance_field, angle_field = generate_ground_truth_with_homography_adaptation(
@@ -94,7 +100,9 @@ def process_image(img_data: dict, net, num_H: int, output_folder_path: str, devi
     img_name = img_data["name"][0]
     complete_out_folder = (output_folder_path / img_name).parent
     complete_out_folder.mkdir(parents=True, exist_ok=True)
-    output_file_path_hdf5 = complete_out_folder / f"{Path(img_name).name.split('.')[0]}.hdf5"
+    output_file_path_hdf5 = (
+        complete_out_folder / f"{Path(img_name).name.split('.')[0]}.hdf5"
+    )
     # Save the AF/DF in a hdf5 file
     distance_field = distance_field.cpu()
     angle_field = angle_field.cpu()
@@ -104,14 +112,25 @@ def process_image(img_data: dict, net, num_H: int, output_folder_path: str, devi
 
     # detect and store lines
     if store_lines:
-        output_file_path_npy = complete_out_folder / f"{Path(img_name).name.split('.')[0]}.npy"
-        line_res_dict = net.line_detection_single_image(img, angle_field, distance_field)
+        output_file_path_npy = (
+            complete_out_folder / f"{Path(img_name).name.split('.')[0]}.npy"
+        )
+        line_res_dict = net.line_detection_single_image(
+            img, angle_field, distance_field
+        )
         np.save(output_file_path_npy, line_res_dict["lines"])
 
     del distance_field, angle_field, line_res_dict
 
 
-def export_ha(dataset: str, output_folder_path, num_H, n_gpus, image_name_list, store_lines: bool = False):
+def export_ha(
+    dataset: str,
+    output_folder_path,
+    num_H,
+    n_gpus,
+    image_name_list,
+    store_lines: bool = False,
+):
     if n_gpus > 1:
         mpmanager = multiprocessing.Manager()
         lock = mpmanager.Lock()
@@ -132,11 +151,20 @@ def export_ha(dataset: str, output_folder_path, num_H, n_gpus, image_name_list, 
     else:
         data_loader = get_dataset_and_loader(dataset, num_workers=2, distributed=False)
         device = "cuda" if torch.cuda.is_available() and n_gpus > 0 else "cpu"
-        export_ha_seq(data_loader, output_folder_path, num_H, device, image_name_list, store_lines)
+        export_ha_seq(
+            data_loader, output_folder_path, num_H, device, image_name_list, store_lines
+        )
 
 
 def export_ha_parallel(
-    dataset, rank, world_size, output_folder_path, num_H, image_name_list, lock, store_lines: bool = False
+    dataset,
+    rank,
+    world_size,
+    output_folder_path,
+    num_H,
+    image_name_list,
+    lock,
+    store_lines: bool = False,
 ):
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
     print(f"Hello from rank {rank}")
@@ -165,7 +193,14 @@ def export_ha_parallel(
         )
 
 
-def export_ha_seq(data_loader, output_folder_path, num_H, device, image_name_list: str, store_lines: bool = False):
+def export_ha_seq(
+    data_loader,
+    output_folder_path,
+    num_H,
+    device,
+    image_name_list: str,
+    store_lines: bool = False,
+):
     net = DeepLSD({}).to(device)
     with open(image_name_list, "r") as f:
         image_list = f.readlines()
@@ -226,5 +261,12 @@ if __name__ == "__main__":
     print("N DATALOADER JOBS: ", args.n_jobs_dataloader)
     print("N GPUS: ", args.n_gpus)
 
-    export_ha(args.dataset, out_folder_path, args.num_H, args.n_gpus, image_name_list, bool(args.store_lines))
+    export_ha(
+        args.dataset,
+        out_folder_path,
+        args.num_H,
+        args.n_gpus,
+        image_name_list,
+        bool(args.store_lines),
+    )
     print("Done !")

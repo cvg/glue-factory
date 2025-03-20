@@ -325,11 +325,17 @@ class _Dataset(torch.utils.data.Dataset):
 
         # scale points and create integer coordinates for heatmap
         heatmap = np.zeros_like(df)
-        keypoints = ((keypoints * reshape_scales) if reshape_scales is not None else keypoints)
+        keypoints = (
+            (keypoints * reshape_scales) if reshape_scales is not None else keypoints
+        )
         coordinates = torch.round(keypoints).to(dtype=torch.int)
         if self.conf.load_features.point_gt.max_num_heatmap_keypoints > 0:
             num_selected_kp = min(
-                [self.conf.load_features.point_gt.max_num_heatmap_keypoints, keypoint_scores.shape[0]])
+                [
+                    self.conf.load_features.point_gt.max_num_heatmap_keypoints,
+                    keypoint_scores.shape[0],
+                ]
+            )
             coordinates = coordinates[:num_selected_kp]
         if reshaped_size_unpadded is not None:
             # if reshaping is done clamp of roundend coordinates is necessary (TODO: possibly only if dlsd line ep kp gt is used)
@@ -356,15 +362,13 @@ class _Dataset(torch.utils.data.Dataset):
         if self.conf.load_features.point_gt.load_points:
             num_selected_kp = min([self.max_num_gt_kp, keypoint_scores.shape[0]])
             ground_truth[kp_gt_key_name] = (
-                keypoints[: num_selected_kp, :]
-                if self.max_num_gt_kp > -1
-                else keypoints
+                keypoints[:num_selected_kp, :] if self.max_num_gt_kp > -1 else keypoints
             )
             ground_truth[kp_score_gt_key_name] = (
-                keypoint_scores[: num_selected_kp]
+                keypoint_scores[:num_selected_kp]
                 if self.max_num_gt_kp > -1
                 else keypoint_scores
-        )
+            )
 
         return ground_truth
 

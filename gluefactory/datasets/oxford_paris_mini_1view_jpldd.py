@@ -61,7 +61,7 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
                 ],
                 "load_points": False,
                 "use_score_heatmap": True,
-                "max_num_heatmap_keypoints": -1, # topk keypoints used to create the heatmap (-1 = all are used)
+                "max_num_heatmap_keypoints": -1,  # topk keypoints used to create the heatmap (-1 = all are used)
                 "max_num_keypoints": 63,  # topk keypoints returned as gt keypoint locations (-1 - return all)
                 # -> Can also be set to None to return all points but this can only be used when batchsize=1. Min num kp in oxparis: 63
                 "use_deeplsd_lineendpoints_as_kp_gt": False,  # set true to use deep-lsd line endpoints as keypoint groundtruth
@@ -347,7 +347,11 @@ class _Dataset(torch.utils.data.Dataset):
         # select topk keypoints for creation of heatmap if configured like this
         if self.conf.load_features.point_gt.max_num_heatmap_keypoints > 0:
             num_selected_kp = min(
-                [self.conf.load_features.point_gt.max_num_heatmap_keypoints, kps.shape[0]])
+                [
+                    self.conf.load_features.point_gt.max_num_heatmap_keypoints,
+                    kps.shape[0],
+                ]
+            )
             integer_kp_coordinates = integer_kp_coordinates[:num_selected_kp]
 
         if reshaped_size is not None:
@@ -374,12 +378,10 @@ class _Dataset(torch.utils.data.Dataset):
         if self.conf.load_features.point_gt.load_points:
             num_selected_kp = min([self.max_num_gt_kp, kps.shape[0]])
             features[kp_gt_key_name] = (
-                keypoints[: num_selected_kp, :]
-                if self.max_num_gt_kp > -1
-                else keypoints
+                keypoints[:num_selected_kp, :] if self.max_num_gt_kp > -1 else keypoints
             )
             features[kp_score_gt_key_name] = (
-                kps[: num_selected_kp] if self.max_num_gt_kp > -1 else kps
+                kps[:num_selected_kp] if self.max_num_gt_kp > -1 else kps
             )
 
         return features

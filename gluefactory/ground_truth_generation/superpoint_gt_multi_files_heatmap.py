@@ -14,8 +14,8 @@ from joblib import Parallel, delayed
 from kornia.geometry.transform import warp_perspective
 from kornia.morphology import erosion
 from omegaconf import OmegaConf
-from tqdm import tqdm
 from scipy.ndimage import maximum_filter
+from tqdm import tqdm
 
 from gluefactory.datasets import get_dataset
 from gluefactory.geometry.homography import sample_homography_corners
@@ -26,17 +26,21 @@ from gluefactory.settings import EVAL_PATH
 
 class KPExtractor:
     def __init__(self, config):
-        self.threshold_type = config.get('threshold_type', 'nms')
-        self.threshold_value = config.get('threshold_value', 0.015)
-        self.max_keypoints = config.get('max_keypoints', None)  # Default to None if not provided
+        self.threshold_type = config.get("threshold_type", "nms")
+        self.threshold_value = config.get("threshold_value", 0.015)
+        self.max_keypoints = config.get(
+            "max_keypoints", None
+        )  # Default to None if not provided
 
     def extract_keypoints(self, sp_heatmap):
-        nms = (sp_heatmap == maximum_filter(sp_heatmap, size=3)) & (sp_heatmap > self.threshold_value)
+        nms = (sp_heatmap == maximum_filter(sp_heatmap, size=3)) & (
+            sp_heatmap > self.threshold_value
+        )
         keypoints = np.argwhere(nms)  # (row, col)
         scores = sp_heatmap[nms]  # Extract scores
 
         if self.max_keypoints is not None and len(keypoints) > self.max_keypoints:
-            idx = np.argsort(scores)[::-1][:self.max_keypoints]
+            idx = np.argsort(scores)[::-1][: self.max_keypoints]
             keypoints = keypoints[idx]
 
         return keypoints
@@ -94,11 +98,11 @@ class KPExtractor:
         return refined_keypoints
 
     def __init__(self, config):
-        self.threshold_value = config.get('threshold_value', 0.015)
-        self.max_num_keypoints = config.get('max_keypoints', 8000)
-        self.nms_radius = config.get('nms_radius', 4)
-        self.remove_borders = config.get('remove_borders', 4)
-        self.refinement_radius = config.get('refinement_radius', 0)
+        self.threshold_value = config.get("threshold_value", 0.015)
+        self.max_num_keypoints = config.get("max_keypoints", 8000)
+        self.nms_radius = config.get("nms_radius", 4)
+        self.remove_borders = config.get("remove_borders", 4)
+        self.refinement_radius = config.get("refinement_radius", 0)
 
     def extract_keypoints(self, sp_heatmap, b_size=1):
         """Extract keypoints as implemented in Superpoint"""
@@ -115,8 +119,7 @@ class KPExtractor:
 
         # Separate into batches
         keypoints = [
-            torch.stack(best_kp[1:3], dim=-1)[best_kp[0] == i]
-            for i in range(b_size)
+            torch.stack(best_kp[1:3], dim=-1)[best_kp[0] == i] for i in range(b_size)
         ]
         scores = [scores[best_kp[0] == i] for i in range(b_size)]
 
@@ -140,6 +143,7 @@ class KPExtractor:
         # Convert (h, w) to (x, y)
         keypoints = [torch.flip(k, [1]).float() for k in keypoints]
         return keypoints
+
 
 conf = {
     "patch_shape": [800, 800],
@@ -197,7 +201,7 @@ def get_dataset_and_loader(
     config = {
         "name": dataset,  # name of dataset class in gluefactory > datasets
         "grayscale": True,  # commented out things -> dataset must also have these keys but has not
-        "reshape": None, # keep original shape
+        "reshape": None,  # keep original shape
         "train_batch_size": 1,  # prefix must match split mode
         "val_batch_size": 1,  # prefix must match split mode
         "all_batch_size": 1,
@@ -357,13 +361,17 @@ def process_image(img_data, num_H, output_folder_path, store_points: bool = Fals
         f.create_dataset("superpoint_heatmap", data=superpoint_heatmap)
     # store actual keypoints if wanted
     if store_points:
-        output_file_path = (complete_out_folder / f"{Path(img_data['name'][0]).name.split('.')[0]}.npy")
+        output_file_path = (
+            complete_out_folder / f"{Path(img_data['name'][0]).name.split('.')[0]}.npy"
+        )
         kp_extr = KPExtractor({})
         kp = kp_extr.extract_keypoints(superpoint_heatmap)
         np.save(output_file_path, kp)
 
 
-def export_ha(data_loader, output_folder_path, num_H: int, n_jobs: int, store_points: bool = False):
+def export_ha(
+    data_loader, output_folder_path, num_H: int, n_jobs: int, store_points: bool = False
+):
     # Process each image in parallel
     Parallel(n_jobs=n_jobs, backend="multiprocessing")(
         delayed(process_image)(img_data, num_H, output_folder_path, store_points)
@@ -373,7 +381,9 @@ def export_ha(data_loader, output_folder_path, num_H: int, n_jobs: int, store_po
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("dataset", choices=["minidepth", "oxford_paris_mini", "scannet"])
+    parser.add_argument(
+        "dataset", choices=["minidepth", "oxford_paris_mini", "scannet"]
+    )
     parser.add_argument(
         "--output_folder", type=str, help="Output folder.", default="superpoint_gt"
     )
@@ -392,10 +402,7 @@ if __name__ == "__main__":
         default=2,
         help="Number of jobs the dataloader uses to load images",
     )
-    parser.add_argument(
-        "--store_points",
-        action="store_true"
-    )
+    parser.add_argument("--store_points", action="store_true")
     args = parser.parse_args()
 
     out_folder_path = EVAL_PATH / args.output_folder
@@ -408,5 +415,7 @@ if __name__ == "__main__":
     print("N DATALOADER JOBS: ", args.n_jobs_dataloader)
 
     dataloader = get_dataset_and_loader(args.n_jobs_dataloader, args.dataset)
-    export_ha(dataloader, out_folder_path, args.num_H, args.n_jobs, bool(args.store_points))
+    export_ha(
+        dataloader, out_folder_path, args.num_H, args.n_jobs, bool(args.store_points)
+    )
     print("Done !")

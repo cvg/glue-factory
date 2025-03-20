@@ -115,7 +115,12 @@ class DeepLSD(BaseModel):
             outputs = self.net({"image": image})
         return outputs
 
-    def line_detection_single_image(self, image: torch.Tensor, angle_field: torch.Tensor, distance_field: torch.Tensor) -> dict:
+    def line_detection_single_image(
+        self,
+        image: torch.Tensor,
+        angle_field: torch.Tensor,
+        distance_field: torch.Tensor,
+    ) -> dict:
         """
         Standalone line detection based on angle and distance field for use on HA produced af/df.
         Only works for a single image!!
@@ -126,7 +131,7 @@ class DeepLSD(BaseModel):
         np_ll = angle_field.cpu().numpy()
         lines = self.net.detect_afm_lines(
             np_img, np_df, np_ll, **self.net.conf.line_detection_params
-            )
+        )
         # Filter detected lines
         lengths = np.linalg.norm(lines[:, 0] - lines[:, 1], axis=1)
         segs = lines[lengths >= self.conf.min_length]
@@ -147,12 +152,8 @@ class DeepLSD(BaseModel):
             segs = np.concatenate(
                 [segs, np.zeros((pad, 2, 2), dtype=np.float32)], axis=0
             )
-            scores = np.concatenate(
-                [scores, np.zeros(pad, dtype=np.float32)], axis=0
-            )
-            valid_mask = np.concatenate(
-                [valid_mask, np.zeros(pad, dtype=bool)], axis=0
-            )
+            scores = np.concatenate([scores, np.zeros(pad, dtype=np.float32)], axis=0)
+            valid_mask = np.concatenate([valid_mask, np.zeros(pad, dtype=bool)], axis=0)
 
         return {"lines": segs, "line_scores": scores, "valid_lines": valid_mask}
 

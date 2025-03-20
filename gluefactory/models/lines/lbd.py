@@ -22,6 +22,7 @@ class PyTLBD(object):
     def get_lbg_descrs(img, lines):
         # imoprt Locally to prevent GF from crashing
         import pytlbd
+
         ##########################################################################
         ms_lines = PyTLBD.to_multiscale_lines(lines)
         pyramid = get_img_pyramid(img)
@@ -59,6 +60,7 @@ class PyTLBD(object):
     def match_lines(self, lines0, lines1, desc0, desc1):
         # imoprt Locally to prevent GF from crashing
         import pytlbd
+
         # Find matches using the heuristic approach defined in the paper
         multiscale_lines0 = PyTLBD.to_multiscale_lines(lines0)
         multiscale_lines1 = PyTLBD.to_multiscale_lines(lines1)

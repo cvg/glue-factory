@@ -9,7 +9,6 @@ import torch.nn.functional as F
 from kornia.geometry.transform import warp_perspective
 from omegaconf import OmegaConf
 
-from gluefactory.models.utils.metrics_lines import get_rep_and_loc_error
 from gluefactory.datasets.homographies_deeplsd import sample_homography
 from gluefactory.models import get_model
 from gluefactory.models.backbones.backbone_encoder import AlikedEncoder, aliked_cfgs
@@ -17,6 +16,7 @@ from gluefactory.models.base_model import BaseModel
 from gluefactory.models.deeplsd_inference import DeepLSD
 from gluefactory.models.extractors.aliked import DKD, SDDH, SMH, InputPadder
 from gluefactory.models.lines.pold2_extractor import LineExtractor
+from gluefactory.models.utils.metrics_lines import get_rep_and_loc_error
 from gluefactory.models.utils.metrics_points import (
     compute_loc_error,
     compute_pr,
@@ -49,9 +49,12 @@ class JointPointLineDetectorDescriptor(BaseModel):
 
     If a checkpoint is loaded, the config from the checkpoint is not. We could change that in the future.
     """
+
     # default checkpoint used for automatic weight loading if no other path specified
     # currently its the oxparis-800-focal checkpoint
-    jpl_default_checkpoint_url = "https://polybox.ethz.ch/index.php/s/IN0dxL4ljUacf9K/download"
+    jpl_default_checkpoint_url = (
+        "https://polybox.ethz.ch/index.php/s/IN0dxL4ljUacf9K/download"
+    )
 
     default_conf = {
         "aliked_model_name": "aliked-n16",  # ALIKED model determining architecture of our backbone
@@ -65,8 +68,8 @@ class JointPointLineDetectorDescriptor(BaseModel):
         "force_num_keypoints": False,
         "training": {  # training settings
             "do": False,  # switch to turn off other settings regarding training = "training mode"
-            "aliked_pretrained": True, # use pretrained ALIKED weights in backbone encoder
-            "pretrain_kp_decoder": True, # use pretrained ALIKED weights for keypoint-heatmap decoder
+            "aliked_pretrained": True,  # use pretrained ALIKED weights in backbone encoder
+            "pretrain_kp_decoder": True,  # use pretrained ALIKED weights for keypoint-heatmap decoder
             "train_descriptors": {
                 "do": True,  # if train is True, initialize ALIKED Light model form OTF Descriptor GT
                 "gt_aliked_model": "aliked-n32",
@@ -227,10 +230,16 @@ class JointPointLineDetectorDescriptor(BaseModel):
         # load model checkpoint if given -> only load weights
         if conf.checkpoint is not None:
             if Path(conf.checkpoint).exists():
-                logger.warning(f"Load model parameters from local checkpoint {conf.checkpoint}")
-                chkpt_statedict = torch.load(conf.checkpoint, map_location=torch.device("cpu"))
+                logger.warning(
+                    f"Load model parameters from local checkpoint {conf.checkpoint}"
+                )
+                chkpt_statedict = torch.load(
+                    conf.checkpoint, map_location=torch.device("cpu")
+                )
             else:
-                logger.warning(f"Try Load model parameters from URL checkpoint {conf.checkpoint}")
+                logger.warning(
+                    f"Try Load model parameters from URL checkpoint {conf.checkpoint}"
+                )
                 chkpt_statedict = torch.hub.load_state_dict_from_url(
                     conf.checkpoint, map_location="cpu"
                 )
@@ -522,7 +531,9 @@ class JointPointLineDetectorDescriptor(BaseModel):
             self.timings["total-makespan"].append(sync_and_time() - total_start)
         return output
 
-    def weighted_bce_loss(self, prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def weighted_bce_loss(
+        self, prediction: torch.Tensor, target: torch.Tensor
+    ) -> torch.Tensor:
         """
         Implementation of the weighted BCE loss to cope with class imbalance between keypoint- and non-keypoint pixels.
         We use this loss for leaning the keypoint heatmap.
@@ -532,7 +543,9 @@ class JointPointLineDetectorDescriptor(BaseModel):
             1 - target
         ) * torch.log(1 - prediction + epsilon)
 
-    def focal_loss(self, prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def focal_loss(
+        self, prediction: torch.Tensor, target: torch.Tensor
+    ) -> torch.Tensor:
         """
         Implementation of the full-focal loss to cope with class imbalance between keypoint- and non-keypoint pixels and
         to focus more on hard examples. We use this loss for leaning the keypoint heatmap.
@@ -555,7 +568,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
         loss = target * pos_part + (1 - target) * neg_part
         return loss
 
-    def loss(self, pred: dict, data:dict) -> dict:
+    def loss(self, pred: dict, data: dict) -> dict:
         """
         format of data: B x H x W
         perform loss calculation based on prediction and data(=groundtruth) for a batch.
@@ -689,7 +702,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
                     del sd[k]
         return sd
 
-    def get_current_timings(self, reset: bool=False) -> dict:
+    def get_current_timings(self, reset: bool = False) -> dict:
         """
         It returns the median of the current forward-pass timings in a dictionary for
         all the single network parts. Raises ValueError if timings are not activated.
@@ -697,7 +710,9 @@ class JointPointLineDetectorDescriptor(BaseModel):
         reset: if True deletes all collected times until now
         """
         if self.timings is None:
-            raise ValueError("Inner Timings not activated/initialized. Hence, cannot get current timings")
+            raise ValueError(
+                "Inner Timings not activated/initialized. Hence, cannot get current timings"
+            )
         results = {}
         for k, v in self.timings.items():
             results[k] = np.median(v)
@@ -706,7 +721,9 @@ class JointPointLineDetectorDescriptor(BaseModel):
         return results
 
     @staticmethod
-    def get_pr(pred_kp: torch.Tensor, gt_kp: torch.Tensor, tol:int=3) -> tuple[torch.Tensor, torch.Tensor]:
+    def get_pr(
+        pred_kp: torch.Tensor, gt_kp: torch.Tensor, tol: int = 3
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute the precision and recall, based on GT KP.
         """
