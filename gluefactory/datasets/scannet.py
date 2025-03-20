@@ -15,9 +15,8 @@ from gluefactory.settings import DATA_PATH, root
 from gluefactory.utils.image import ImagePreprocessor, load_image
 
 logger = logging.getLogger(__name__)
-
-
 DOWNLOAD_URL = "https://polybox.ethz.ch/index.php/s/N3J7SfnE6NEt8Nu/download"
+
 
 class Scannet(BaseDataset):
     """
@@ -99,7 +98,7 @@ class Scannet(BaseDataset):
             "val": self.val_images,
             "all": self.train_images + self.val_images,
         }
-        print(f"DATASET OVERALL(NO-SPLIT) IMAGES: {len(self.images["all"])}")
+        logger.info(f"DATASET OVERALL(NO-SPLIT) IMAGES: {len(self.images["all"])}")
 
     def download_scannet(self):
         logger.info("Downloading the Scannet dataset...")

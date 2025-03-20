@@ -171,7 +171,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
             nn.ReLU(),
         )
         # only use line angle-field if configured
-        if self.conf.use_line_anglefield:
+        if conf.use_line_anglefield:
             # Angle branch similar to angle field decoder in DeepLSD
             self.angle_field_branch = nn.Sequential(
                 nn.Conv2d(dim, conf.line_af_decoder_channels, kernel_size=3, padding=1),
@@ -197,13 +197,14 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 "total-makespan": [],
                 "encoder": [],
                 "keypoint-and-junction-heatmap": [],
-                "line-af": [],
                 "line-df": [],
                 "descriptor-branch": [],
                 "keypoint-detection": [],
             }
             if conf.line_detection.do:
                 self.timings["line-detection"] = []
+            if conf.use_line_anglefield:
+                self.timings["line-af"] = []
 
         # load pretrained_elements if wanted (for now that only the ALIKED parts of the network)
         if conf.training.do and conf.training.aliked_pretrained:
@@ -504,7 +505,7 @@ class JointPointLineDetectorDescriptor(BaseModel):
                 line_indices.append(line_pred["line_endpoint_indices"])
                 # Line matchers expect the lines to be stored as line endpoints where line endpoint = coordinate of respective keypoint
                 if len(lines) == 0:
-                    print("NO LINES DETECTED")
+                    logger.warning("NO LINES DETECTED")
 
                 valid_lines.append(
                     torch.ones(len(lines[-1])).to(line_distance_field[-1].device)
