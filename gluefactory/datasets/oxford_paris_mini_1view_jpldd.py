@@ -1,14 +1,12 @@
 import logging
-import os
 import pickle
 import random
 import shutil
-import tarfile
+import zipfile
 from pathlib import Path
 
 import numpy as np
 import torch
-from tqdm import tqdm
 
 from gluefactory.datasets import BaseDataset, augmentations
 from gluefactory.settings import DATA_PATH, root
@@ -62,8 +60,8 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
                     "gt_keypoints_scores",
                 ],
                 "load_points": False,
-                "use_score_heatmap": True,
-                "max_num_heatmap_keypoints": -1, # topk keypoints used to create the heatmap (-1 = all are used)
+                "use_score_heatmap": False,
+                "max_num_heatmap_keypoints": -1,  # topk keypoints used to create the heatmap (-1 = all are used)
                 "max_num_keypoints": 63,  # topk keypoints returned as gt keypoint locations (-1 - return all)
                 # -> Can also be set to None to return all points but this can only be used when batchsize=1. Min num kp in oxparis: 63
                 "use_deeplsd_lineendpoints_as_kp_gt": False,  # set true to use deep-lsd line endpoints as keypoint groundtruth
@@ -103,7 +101,7 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
             "test": images,
             "all": images,
         }
-        print(f"DATASET OVERALL(NO-SPLIT) IMAGES: {len(images)}")
+        logger.info(f"DATASET OVERALL(NO-SPLIT) IMAGES: {len(images)}")
 
         augmentation_map = {
             "dark": augmentations.DarkAugmentation,
@@ -114,40 +112,26 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
         self.augmentation = augmentation_map[self.conf.load_features.augment.type]()
 
     def download_oxford_paris_mini(self):
+        """
+        The downloaded dataset already contains ground-truth keypoints, line-df and line-af and lines
+        for dataset original resolution.
+        """
         logger.info("Downloading the OxfordParis Mini dataset...")
-        data_dir = DATA_PATH / self.conf.data_dir
-        tmp_dir = data_dir.parent / "oxpa_tmp"
+        oxparis_root_directory = (DATA_PATH / self.conf.data_dir).parent
+        tmp_dir = oxparis_root_directory.parent / "oxpa_tmp"
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir)
         tmp_dir.mkdir(exist_ok=True, parents=True)
-        url_base = "http://ptak.felk.cvut.cz/revisitop/revisitop1m/"
-        num_parts = 100
-        # go through dataset parts, one by one and only keep wanted images in img_list
-        for i in tqdm(range(num_parts), position=1):
-            tar_name = f"revisitop1m.{i + 1}.tar.gz"
-            tar_url = url_base + "jpg/" + tar_name
-            tmp_tar_path = tmp_dir / tar_name
-            torch.hub.download_url_to_file(tar_url, tmp_tar_path)
-            with tarfile.open(tmp_tar_path) as tar:
-                tar.extractall(path=data_dir)
-            tmp_tar_path.unlink()
-            # Delete unwanted files
-            existing_files = set(
-                [str(i.relative_to(data_dir)) for i in data_dir.glob("**/*.jpg")]
-            )
-            to_del = existing_files - set(self.img_list)
-            for d in to_del:
-                Path(data_dir / d).unlink()
-
-        shutil.rmtree(tmp_dir)
-
-        # remove empty directories
-        for file in os.listdir(data_dir):
-            cur_file: Path = data_dir / file
-            if cur_file.is_file():
-                continue
-            if len(os.listdir(cur_file)) == 0:
-                shutil.rmtree(cur_file)
+        url = "https://filedn.com/lt6zb4ORSwapNyVniJf1Pqh/JPL/oxparis_gt_complete.zip"
+        zip_name = "oxparis.zip"
+        zip_path = tmp_dir / zip_name
+        torch.hub.download_url_to_file(url, zip_path)
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            zip_ref.extractall(tmp_dir)
+        shutil.move(tmp_dir / "revisitop1m_POLD2", str(oxparis_root_directory))
+        logger.info("Delete temporary files...")
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
 
     def get_dataset(self, split):
         assert split in ["train", "val", "test", "all"]
@@ -363,7 +347,11 @@ class _Dataset(torch.utils.data.Dataset):
         # select topk keypoints for creation of heatmap if configured like this
         if self.conf.load_features.point_gt.max_num_heatmap_keypoints > 0:
             num_selected_kp = min(
-                [self.conf.load_features.point_gt.max_num_heatmap_keypoints, kps.shape[0]])
+                [
+                    self.conf.load_features.point_gt.max_num_heatmap_keypoints,
+                    kps.shape[0],
+                ]
+            )
             integer_kp_coordinates = integer_kp_coordinates[:num_selected_kp]
 
         if reshaped_size is not None:
@@ -390,12 +378,10 @@ class _Dataset(torch.utils.data.Dataset):
         if self.conf.load_features.point_gt.load_points:
             num_selected_kp = min([self.max_num_gt_kp, kps.shape[0]])
             features[kp_gt_key_name] = (
-                keypoints[: num_selected_kp, :]
-                if self.max_num_gt_kp > -1
-                else keypoints
+                keypoints[:num_selected_kp, :] if self.max_num_gt_kp > -1 else keypoints
             )
             features[kp_score_gt_key_name] = (
-                kps[: num_selected_kp] if self.max_num_gt_kp > -1 else kps
+                kps[:num_selected_kp] if self.max_num_gt_kp > -1 else kps
             )
 
         return features

@@ -34,10 +34,10 @@ class MergedDataset(BaseDataset):
         "inter_dataset_shuffle": True,  # if True, all images are shuffled (from all datasets) -> scale selection needs to be random in this case as otherwise datsaets will have always choosing same size
         "use_multiscale_learning": True,  # if True, we assume that all datasets included use multiscale learning. -> will make the datasets output same size for a batch
         "datasets": {  # Here list datasets with their (file)name. As an example we have Oxparis and Minidepth here
-            #"minidepth": {
+            # "minidepth": {
             #    "name": "gluefactory.datasets.minidepth",
             #    **MiniDepthDataset.default_conf,
-            #},
+            # },
             "oxparis": {
                 "name": "gluefactory.datasets.oxford_paris_mini_1view_jpldd",
                 **OxfordParisMiniOneViewJPLDD.default_conf,
@@ -45,7 +45,7 @@ class MergedDataset(BaseDataset):
             "scannet": {
                 "name": "gluefactory.datasets.scannet",
                 **Scannet.default_conf,
-            }
+            },
         },
     }
 

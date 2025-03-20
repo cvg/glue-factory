@@ -5,6 +5,7 @@ and extracts keypoints. Savers them in a numpy file.
 
 import argparse
 from pathlib import Path
+
 import h5py
 import numpy as np
 import torch
@@ -65,12 +66,17 @@ class KPExtractor:
         return refined_keypoints
 
     def __init__(self, config):
-        self.threshold_value = config.get('threshold_value', 0.045)
-        self.max_num_keypoints = config.get('max_keypoints', 5000)
-        self.nms_radius = config.get('nms_radius', 4)
-        self.remove_borders_conf = config.get('remove_borders', 4)
-        self.refinement_radius = config.get('refinement_radius', 0)
-        self.dkd_extractor = DKD(radius=self.nms_radius, top_k=0, scores_th=self.threshold_value, n_limit=self.max_num_keypoints)
+        self.threshold_value = config.get("threshold_value", 0.045)
+        self.max_num_keypoints = config.get("max_keypoints", 5000)
+        self.nms_radius = config.get("nms_radius", 4)
+        self.remove_borders_conf = config.get("remove_borders", 4)
+        self.refinement_radius = config.get("refinement_radius", 0)
+        self.dkd_extractor = DKD(
+            radius=self.nms_radius,
+            top_k=0,
+            scores_th=self.threshold_value,
+            n_limit=self.max_num_keypoints,
+        )
 
     def sort_keypoints(self, keypoints, scores):
         """
@@ -96,8 +102,7 @@ class KPExtractor:
 
         # Separate into batches
         keypoints = [
-            torch.stack(best_kp[1:3], dim=-1)[best_kp[0] == i]
-            for i in range(b_size)
+            torch.stack(best_kp[1:3], dim=-1)[best_kp[0] == i] for i in range(b_size)
         ]
         scores = [scores[best_kp[0] == i] for i in range(b_size)]
 
@@ -115,7 +120,9 @@ class KPExtractor:
 
     def extract_keypoints_dkd(self, sp_heatmap, device="cpu"):
         sp_heatmap = sp_heatmap.to(device)
-        keypoints, _, scores = self.dkd_extractor(sp_heatmap.unsqueeze(0), sub_pixel=True)
+        keypoints, _, scores = self.dkd_extractor(
+            sp_heatmap.unsqueeze(0), sub_pixel=True
+        )
         # sort
         _, h, w = sp_heatmap.shape
         wh = torch.tensor([w, h], device=sp_heatmap.device)
@@ -124,6 +131,7 @@ class KPExtractor:
         keypoints, scores = rescaled_kp.squeeze(0), scores[0]
         keypoints, scores = self.sort_keypoints(keypoints, scores)
         return keypoints, scores
+
 
 def read_datasets_from_h5(keys: list, file) -> dict:
     """
@@ -135,6 +143,7 @@ def read_datasets_from_h5(keys: list, file) -> dict:
             np.nan_to_num(file[key].__array__())
         )  # nan_to_num needed because of weird sp gt format
     return data
+
 
 def extract_keypoints(hdf5_path, extractor, debug: bool = False, device="cpu"):
     with h5py.File(hdf5_path, "r") as hmap_file:
@@ -157,11 +166,14 @@ def extract_keypoints(hdf5_path, extractor, debug: bool = False, device="cpu"):
     kp_store_path = hdf5_path.parent / f"{hdf5_path.stem}.npy"
     np.save(kp_store_path, to_store)
 
+
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument("path", type=str)
     arg_parser.add_argument("--debug", action="store_true")
-    arg_parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda", "mps"])
+    arg_parser.add_argument(
+        "--device", type=str, default="cpu", choices=["cpu", "cuda", "mps"]
+    )
     arguments = arg_parser.parse_args()
 
     input_path = Path(arguments.path)

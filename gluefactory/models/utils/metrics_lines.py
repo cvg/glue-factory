@@ -413,6 +413,7 @@ def H_estimation(line_seg1, line_seg2, H_gt, img_size, reproj_thresh=3, tol_px=5
 def match_segments_lbd(img, line_seg1, line_seg2, H, img_size):
     # imoprt Locally to prevent GF from crashing
     from gluefactory.models.lines.lbd import PyTLBD
+
     """ Match two sets of line segments with LBD. """
     lbd = PyTLBD()
 
