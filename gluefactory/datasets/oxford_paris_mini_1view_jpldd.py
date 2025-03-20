@@ -60,7 +60,7 @@ class OxfordParisMiniOneViewJPLDD(BaseDataset):
                     "gt_keypoints_scores",
                 ],
                 "load_points": False,
-                "use_score_heatmap": True,
+                "use_score_heatmap": False,
                 "max_num_heatmap_keypoints": -1,  # topk keypoints used to create the heatmap (-1 = all are used)
                 "max_num_keypoints": 63,  # topk keypoints returned as gt keypoint locations (-1 - return all)
                 # -> Can also be set to None to return all points but this can only be used when batchsize=1. Min num kp in oxparis: 63
