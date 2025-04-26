@@ -9,6 +9,7 @@ def get_model(name):
         name,
         f"{__name__}.{name}",
         f"{__name__}.extractors.{name}",  # backward compatibility
+        f"{__name__}.lines.{name}",  # backward compatibility
         f"{__name__}.matchers.{name}",  # backward compatibility
     ]
     for path in import_paths:

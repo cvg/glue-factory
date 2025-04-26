@@ -19,6 +19,7 @@ class DeepLSD(BaseModel):
                 "grad_nfa": True,
                 "filtering": "normal",
                 "grad_thresh": 3,
+                "faster_lsd": False,
             },
         },
     }

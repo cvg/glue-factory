@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from pytlsd import lsd
+from faster_pytlsd import lsd as fast_lsd
 from torch import nn
 
 from gluefactory.models.backbones.vgg_unet import VGGUNet
@@ -25,6 +26,7 @@ class DeepLSD(BaseModel):
             "grad_nfa": True,
             "filtering": "normal",
             "grad_thresh": 3,
+            "faster_lsd": False,
         },
     }
     required_data_keys = ["image"]
@@ -134,6 +136,7 @@ class DeepLSD(BaseModel):
         merge=False,
         grad_thresh=3,
         grad_nfa=True,
+        faster_lsd=False,
     ):
         """Detect lines from the line distance and angle field.
         Offer the possibility to ignore line in high DF values,
@@ -142,13 +145,22 @@ class DeepLSD(BaseModel):
         angle = line_level.astype(np.float64) - np.pi / 2
         angle = preprocess_angle(angle, img, mask=True)[0]
         angle[gradnorm < grad_thresh] = -1024
-        lines = lsd(
-            img.astype(np.float64),
-            scale=1.0,
-            gradnorm=gradnorm,
-            gradangle=angle,
-            grad_nfa=grad_nfa,
-        )[:, :4].reshape(-1, 2, 2)
+        if faster_lsd:
+            lines = fast_lsd(
+                img.astype(np.float64),
+                scale=1.0,
+                gradnorm=gradnorm,
+                gradangle=angle,
+                grad_nfa=grad_nfa,
+            )[:, :4].reshape(-1, 2, 2)
+        else:
+            lines = lsd(
+                img.astype(np.float64),
+                scale=1.0,
+                gradnorm=gradnorm,
+                gradangle=angle,
+                grad_nfa=grad_nfa,
+            )[:, :4].reshape(-1, 2, 2)
 
         # Optionally filter out lines based on the DF and line_level
         if filtering:
