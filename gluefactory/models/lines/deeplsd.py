@@ -94,13 +94,9 @@ class DeepLSD(BaseModel):
 
         # Batch if possible
         if len(image) == 1 or self.conf.force_num_lines:
-            lines = torch.tensor(lines, dtype=torch.float, device=image.device)
-            line_scores = torch.tensor(
-                line_scores, dtype=torch.float, device=image.device
-            )
-            valid_lines = torch.tensor(
-                valid_lines, dtype=torch.bool, device=image.device
-            )
+            lines = torch.from_numpy(np.stack(lines, axis=0)).to(image.device).float()
+            line_scores = torch.from_numpy(np.stack(line_scores, axis=0)).to(image.device).float()
+            valid_lines = torch.from_numpy(np.stack(valid_lines, axis=0)).to(image.device).bool()
 
         return {"lines": lines, "line_scores": line_scores, "valid_lines": valid_lines}
 

@@ -5,7 +5,10 @@ model:
         model_conf:
             detect_lines: True
             line_detection_params:
-                merge: True
+                merge: False
+                grad_nfa: False
+                filtering: True
+                faster_lsd: False
 
     matcher:
         name: matchers.line_matcher

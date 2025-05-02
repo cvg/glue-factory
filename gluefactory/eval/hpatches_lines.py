@@ -12,6 +12,7 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from gluefactory.datasets import get_dataset
+from gluefactory.datasets.homographies_deeplsd import warp_lines
 from gluefactory.eval.eval_pipeline import (
     EvalPipeline,
     exists_eval,
@@ -21,6 +22,7 @@ from gluefactory.eval.eval_pipeline import (
 from gluefactory.eval.io import get_eval_parser, load_model, parse_eval_args
 from gluefactory.models import BaseModel
 from gluefactory.models.cache_loader import CacheLoader
+from gluefactory.models.lines.line_utils import H_estimation
 from gluefactory.models.utils.metrics_lines import (
     compute_loc_error,
     compute_repeatability,
@@ -146,7 +148,6 @@ class HPatchesPipeline(EvalPipeline):
         assert pred_file.exists()
         results = defaultdict(list)
 
-        conf = self.conf.eval
         cache_loader = CacheLoader({"path": str(pred_file), "collate": None}).eval()
         for i, data in enumerate(tqdm(loader)):
             # if i in range(360,365):
@@ -162,6 +163,31 @@ class HPatchesPipeline(EvalPipeline):
             results_i["names"] = data["name"][0]
             results_i["scenes"] = data["scene"][0]
 
+            # compute H_err
+            segs1, segs2, matched_idx1, matched_idx2 = (
+                pred["lines0"],
+                pred["lines1"],
+                pred["line_matches0"].to(torch.int64),
+                pred["line_matches1"].to(torch.int64),
+            )
+
+            H = data["H_0to1"].cpu().numpy()
+
+            for thresh in [1, 3, 5]:
+                if len(matched_idx1) < 3:
+                    results_i[f"H_err@{thresh}"] = 0
+                else:
+                    matched_seg1 = segs1[matched_idx1].cpu().numpy()
+                    matched_seg2 = warp_lines(segs2.cpu().numpy(), H)[matched_idx2]
+                    results_i[f"H_err@{thresh}"] = H_estimation(
+                        matched_seg1,
+                        matched_seg2,
+                        H,
+                        data["view0"]["image"].shape[1:],
+                        reproj_thresh=thresh,
+                    )[0]
+
+            # compute repeatability and loc_error
             if "lines0" in pred:
                 lines0 = pred["lines0"].cpu()
                 lines1 = pred["lines1"].cpu()
@@ -202,7 +228,10 @@ class HPatchesPipeline(EvalPipeline):
             arr = np.array(v)
             if not np.issubdtype(np.array(v).dtype, np.number):
                 continue
-            summaries[f"m{k}"] = round(np.median(arr), 3)
+            if k.startswith("H_err"):
+                summaries[f"m{k}"] = round(np.mean(arr), 3)
+            else:
+                summaries[f"m{k}"] = round(np.median(arr), 3)
 
         if "repeatability" in results.keys():
             for i, th in enumerate(self.conf.repeatability_th):
