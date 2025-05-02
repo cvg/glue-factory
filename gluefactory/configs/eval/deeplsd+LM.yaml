@@ -7,8 +7,8 @@ model:
             line_detection_params:
                 merge: False
                 grad_nfa: False
-                filtering: True
-                faster_lsd: False
+                filtering: strict  # True
+                faster_lsd: True
 
     matcher:
         name: matchers.line_matcher

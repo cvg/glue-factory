@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from joblib import Parallel, delayed
 from pytlsd import lsd
+from faster_pytlsd import lsd as fast_lsd
 
 from ..base_model import BaseModel
 
@@ -12,6 +13,7 @@ class LSD(BaseModel):
         "max_num_lines": None,
         "force_num_lines": False,
         "n_jobs": 4,
+        "faster_lsd": False,
     }
     required_data_keys = ["image"]
 
@@ -23,7 +25,10 @@ class LSD(BaseModel):
 
     def detect_lines(self, img):
         # Run LSD
-        segs = lsd(img)
+        if self.conf.faster_lsd:
+            segs = fast_lsd(img, scale=1.0)
+        else:
+            segs = lsd(img)
 
         # Filter out keylines that do not meet the minimum length criteria
         lengths = np.linalg.norm(segs[:, 2:4] - segs[:, 0:2], axis=1)
