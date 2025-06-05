@@ -237,7 +237,7 @@ class DKD(nn.Module):
                 scoredispersitys.append(kptscore)  # for jit.script compatability
                 kptscores.append(kptscore)
 
-        return keypoints, scoredispersitys, kptscores
+        return keypoints, kptscores, scoredispersitys
 
 
 class InputPadder(object):
@@ -770,10 +770,10 @@ class ALIKED(BaseModel):
         keypoints, kptscores, scoredispersitys = self.dkd(
             score_map, image_size=data.get("image_size")
         )
-        descriptors, offsets = self.desc_head(feature_map, keypoints)
+        descriptors, _ = self.desc_head(feature_map, keypoints)
 
         _, _, h, w = image.shape
-        wh = torch.tensor([w, h], device=image.device)
+        wh = torch.tensor([w - 1, h - 1], device=image.device)
         # no padding required,
         # we can set detection_threshold=-1 and conf.max_num_keypoints
         return {
