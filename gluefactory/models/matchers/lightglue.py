@@ -384,6 +384,13 @@ class LightGlue(nn.Module):
                 state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
             self.load_state_dict(state_dict, strict=False)
 
+        self.register_buffer(
+            "confidence_thresholds",
+            torch.Tensor(
+                [self.confidence_threshold(i) for i in range(self.conf.n_layers)]
+            ),
+        )
+
     def compile(self, mode="reduce-overhead"):
         if self.conf.width_confidence != -1:
             warnings.warn(
