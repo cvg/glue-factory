@@ -1,6 +1,7 @@
 """
 ETH3D multi-view benchmark, used for line matching evaluation.
 """
+
 import logging
 import os
 import shutil
