@@ -55,7 +55,6 @@ import torch
 from torch import nn
 from copy import deepcopy
 import logging
-from torch.utils.checkpoint import checkpoint
 
 from gluefactory.models.base_model import BaseModel
 
@@ -152,8 +151,14 @@ class AttentionalGNN(nn.Module):
         for i, (layer, name) in enumerate(zip(self.layers, self.names)):
             layer.attn.prob = []
             if self.training:
-                delta0, delta1 = checkpoint(
-                    self._forward, layer, desc0, desc1, name, preserve_rng_state=False
+                delta0, delta1 = torch.utils.checkpoint.checkpoint(
+                    self._forward,
+                    layer,
+                    desc0,
+                    desc1,
+                    name,
+                    preserve_rng_state=False,
+                    use_reentrant=False,  # Recommended by torch, default was True
                 )
             else:
                 delta0, delta1 = self._forward(layer, desc0, desc1, name)

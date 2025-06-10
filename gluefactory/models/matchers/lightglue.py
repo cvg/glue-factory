@@ -7,7 +7,6 @@ import torch
 import torch.nn.functional as F
 from omegaconf import OmegaConf
 from torch import nn
-from torch.utils.checkpoint import checkpoint
 
 from ...settings import DATA_PATH
 from ..utils.losses import NLLLoss
@@ -466,8 +465,13 @@ class LightGlue(nn.Module):
         token0, token1 = None, None
         for i in range(self.conf.n_layers):
             if self.conf.checkpointed and self.training:
-                desc0, desc1 = checkpoint(
-                    self.transformers[i], desc0, desc1, encoding0, encoding1
+                desc0, desc1 = torch.utils.checkpoint.checkpoint(
+                    self.transformers[i],
+                    desc0,
+                    desc1,
+                    encoding0,
+                    encoding1,
+                    use_reentrant=False,  # Recommended by torch, default was True
                 )
             else:
                 desc0, desc1 = self.transformers[i](desc0, desc1, encoding0, encoding1)

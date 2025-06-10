@@ -716,7 +716,11 @@ class AttentionalGNN(nn.Module):
         for i, layer in enumerate(self.layers):
             if self.checkpointed:
                 desc0, desc1 = torch.utils.checkpoint.checkpoint(
-                    layer, desc0, desc1, preserve_rng_state=False
+                    layer,
+                    desc0,
+                    desc1,
+                    preserve_rng_state=False,
+                    use_reentrant=False,  # Recommended by torch, default was True
                 )
             else:
                 desc0, desc1 = layer(desc0, desc1)
