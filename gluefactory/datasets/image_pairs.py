@@ -32,11 +32,16 @@ def parse_camera(calib_elems) -> Camera:
 
 
 def parse_relative_pose(pose_elems) -> Pose:
-    # assert len(calib_list) == 9
-    R, t = pose_elems[:9], pose_elems[9:12]
-    R = np.array([float(x) for x in R]).reshape(3, 3).astype(np.float32)
-    t = np.array([float(x) for x in t]).astype(np.float32)
-    return Pose.from_Rt(R, t)
+    if len(pose_elems) == 12:
+        R, t = pose_elems[:9], pose_elems[9:12]
+        R = np.array([float(x) for x in R]).reshape(3, 3).astype(np.float32)
+        t = np.array([float(x) for x in t]).astype(np.float32)
+        return Pose.from_Rt(R, t)
+    elif len(pose_elems) == 16:
+        T = np.array([float(x) for x in pose_elems]).reshape(4, 4).astype(np.float32)
+        return Pose.from_4x4mat(T)
+    else:
+        raise ValueError(f"Can not interpret pose {pose_elems}.")
 
 
 class ImagePairs(BaseDataset, torch.utils.data.Dataset):
@@ -81,7 +86,8 @@ class ImagePairs(BaseDataset, torch.utils.data.Dataset):
             data["view1"]["camera"] = parse_camera(pair_data[11:20]).scale(
                 data1["scales"]
             )
-            data["T_0to1"] = parse_relative_pose(pair_data[20:32])
+            data["T_0to1"] = parse_relative_pose(pair_data[20:])
+            data["T_1to0"] = data["T_0to1"].inv()
         elif self.conf.extra_data == "homography":
             data["H_0to1"] = (
                 data1["transform"]
