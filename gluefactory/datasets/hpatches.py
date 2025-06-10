@@ -54,7 +54,7 @@ class HPatches(BaseDataset, torch.utils.data.Dataset):
         "v_astronautis",
         "v_talent",
     )
-    url = "https://huggingface.co/datasets/vbalnt/hpatches/resolve/main/hpatches-sequences-release.zip"
+    url = "https://huggingface.co/datasets/vbalnt/hpatches/resolve/main/hpatches-sequences-release.zip"  # noqa: E501
 
     def _init(self, conf):
         assert conf.batch_size == 1
