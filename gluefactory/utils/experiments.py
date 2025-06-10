@@ -14,7 +14,7 @@ import torch
 from omegaconf import OmegaConf
 
 from ..models import get_model
-from ..settings import TRAINING_PATH
+from .. import settings
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ def list_checkpoints(dir_):
 
 def get_last_checkpoint(exper, allow_interrupted=True):
     """Get the last saved checkpoint for a given experiment name."""
-    ckpts = list_checkpoints(Path(TRAINING_PATH, exper))
+    ckpts = list_checkpoints(Path(settings.TRAINING_PATH, exper))
     if not allow_interrupted:
         ckpts = [(n, p) for (n, p) in ckpts if "_interrupted" not in p.name]
     assert len(ckpts) > 0
@@ -45,7 +45,7 @@ def get_last_checkpoint(exper, allow_interrupted=True):
 
 def get_best_checkpoint(exper):
     """Get the checkpoint with the best loss, for a given experiment name."""
-    p = Path(TRAINING_PATH, exper, "checkpoint_best.tar")
+    p = Path(settings.TRAINING_PATH, exper, "checkpoint_best.tar")
     return p
 
 
@@ -62,7 +62,9 @@ def delete_old_checkpoints(dir_, num_keep):
             kept += 1
 
 
-def load_experiment(exper, conf={}, get_last=False, ckpt=None):
+def load_experiment(
+    exper, conf={}, get_last=False, ckpt=None, weights_only=settings.ALLOW_PICKLE
+):
     """Load and return the model of a given experiment."""
     exper = Path(exper)
     if exper.suffix != ".tar":
@@ -73,7 +75,7 @@ def load_experiment(exper, conf={}, get_last=False, ckpt=None):
     else:
         ckpt = exper
     logger.info(f"Loading checkpoint {ckpt.name}")
-    ckpt = torch.load(str(ckpt), map_location="cpu")
+    ckpt = torch.load(str(ckpt), map_location="cpu", weights_only=weights_only)
 
     loaded_conf = OmegaConf.create(ckpt["conf"])
     OmegaConf.set_struct(loaded_conf, False)
