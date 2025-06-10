@@ -13,6 +13,7 @@ from gluefactory.models.backbones.vgg_unet import VGGUNet
 from gluefactory.models.base_model import BaseModel
 from gluefactory.models.lines.line_refinement import filter_outlier_lines, merge_lines
 from gluefactory.models.lines.line_utils import preprocess_angle
+from gluefactory.utils.image import compute_image_grad
 
 
 class DeepLSD(BaseModel):
@@ -22,6 +23,7 @@ class DeepLSD(BaseModel):
         "scale_factors": [1.0, 1.5],
         "detect_lines": False,
         "line_detection_params": {
+            "use_img_grad_angle": False,
             "merge": False,
             "grad_nfa": True,
             "filtering": "normal",
@@ -133,6 +135,7 @@ class DeepLSD(BaseModel):
         df,
         line_level,
         filtering="normal",
+        use_img_grad_angle=False,
         merge=False,
         grad_thresh=3,
         grad_nfa=True,
@@ -142,8 +145,13 @@ class DeepLSD(BaseModel):
         Offer the possibility to ignore line in high DF values,
         and to merge close-by lines."""
         gradnorm = np.maximum(5 - df, 0).astype(np.float64)
-        angle = line_level.astype(np.float64) - np.pi / 2
-        angle = preprocess_angle(angle, img, mask=True)[0]
+        img_grad_angle = None
+        if use_img_grad_angle:
+            img_grad_angle = compute_image_grad(img)[3]
+            angle = np.mod(img_grad_angle - np.pi / 2, 2 * np.pi)
+        else:
+            angle = line_level.astype(np.float64) - np.pi / 2
+            angle = preprocess_angle(angle, img, mask=True)[0]
         angle[gradnorm < grad_thresh] = -1024
         if faster_lsd:
             lines = fast_lsd(
@@ -168,7 +176,10 @@ class DeepLSD(BaseModel):
                 df_thresh, ang_thresh = 1.0, np.pi / 12
             else:
                 df_thresh, ang_thresh = 1.5, np.pi / 9
-            angle = line_level - np.pi / 2
+            if use_img_grad_angle:
+                angle = img_grad_angle
+            else:
+                angle = line_level - np.pi / 2
             lines = filter_outlier_lines(
                 img,
                 lines[:, :, [1, 0]],
