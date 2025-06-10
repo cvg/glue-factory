@@ -18,7 +18,7 @@ FLASH_AVAILABLE = hasattr(F, "scaled_dot_product_attention")
 torch.backends.cudnn.deterministic = True
 
 
-@torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
+@torch.amp.custom_fwd(cast_inputs=torch.float32, device_type="cuda")
 def normalize_keypoints(
     kpts: torch.Tensor, size: Optional[torch.Tensor] = None
 ) -> torch.Tensor:
@@ -383,6 +383,13 @@ class LightGlue(nn.Module):
                 pattern = f"cross_attn.{i}", f"transformers.{i}.cross_attn"
                 state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
             self.load_state_dict(state_dict, strict=False)
+
+        self.register_buffer(
+            "confidence_thresholds",
+            torch.Tensor(
+                [self.confidence_threshold(i) for i in range(self.conf.n_layers)]
+            ),
+        )
 
     def compile(self, mode="reduce-overhead"):
         if self.conf.width_confidence != -1:

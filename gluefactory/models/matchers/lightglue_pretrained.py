@@ -21,13 +21,14 @@ class LightGlue(BaseModel):
         self.set_initialized()
 
     def _forward(self, data):
+        required_keys = ["keypoints", "descriptors", "scales", "oris"]
         view0 = {
-            **{k: data[k + "0"] for k in ["keypoints", "descriptors"]},
             **data["view0"],
+            **{k: data[k + "0"] for k in required_keys if (k + "0") in data},
         }
         view1 = {
-            **{k: data[k + "1"] for k in ["keypoints", "descriptors"]},
             **data["view1"],
+            **{k: data[k + "1"] for k in required_keys if (k + "1") in data},
         }
         return self.net({"image0": view0, "image1": view1})
 

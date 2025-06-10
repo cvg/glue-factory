@@ -35,9 +35,11 @@ def create_input_data(cv_img0, cv_img1, device):
     data = {"view0": ip(img0), "view1": ip(img1)}
     data = map_tensor(
         data,
-        lambda t: t[None].to(device)
-        if isinstance(t, Tensor)
-        else torch.from_numpy(t)[None].to(device),
+        lambda t: (
+            t[None].to(device)
+            if isinstance(t, Tensor)
+            else torch.from_numpy(t)[None].to(device)
+        ),
     )
     return data
 

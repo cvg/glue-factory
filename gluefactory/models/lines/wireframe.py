@@ -256,9 +256,9 @@ class WireframeExtractor(BaseModel):
                 associativity = torch.eye(
                     len(all_points[-1]), dtype=torch.bool, device=device
                 )
-                associativity[
-                    : n_true_junctions[bs], : n_true_junctions[bs]
-                ] = line_association[bs][: n_true_junctions[bs], : n_true_junctions[bs]]
+                associativity[: n_true_junctions[bs], : n_true_junctions[bs]] = (
+                    line_association[bs][: n_true_junctions[bs], : n_true_junctions[bs]]
+                )
                 pl_associativity.append(associativity)
 
             all_points = torch.stack(all_points, dim=0)

@@ -72,7 +72,7 @@ def MLP(channels, do_bn=True):
     return nn.Sequential(*layers)
 
 
-@torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
+@torch.amp.custom_fwd(cast_inputs=torch.float32, device_type="cuda")
 def normalize_keypoints(kpts, size=None, shape=None):
     if size is None:
         assert shape is not None

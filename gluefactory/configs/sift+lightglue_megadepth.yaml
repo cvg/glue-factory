@@ -25,10 +25,10 @@ model:
     name: two_view_pipeline
     extractor:
         name: extractors.sift
-        detector: pycolmap_cuda
+        backend: pycolmap_cuda
         max_num_keypoints: 2048
         force_num_keypoints: True
-        detection_threshold: 0.0001
+        nms_radius: 3
         trainable: False
     matcher:
         name: matchers.lightglue
@@ -62,6 +62,9 @@ benchmarks:
             preprocessing:
                 side: long
                 resize: 1600
+        model:
+            extractor:
+                nms_radius: 0
         eval:
             estimator: opencv
             ransac_th: 0.5
@@ -72,3 +75,4 @@ benchmarks:
         model:
             extractor:
                 max_num_keypoints: 1024
+                nms_radius: 0
