@@ -161,9 +161,12 @@ class BaseDataset(metaclass=ABCMeta):
         except omegaconf.MissingMandatoryValue:
             batch_size = self.conf.batch_size
         num_workers = self.conf.get("num_workers", batch_size)
+        drop_last = True if split == "train" else False
         if distributed:
             shuffle = False
-            sampler = torch.utils.data.distributed.DistributedSampler(dataset)
+            sampler = torch.utils.data.distributed.DistributedSampler(
+                dataset, drop_last=drop_last
+            )
         else:
             sampler = None
             if shuffle is None:
@@ -178,7 +181,7 @@ class BaseDataset(metaclass=ABCMeta):
             num_workers=num_workers,
             worker_init_fn=worker_init_fn,
             prefetch_factor=self.conf.prefetch_factor,
-            drop_last=True if split == "train" else False,
+            drop_last=drop_last,
         )
 
     def get_overfit_loader(self, split):

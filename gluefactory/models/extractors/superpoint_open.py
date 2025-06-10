@@ -1,11 +1,13 @@
 """PyTorch implementation of the SuperPoint model,
-   derived from the TensorFlow re-implementation (2018).
-   Authors: Rémi Pautrat, Paul-Edouard Sarlin
-   https://github.com/rpautrat/SuperPoint
-   The implementation of this model and its trained weights are made
-   available under the MIT license.
+derived from the TensorFlow re-implementation (2018).
+Authors: Rémi Pautrat, Paul-Edouard Sarlin
+https://github.com/rpautrat/SuperPoint
+The implementation of this model and its trained weights are made
+available under the MIT license.
 """
+
 from collections import OrderedDict
+from pathlib import Path
 from types import SimpleNamespace
 
 import torch
@@ -84,6 +86,7 @@ class SuperPoint(BaseModel):
         "descriptor_dim": 256,
         "channels": [64, 64, 128, 128, 256],
         "dense_outputs": None,
+        "weights": None,  # local path of pretrained weights
     }
 
     checkpoint_url = "https://github.com/rpautrat/SuperPoint/raw/master/weights/superpoint_v6_from_tf.pth"  # noqa: E501
@@ -111,7 +114,10 @@ class SuperPoint(BaseModel):
             VGGBlock(c, self.conf.descriptor_dim, 1, relu=False),
         )
 
-        state_dict = torch.hub.load_state_dict_from_url(self.checkpoint_url)
+        if conf.weights is not None and Path(conf.weights).exists():
+            state_dict = torch.load(conf.weights, map_location="cpu")
+        else:
+            state_dict = torch.hub.load_state_dict_from_url(self.checkpoint_url)
         self.load_state_dict(state_dict)
 
     def _forward(self, data):

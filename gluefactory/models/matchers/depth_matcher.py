@@ -37,7 +37,7 @@ class DepthMatcher(BaseModel):
                 "valid_lines1",
             ]
 
-    @torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
+    @torch.amp.custom_fwd(cast_inputs=torch.float32, device_type="cuda")
     def _forward(self, data):
         result = {}
         if self.conf.use_points:

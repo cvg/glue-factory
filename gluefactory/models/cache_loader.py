@@ -47,9 +47,11 @@ def pad_line_features(pred, seq_l: int = None):
 
 def recursive_load(grp, pkeys):
     return {
-        k: torch.from_numpy(grp[k].__array__())
-        if isinstance(grp[k], h5py.Dataset)
-        else recursive_load(grp[k], list(grp.keys()))
+        k: (
+            torch.from_numpy(grp[k].__array__())
+            if isinstance(grp[k], h5py.Dataset)
+            else recursive_load(grp[k], list(grp.keys()))
+        )
         for k in pkeys
     }
 
@@ -108,9 +110,12 @@ class CacheLoader(BaseModel):
             pred = recursive_load(grp, pkeys)
             if self.numeric_dtype is not None:
                 pred = {
-                    k: v
-                    if not isinstance(v, torch.Tensor) or not torch.is_floating_point(v)
-                    else v.to(dtype=self.numeric_dtype)
+                    k: (
+                        v
+                        if not isinstance(v, torch.Tensor)
+                        or not torch.is_floating_point(v)
+                        else v.to(dtype=self.numeric_dtype)
+                    )
                     for k, v in pred.items()
                 }
             pred = batch_to_device(pred, device)
