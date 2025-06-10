@@ -31,6 +31,7 @@ dependencies = [
     "kornia",
     "seaborn",
     "joblib",
+    "scikit-learn~=1.3.0",
     "lightglue @ git+https://github.com/cvg/LightGlue.git",
 ]
 urls = {Repository = "https://github.com/cvg/glue-factory"}
@@ -38,8 +39,8 @@ urls = {Repository = "https://github.com/cvg/glue-factory"}
 [project.optional-dependencies]
 extra = [
     "pycolmap",
-    "poselib @ git+https://github.com/PoseLib/PoseLib.git@9c8f3ca1baba69e19726cc7caded574873ec1f9e",
-    "pytlsd @ git+https://github.com/iago-suarez/pytlsd.git@v0.0.5",
+    "poselib",
+    "pytlsd @ git+https://github.com/iago-suarez/pytlsd.git@4180ab8990ae68cc9c8797c63aa1dc47b2c714da",
     "deeplsd @ git+https://github.com/cvg/DeepLSD.git",
     "homography_est @ git+https://github.com/rpautrat/homography_est.git@17b200d528e6aa8ac61a878a29265bf5f9d36c41",
 ]
