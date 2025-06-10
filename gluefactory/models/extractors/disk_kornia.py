@@ -59,12 +59,12 @@ class DISK(BaseModel):
         for i in range(0, image.shape[0], chunk):
             if self.conf.dense_outputs:
                 features, d_descriptors = self._get_dense_outputs(
-                    image[: min(image.shape[0], i + chunk)]
+                    image[i: min(image.shape[0], i + chunk)]
                 )
                 dense_descriptors.append(d_descriptors)
             else:
                 features = self.model(
-                    image[: min(image.shape[0], i + chunk)],
+                    image[i: min(image.shape[0], i + chunk)],
                     n=self.conf.max_num_keypoints,
                     window_size=self.conf.nms_window_size,
                     score_threshold=self.conf.detection_threshold,

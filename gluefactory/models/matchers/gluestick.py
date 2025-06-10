@@ -514,7 +514,7 @@ class EndPtEncoder(nn.Module):
         return self.encoder(torch.cat(inputs, dim=1))
 
 
-@torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
+@torch.amp.custom_fwd(cast_inputs=torch.float32, device_type="cuda")
 def attention(query, key, value):
     dim = query.shape[1]
     scores = torch.einsum("bdhn,bdhm->bhnm", query, key) / dim**0.5
