@@ -58,6 +58,13 @@ import logging
 
 from gluefactory.models.base_model import BaseModel
 
+# Hacky workaround for torch.amp.custom_fwd to support older versions of PyTorch.
+AMP_CUSTOM_FWD_F32 = (
+    torch.amp.custom_fwd(cast_inputs=torch.float32, device_type="cuda")
+    if hasattr(torch.amp, "custom_fwd")
+    else torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
+)
+
 
 def MLP(channels, do_bn=True):
     n = len(channels)
@@ -71,7 +78,7 @@ def MLP(channels, do_bn=True):
     return nn.Sequential(*layers)
 
 
-@torch.amp.custom_fwd(cast_inputs=torch.float32, device_type="cuda")
+@AMP_CUSTOM_FWD_F32
 def normalize_keypoints(kpts, size=None, shape=None):
     if size is None:
         assert shape is not None

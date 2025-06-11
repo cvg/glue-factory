@@ -14,6 +14,13 @@ from ..utils.metrics import matcher_metrics
 warnings.filterwarnings("ignore", category=UserWarning)
 ETH_EPS = 1e-8
 
+# Hacky workaround for torch.amp.custom_fwd to support older versions of PyTorch.
+AMP_CUSTOM_FWD_F32 = (
+    torch.amp.custom_fwd(cast_inputs=torch.float32, device_type="cuda")
+    if hasattr(torch.amp, "custom_fwd")
+    else torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
+)
+
 
 class GlueStick(BaseModel):
     default_conf = {
@@ -514,7 +521,7 @@ class EndPtEncoder(nn.Module):
         return self.encoder(torch.cat(inputs, dim=1))
 
 
-@torch.amp.custom_fwd(cast_inputs=torch.float32, device_type="cuda")
+@AMP_CUSTOM_FWD_F32
 def attention(query, key, value):
     dim = query.shape[1]
     scores = torch.einsum("bdhn,bdhm->bhnm", query, key) / dim**0.5
