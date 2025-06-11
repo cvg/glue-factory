@@ -325,7 +325,12 @@ def training(rank, conf, output_dir, args):
     optimizer = optimizer_fn(
         lr_params, lr=conf.train.lr, **conf.train.optimizer_options
     )
-    scaler = torch.amp.GradScaler(enabled=args.mixed_precision is not None)
+    use_mp = args.mixed_precision is not None
+    scaler = (
+        torch.amp.GradScaler("cuda", enabled=use_mp)
+        if hasattr(torch.amp, "GradScaler")
+        else torch.cuda.amp.GradScaler(enabled=use_mp)
+    )
     logger.info(f"Training with mixed_precision={args.mixed_precision}")
 
     mp_dtype = {
