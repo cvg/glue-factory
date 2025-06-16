@@ -99,7 +99,6 @@ def save_experiment(
     optimizer,
     lr_scheduler,
     conf,
-    losses,
     results,
     best_eval,
     epoch,
@@ -118,7 +117,6 @@ def save_experiment(
         "lr_scheduler": lr_scheduler.state_dict(),
         "conf": OmegaConf.to_container(conf, resolve=True),
         "epoch": epoch,
-        "losses": losses,
         "eval": results,
     }
     if cp_name is None:
