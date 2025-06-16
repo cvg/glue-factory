@@ -50,6 +50,7 @@ class HomographyDataset(BaseDataset):
         "data_dir": "revisitop1m",  # the top-level directory
         "image_dir": "jpg/",  # the subdirectory with the images
         "image_list": "revisitop1m.txt",  # optional: list or filename of list
+        "check_file_exists": False,  # check if the image exists
         "glob": ["*.jpg", "*.png", "*.jpeg", "*.JPG", "*.PNG"],
         # splits
         "train_size": 100,
@@ -110,13 +111,13 @@ class HomographyDataset(BaseDataset):
                 raise FileNotFoundError(f"Cannot find image list {image_list}.")
             images = image_list.read_text().rstrip("\n").split("\n")
             for image in images:
-                if not (image_dir / image).exists():
+                if self.conf.check_file_exists and not (image_dir / image).exists():
                     raise FileNotFoundError(image_dir / image)
             logger.info("Found %d images in list file.", len(images))
         elif isinstance(conf.image_list, omegaconf.listconfig.ListConfig):
             images = conf.image_list.to_container()
             for image in images:
-                if not (image_dir / image).exists():
+                if self.conf.check_file_exists and not (image_dir / image).exists():
                     raise FileNotFoundError(image_dir / image)
         else:
             raise ValueError(conf.image_list)

@@ -16,15 +16,13 @@ from pydoc import locate
 import numpy as np
 import torch
 from omegaconf import OmegaConf
-from torch.cuda.amp import GradScaler, autocast
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from . import __module_name__, logger
+from . import __module_name__, logger, settings
 from .datasets import get_dataset
 from .eval import run_benchmark
 from .models import get_model
-from .settings import EVAL_PATH, TRAINING_PATH
 from .utils.experiments import get_best_checkpoint, get_last_checkpoint, save_experiment
 from .utils.stdout_capturing import capture_outputs
 from .utils.tensor import batch_to_device
@@ -227,14 +225,18 @@ def training(rank, conf, output_dir, args):
         except AssertionError:
             init_cp = get_best_checkpoint(args.experiment)
         logger.info(f"Restoring from checkpoint {init_cp.name}")
-        init_cp = torch.load(str(init_cp), map_location="cpu")
+        init_cp = torch.load(
+            str(init_cp), map_location="cpu", weights_only=not settings.ALLOW_PICKLE
+        )
         conf = OmegaConf.merge(OmegaConf.create(init_cp["conf"]), conf)
         conf.train = OmegaConf.merge(default_train_conf, conf.train)
         epoch = init_cp["epoch"] + 1
 
         # get the best loss or eval metric from the previous best checkpoint
         best_cp = get_best_checkpoint(args.experiment)
-        best_cp = torch.load(str(best_cp), map_location="cpu")
+        best_cp = torch.load(
+            str(best_cp), map_location="cpu", weights_only=not settings.ALLOW_PICKLE
+        )
         best_eval = best_cp["eval"][conf.train.best_key]
         del best_cp
     else:
@@ -250,7 +252,9 @@ def training(rank, conf, output_dir, args):
             except AssertionError:
                 init_cp = get_best_checkpoint(conf.train.load_experiment)
             # init_cp = get_last_checkpoint(conf.train.load_experiment)
-            init_cp = torch.load(str(init_cp), map_location="cpu")
+            init_cp = torch.load(
+                str(init_cp), map_location="cpu", weights_only=not settings.ALLOW_PICKLE
+            )
             # load the model config of the old setup, and overwrite with current config
             conf.model = OmegaConf.merge(
                 OmegaConf.create(init_cp["conf"]).model, conf.model
@@ -355,7 +359,12 @@ def training(rank, conf, output_dir, args):
     optimizer = optimizer_fn(
         lr_params, lr=conf.train.lr, **conf.train.optimizer_options
     )
-    scaler = GradScaler(enabled=args.mixed_precision is not None)
+    use_mp = args.mixed_precision is not None
+    scaler = (
+        torch.amp.GradScaler("cuda", enabled=use_mp)
+        if hasattr(torch.amp, "GradScaler")
+        else torch.cuda.amp.GradScaler(enabled=use_mp)
+    )
     logger.info(f"Training with mixed_precision={args.mixed_precision}")
 
     mp_dtype = {
@@ -408,7 +417,7 @@ def training(rank, conf, output_dir, args):
                 results, figures, _ = run_benchmark(
                     bname,
                     eval_conf,
-                    EVAL_PATH / bname / args.experiment / str(epoch),
+                    settings.EVAL_PATH / bname / args.experiment / str(epoch),
                     model.eval(),
                 )
                 logger.info(str(results))
@@ -453,7 +462,11 @@ def training(rank, conf, output_dir, args):
             model.train()
             optimizer.zero_grad()
 
-            with autocast(enabled=args.mixed_precision is not None, dtype=mp_dtype):
+            with torch.autocast(
+                device_type="cuda" if torch.cuda.is_available() else "cpu",
+                enabled=args.mixed_precision is not None,
+                dtype=mp_dtype,
+            ):
                 data = batch_to_device(data, device, non_blocking=True)
                 pred = model(data)
                 losses, _ = loss_fn(pred, data)
@@ -682,7 +695,7 @@ if __name__ == "__main__":
     args = parser.parse_intermixed_args()
 
     logger.info(f"Starting experiment {args.experiment}")
-    output_dir = Path(TRAINING_PATH, args.experiment)
+    output_dir = Path(settings.TRAINING_PATH, args.experiment)
     output_dir.mkdir(exist_ok=True, parents=True)
 
     conf = OmegaConf.from_cli(args.dotlist)
