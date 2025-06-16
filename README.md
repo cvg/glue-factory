@@ -186,11 +186,12 @@ python -m gluefactory.eval.scannet1500 --conf superpoint+lightglue-official \
 
 Here are the results as Area Under the Curve (AUC) of the pose error at  5/10/20 degrees:
 
-| Methods                                                      | [OpenCV](../gluefactory/robust_estimators/relative_pose/opencv.py) |
-| ------------------------------------------------------------ | ------------------ |
-| [SuperPoint + SuperGlue](../gluefactory/configs/superpoint+superglue-official.yaml) | 17.4 / 33.9 / 49.5 |
-| [SuperPoint + LightGlue](../gluefactory/configs/superpoint+lightglue-official.yaml) | 17.7 / 34.6 / 51.2 |
-| [ALIKED + LightGlue](../gluefactory/configs/aliked+lightglue-official.yaml) | 18.4 / 33.9 / 49.7 |
+| Methods                                                      | [OpenCV](../gluefactory/robust_estimators/relative_pose/opencv.py) | [PoseLib](../gluefactory/robust_estimators/relative_pose/poselib.py) |
+| ------------------------------------------------------------ | ------------------ | ------------------ |
+| [SuperPoint + SuperGlue](../gluefactory/configs/superpoint+superglue-official.yaml) | 17.9 / 35.4 / 49.5 | 22.7 / 39.5 / 54.3 |
+| [SuperPoint + LightGlue](../gluefactory/configs/superpoint+lightglue-official.yaml) | 17.8 / 34.0 / 52.0 | 21.9 / 39.8 / 55.7 |
+| [DISK + LightGlue](../gluefactory/configs/disk+lightglue-official.yaml) | 9.0 / 18.1 / 29.2 | 12.1 / 23.1 / 35.0 |
+| [ALIKED + LightGlue](../gluefactory/configs/aliked+lightglue-official.yaml) | 15.4 / 31.2 / 47.5 | 19.6 / 36.5 / 52.8 |
 
 </details>
 
