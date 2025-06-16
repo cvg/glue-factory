@@ -54,7 +54,7 @@ class HPatches(BaseDataset, torch.utils.data.Dataset):
         "v_astronautis",
         "v_talent",
     )
-    url = "https://www.kaggle.com/api/v1/datasets/download/javidtheimmortal/hpatches-sequence-release"
+    url = "https://huggingface.co/datasets/vbalnt/hpatches/resolve/main/hpatches-sequences-release.zip"  # noqa: E501
 
     def _init(self, conf):
         assert conf.batch_size == 1
@@ -82,9 +82,10 @@ class HPatches(BaseDataset, torch.utils.data.Dataset):
         zip_path = data_dir / self.url.rsplit("/", 1)[-1]
         torch.hub.download_url_to_file(self.url, zip_path)
         # Open the ZIP file
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
             # Extract all contents to a directory
             zip_ref.extractall(data_dir)
+        zip_path.unlink()  # Remove the zip file after extraction
 
     def get_dataset(self, split):
         assert split in ["val", "test"]
