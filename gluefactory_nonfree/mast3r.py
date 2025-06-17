@@ -10,11 +10,11 @@ import torchvision.transforms as tvf
 from gluefactory import settings
 from gluefactory.models.base_model import BaseModel
 
-mast3r_root_dir = settings.root / "third_party/mast3r"
+mast3r_root_dir = settings.THIRD_PARTY_PATH / "mast3r"
 sys.path.append(str(mast3r_root_dir))  # noqa: E402
-dust3r_root_dir = settings.root / "third_party/mast3r/dust3r"
+dust3r_root_dir = settings.THIRD_PARTY_PATH / "mast3r/dust3r"
 sys.path.append(str(dust3r_root_dir))  # noqa: E402
-curope_root_dir = settings.root / "third_party/mast3r/dust3r/croco/models/curope"
+curope_root_dir = settings.THIRD_PARTY_PATH / "mast3r/dust3r/croco/models/curope"
 sys.path.append(str(curope_root_dir))  # noqa: E402
 
 from mast3r.fast_nn import fast_reciprocal_NNs  # noqa: E402
