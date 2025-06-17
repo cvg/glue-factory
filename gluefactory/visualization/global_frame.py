@@ -280,7 +280,8 @@ class GlobalFrame:
                 key = key.replace("shift+", "")
             else:
                 plt.close(frame.fig)
-                self.childs.remove(frame)
+                if frame in self.childs:
+                    self.childs.remove(frame)
             new_ind = ind + 1 if key_event.key == "right" else ind - 1
             self.spawn_child(
                 self.names[0],
