@@ -17,6 +17,7 @@ sys.path.append(str(dust3r_root_dir))  # noqa: E402
 curope_root_dir = settings.THIRD_PARTY_PATH / "mast3r/dust3r/croco/models/curope"
 sys.path.append(str(curope_root_dir))  # noqa: E402
 
+
 from mast3r.fast_nn import fast_reciprocal_NNs  # noqa: E402
 from mast3r.model import AsymmetricMASt3R, load_model  # noqa: E402
 
