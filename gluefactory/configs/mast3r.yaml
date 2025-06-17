@@ -1,0 +1,18 @@
+model:
+    name: two_view_pipeline
+    matcher:
+        name: gluefactory_nonfree.mast3r
+benchmarks:
+    megadepth1500:
+        eval:
+            estimator: opencv
+            ransac_th: -1
+    hpatches:
+        eval:
+            estimator: opencv
+            ransac_th: -1
+    scannet1500:
+        eval:
+            estimator: opencv
+            ransac_th: -1
+
