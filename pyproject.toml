@@ -54,4 +54,4 @@ gluefactory = ["datasets/megadepth_scene_lists/*.txt", "configs/*.yaml"]
 
 [tool.isort]
 profile = "black"
-extend_skip = ["gluefactory_nonfree/"]
+extend_skip = ["gluefactory_nonfree/", "third_party/"]
