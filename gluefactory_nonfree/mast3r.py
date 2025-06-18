@@ -44,7 +44,9 @@ def symmetric_inference(model, img1, img2):
     return (res11, res21, res22, res12)
 
 
-def merge_corres(idx1, idx2, shape1=None, shape2=None, ret_xy=True, ret_index=False):
+def merge_correspondences(
+    idx1, idx2, shape1=None, shape2=None, ret_xy=True, ret_index=False
+):
     assert idx1.dtype == idx2.dtype == np.int32
 
     # unique and sort along idx1
@@ -102,13 +104,20 @@ def extract_correspondences(feats, qonfs, subsample=8, ptmap_key="pred_desc"):
     # merge corres from opposite pairs
     H1, W1 = feat11.shape[:2]
     H2, W2 = feat22.shape[:2]
-    cat = np.concatenate
 
-    xy1, xy2, idx = merge_corres(
-        cat(idx1), cat(idx2), (H1, W1), (H2, W2), ret_xy=True, ret_index=True
+    xy1, xy2, idx = merge_correspondences(
+        np.concatenate(idx1),
+        np.concatenate(idx2),
+        (H1, W1),
+        (H2, W2),
+        ret_xy=True,
+        ret_index=True,
     )
-    corres = (xy1.copy(), xy2.copy(), np.sqrt(cat(qonf1)[idx] * cat(qonf2)[idx]))
-    return corres
+    return (
+        xy1.copy(),
+        xy2.copy(),
+        np.sqrt(np.concatenate(qonf1)[idx] * np.concatenate(qonf2)[idx]),
+    )
 
 
 def map_keypoints_to_original_after_crop(keypoints_crop, cx, cy, halfw, halfh):
@@ -132,10 +141,8 @@ class AsymmetricMASt3R(AsymmetricMASt3R):
 class Mast3rMatcher(BaseModel):
     default_conf = {
         "model_name": "naver/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric",
-        "long_edge_size": 512,
         "window": 8,
-        "nms_radius": 6,
-        "NN_scores_thresh": 0.85,
+        "square_ok": False,
     }
     required_keys = ["view0", "view1"]
 
@@ -151,18 +158,22 @@ class Mast3rMatcher(BaseModel):
         if not (square_ok) and W == H:
             halfh = int((3 * halfw / 4) // 8 * 8)
         image = image[..., cy - halfh : cy + halfh, cx - halfw : cx + halfw]
-        H2, W2 = image.shape[-2:]
+        Hn, Wn = image.shape[-2:]
         ImgNorm = tvf.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         image = ImgNorm(image)
-        return image, (cx, cy, halfw, halfh, None, None, H2, W2, H, W)
+        return image, (cx, cy, halfw, halfh, None, None, Hn, Wn, H, W)
 
     def _forward(self, data):
-        im0, var0 = self.process_image(data["view0"]["image"])
-        im1, var1 = self.process_image(data["view1"]["image"])
+        im0, var0 = self.process_image(
+            data["view0"]["image"], square_ok=self.conf.square_ok
+        )
+        im1, var1 = self.process_image(
+            data["view1"]["image"], square_ok=self.conf.square_ok
+        )
 
         res = symmetric_inference(self.net, im0, im1)
-        X11, _, X22, _ = [r["pts3d"][0].cpu().numpy() for r in res]
-        C11, _, C22, _ = [r["conf"][0].cpu().numpy() for r in res]
+        pts3d00, _, pts3d11, _ = [r["pts3d"][0].cpu().numpy() for r in res]
+        confid00, _, confid11, _ = [r["conf"][0].cpu().numpy() for r in res]
         descs = [r["desc"][0] for r in res]
         qonfs = [r["desc_conf"][0] for r in res]
         pred = {}
@@ -179,38 +190,38 @@ class Mast3rMatcher(BaseModel):
             return (cropx_a, cropx_b, cropy_a, cropy_b)
 
         rescale_crop = [extract_rescale_crop(v) for v in [var0, var1]]
-        (cropx1a, cropx1b, cropy1a, cropy1b), (cropx2a, cropx2b, cropy2a, cropy2b) = (
+        (cropx0a, cropx0b, cropy0a, cropy0b), (cropx1a, cropx1b, cropy1a, cropy1b) = (
             rescale_crop
         )
 
-        for i, (H, W, slicex, slicey, X, C) in enumerate(
+        for i, (H, W, slicex, slicey, pts3d, confid) in enumerate(
             [
                 (
                     *var0[-2:],
-                    slice(cropx1a, cropx1b),
-                    slice(cropy1a, cropy1b),
-                    X11,
-                    C11,
+                    slice(cropx0a, cropx0b),
+                    slice(cropy0a, cropy0b),
+                    pts3d00,
+                    confid00,
                 ),
                 (
                     *var1[-2:],
-                    slice(cropx2a, cropx2b),
-                    slice(cropy2a, cropy2b),
-                    X22,
-                    C22,
+                    slice(cropx1a, cropx1b),
+                    slice(cropy1a, cropy1b),
+                    pts3d11,
+                    confid11,
                 ),
             ]
         ):
             pred[f"depth{i}"] = np.zeros((H, W))
             pred[f"variance{i}"] = np.ones((H, W)) * 1e6
             pred[f"valid{i}"] = np.zeros((H, W), dtype=bool)
-            pred[f"depth{i}"][slicey, slicex] = X[..., -1]
-            pred[f"variance{i}"][slicey, slicex] = (1 / C) ** 2
+            pred[f"depth{i}"][slicey, slicex] = pts3d[..., -1]
+            pred[f"variance{i}"][slicey, slicex] = (1 / confid) ** 2
             pred[f"valid{i}"][slicey, slicex] = True
 
         pred = {
-            "matches0": torch.arange(0, scores0.shape[-1]),
-            "matches1": torch.arange(0, scores0.shape[-1]),
+            "matches0": np.arange(0, scores0.shape[-1]),
+            "matches1": np.arange(0, scores0.shape[-1]),
             "matching_scores0": scores0,
             "matching_scores1": scores0,
             "keypoints0": dkps0,
