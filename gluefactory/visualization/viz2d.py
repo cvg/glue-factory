@@ -204,10 +204,11 @@ def plot_matches(kpts0, kpts1, color=None, lw=1.5, ps=4, a=1.0, labels=None, axe
         ax0, ax1 = axes
 
     assert len(kpts0) == len(kpts1)
+    if isinstance(kpts0, torch.Tensor):
+        kpts0 = kpts0.detach().cpu().numpy()
+    if isinstance(kpts1, torch.Tensor):
+        kpts1 = kpts1.detach().cpu().numpy()
     if color is None:
-        if isinstance(kpts0, torch.Tensor):
-            kpts0 = kpts0.detach().cpu().numpy()
-        # kpts0_norm = kpts0 / np.array([max(ax0.get_xlim()), max(ax0.get_ylim())])
         kpts0_norm = (kpts0 - np.min(kpts0, axis=0)) / (np.ptp(kpts0, axis=0) + 1e-6)
         color = cm_grad2d(kpts0_norm).tolist()
     elif len(color) > 0 and not isinstance(color[0], (tuple, list)):
