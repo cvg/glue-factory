@@ -52,17 +52,6 @@ def cm_BlRdGn(x_):
     return out
 
 
-def cm_grad2d_fast(xy):
-    """2D grad. colormap: blue (0, 0) -> green (1, 0) -> red (0, 1) -> yellow (1, 1)."""
-    xy = np.clip(xy, 0, 1)
-    x = xy[..., 0]
-    y = xy[..., 1]
-    r = y
-    b = (1 - x) * (1 - y)
-    g = x
-    return np.stack([r, g, b], axis=-1).clip(0, 1)
-
-
 def cm_grad2d(xy):
     """2D grad. colormap: yellow (0, 0) -> green (1, 0) -> red (0, 1) -> blue (1, 1)."""
     tl = np.array([1.0, 0, 0])  # red
