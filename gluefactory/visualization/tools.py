@@ -26,17 +26,37 @@ with warnings.catch_warnings():
     plt.rcParams["toolbar"] = "toolmanager"
 
 
+_COMMON = {
+    "DRAW_LINE_MODE": "auto",  # "on", "off", "auto"
+    "MAX_NUM_LINES": 4096,  # maximum number of lines to draw in auto mode
+    "DRAW_LINE_WIDTH": 0.5,  # default line width
+    "DRAW_LINE_ALPHA": 0.5,  # default line alpha
+}
+
+
+def auto_linewidth(num_lines: int) -> float:
+    """Get a line width based on the number of lines and the current mode."""
+    if _COMMON["DRAW_LINE_MODE"] == "on" or (
+        _COMMON["DRAW_LINE_MODE"] == "auto" and num_lines < _COMMON["MAX_NUM_LINES"]
+    ):
+        return _COMMON["DRAW_LINE_WIDTH"]
+    else:
+        return 0.0
+
+
 class RadioHideTool(ToolToggleBase):
-    """Show lines with a given gid."""
+    """Radio button tool."""
 
     default_keymap = "R"
-    description = "Show by gid"
+    description = " "
     default_toggled = False
     radio_group = "default"
 
     def __init__(
         self, *args, options=[], active=None, callback_fn=None, keymap="R", **kwargs
     ):
+        if "description" in kwargs:
+            self.description = kwargs.pop("description")
         super().__init__(*args, **kwargs)
         self.f = 1.0
         self.options = options
@@ -80,12 +100,14 @@ class RadioHideTool(ToolToggleBase):
 
 
 class ToggleTool(ToolToggleBase):
-    """Show lines with a given gid."""
+    """Toggle a callback function."""
 
     default_keymap = "t"
-    description = "Show by gid"
+    description = " "
 
     def __init__(self, *args, callback_fn=None, keymap="t", **kwargs):
+        if "description" in kwargs:
+            self.description = kwargs.pop("description")
         super().__init__(*args, **kwargs)
         self.f = 1.0
         self.callback_fn = callback_fn
@@ -190,9 +212,39 @@ class ImagePlot:
 
 class MatchesPlot:
     plot_name = "matches"
+    required_keys = ["keypoints0", "keypoints1", "matches0"]
+
+    def __init__(self, fig, axes, _, preds):
+        self.fig = fig
+        self.sbpars = {
+            k: v
+            for k, v in vars(fig.subplotpars).items()
+            if k in ["left", "right", "top", "bottom"]
+        }
+
+        for i, name in enumerate(preds):
+            pred = preds[name]
+            kp0, kp1 = pred["keypoints0"][0], pred["keypoints1"][0]
+            m0 = pred["matches0"][0]
+            valid = m0 > -1
+            kpm0 = kp0[valid]
+            kpm1 = kp1[m0[valid]]
+            mscores = pred["matching_scores0"][0][valid]
+            plot_matches(
+                kpm0,
+                kpm1,
+                axes=axes[i],
+                labels=mscores,
+                lw=auto_linewidth(kpm0.shape[0]),
+                a=_COMMON["DRAW_LINE_ALPHA"],
+            )
+
+
+class MatchScoresPlot:
+    plot_name = "matching_scores"
     required_keys = ["keypoints0", "keypoints1", "matches0", "matching_scores0"]
 
-    def __init__(self, fig, axes, data, preds):
+    def __init__(self, fig, axes, _, preds):
         self.fig = fig
         self.sbpars = {
             k: v
@@ -219,7 +271,8 @@ class MatchesPlot:
                 color=cm_RdGn(mscores).tolist(),
                 axes=axes[i],
                 labels=mscores,
-                lw=0.5,
+                lw=auto_linewidth(kpm0.shape[0]),
+                a=_COMMON["DRAW_LINE_ALPHA"],
             )
 
 
@@ -277,7 +330,8 @@ class GtMatchesPlot:
                 color=cm_RdGn(correct).tolist(),
                 axes=axes[i],
                 labels=correct,
-                lw=0.5,
+                lw=auto_linewidth(kpm0.shape[0]),
+                a=_COMMON["DRAW_LINE_ALPHA"],
             )
 
 
@@ -328,6 +382,8 @@ class HomographyMatchesPlot:
             valstep=1.0,
         )
         self.range.on_changed(self.color_matches)
+        self.axes = axes
+        self.errors = []
 
         for i, name in enumerate(preds):
             pred = preds[name]
@@ -341,15 +397,17 @@ class HomographyMatchesPlot:
             valid = m0 > -1
             kpm0 = kp0[valid]
             kpm1 = kp1[m0[valid]]
-            errors = sym_homography_error(kpm0, kpm1, data["H_0to1"][0])
+            errors = sym_homography_error(kpm0, kpm1, data["H_0to1"][0]).numpy()
             plot_matches(
                 kpm0,
                 kpm1,
                 color=cm_RdGn(errors < self.range.val).tolist(),
                 axes=axes[i],
-                labels=errors.numpy(),
-                lw=0.5,
+                labels=errors,
+                lw=auto_linewidth(kpm0.shape[0]),
+                a=_COMMON["DRAW_LINE_ALPHA"],
             )
+            self.errors.append(errors)
 
     def clear(self):
         w, h = self.fig.get_size_inches()
@@ -357,10 +415,18 @@ class HomographyMatchesPlot:
         self.fig.subplots_adjust(**self.sbpars)
         self.range_ax.remove()
 
-    def color_matches(self, args):
+    def color_matches(self, threshold):
+        # Update line colors.
         for line in self.fig.artists:
             label = line.get_label()
-            line.set_color(cm_RdGn([float(label) < args])[0])
+            line.set_color(cm_RdGn([float(label) < threshold])[0])
+        # Update match colors.
+        for errors, axes in zip(self.errors, self.axes):
+            for ax in axes:
+                for coll in ax.collections:
+                    arr = coll.get_facecolors()
+                    if arr is not None and arr.shape[0] == errors.shape[0]:
+                        coll.set_facecolors(cm_RdGn(errors < threshold).tolist())
 
 
 class EpipolarMatchesPlot:
@@ -393,6 +459,7 @@ class EpipolarMatchesPlot:
         camera1 = data["view1"]["camera"][0]
         T_0to1 = data["T_0to1"][0]
 
+        self.errors = []
         for i, name in enumerate(preds):
             pred = preds[name]
             plot_keypoints(
@@ -421,8 +488,11 @@ class EpipolarMatchesPlot:
                 color=cm_RdGn(errors < self.range.val).tolist(),
                 axes=axes[i],
                 labels=errors.numpy(),
-                lw=0.5,
+                lw=auto_linewidth(kpm0.shape[0]),
+                a=_COMMON["DRAW_LINE_ALPHA"],
             )
+
+            self.errors.append(errors.numpy())
 
         self.F = T_to_F(camera0, camera1, T_0to1)
 
@@ -432,11 +502,19 @@ class EpipolarMatchesPlot:
         self.fig.subplots_adjust(**self.sbpars)
         self.range_ax.remove()
 
-    def color_matches(self, args):
+    def color_matches(self, threshold):
+        # Update line colors.
         for art in self.fig.artists:
             label = art.get_label()
             if label is not None:
-                art.set_color(cm_RdGn([float(label) < args])[0])
+                art.set_color(cm_RdGn([float(label) < threshold])[0])
+        # Update match colors.
+        for errors, axes in zip(self.errors, self.axes):
+            for ax in axes:
+                for coll in ax.collections:
+                    arr = coll.get_facecolors()
+                    if arr is not None and arr.shape[0] == errors.shape[0]:
+                        coll.set_facecolors(cm_RdGn(errors < threshold).tolist())
 
     def click_artist(self, event):
         art = event.artist

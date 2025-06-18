@@ -19,6 +19,6 @@ jobs:
           cache: 'pip'
       - run: python -m pip install --upgrade pip
       - run: python -m pip install .[dev]
-      - run: python -m flake8 .
+      - run: python -m flake8 . --extend-exclude 'third_party/'
       - run: python -m isort . --check-only --diff
-      - run: python -m black . --check --diff
+      - run: python -m black . --check --diff --extend-exclude 'third_party/'

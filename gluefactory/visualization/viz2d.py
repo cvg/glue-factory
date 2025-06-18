@@ -10,6 +10,7 @@ import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+import torch
 
 
 def cm_ranking(sc, ths=[512, 1024, 2048, 4096]):
@@ -51,6 +52,20 @@ def cm_BlRdGn(x_):
     return out
 
 
+def cm_grad2d(xy):
+    """2D grad. colormap: yellow (0, 0) -> green (1, 0) -> red (0, 1) -> blue (1, 1)."""
+    tl = np.array([1.0, 0, 0])  # red
+    tr = np.array([0, 0.0, 1])  # blue
+    ll = np.array([1.0, 1.0, 0])  # yellow
+    lr = np.array([0, 1.0, 0])  # green
+
+    xy = np.clip(xy, 0, 1)
+    x = xy[..., :1]
+    y = xy[..., -1:]
+    rgb = (1 - x) * (1 - y) * ll + x * (1 - y) * lr + x * y * tr + (1 - x) * y * tl
+    return rgb.clip(0, 1)
+
+
 def plot_images(imgs, titles=None, cmaps="gray", dpi=100, pad=0.5, adaptive=True):
     """Plot a set of images horizontally.
     Args:
@@ -60,6 +75,11 @@ def plot_images(imgs, titles=None, cmaps="gray", dpi=100, pad=0.5, adaptive=True
         adaptive: whether the figure size should fit the image aspect ratios.
     """
     n = len(imgs)
+    if isinstance(imgs[0], torch.Tensor):
+        imgs = [img.detach().cpu().numpy() for img in imgs]
+    if len(imgs[0].shape) == 3 and imgs[0].shape[0] == 3:
+        # Convert mono images to RGB
+        imgs = [np.transpose(img, (1, 2, 0)) for img in imgs]
     if not isinstance(cmaps, (list, tuple)):
         cmaps = [cmaps] * n
 
@@ -173,8 +193,13 @@ def plot_matches(kpts0, kpts1, color=None, lw=1.5, ps=4, a=1.0, labels=None, axe
         ax0, ax1 = axes
 
     assert len(kpts0) == len(kpts1)
+    if isinstance(kpts0, torch.Tensor):
+        kpts0 = kpts0.detach().cpu().numpy()
+    if isinstance(kpts1, torch.Tensor):
+        kpts1 = kpts1.detach().cpu().numpy()
     if color is None:
-        color = sns.color_palette("husl", n_colors=len(kpts0))
+        kpts0_norm = (kpts0 - np.min(kpts0, axis=0)) / (np.ptp(kpts0, axis=0) + 1e-6)
+        color = cm_grad2d(kpts0_norm).tolist()
     elif len(color) > 0 and not isinstance(color[0], (tuple, list)):
         color = [color] * len(kpts0)
 
@@ -208,14 +233,12 @@ def plot_matches(kpts0, kpts1, color=None, lw=1.5, ps=4, a=1.0, labels=None, axe
             kpts0[:, 1],
             c=color,
             s=ps,
-            label=None if labels is None or len(labels) == 0 else labels[0],
         )
         ax1.scatter(
             kpts1[:, 0],
             kpts1[:, 1],
             c=color,
             s=ps,
-            label=None if labels is None or len(labels) == 0 else labels[1],
         )
 
 

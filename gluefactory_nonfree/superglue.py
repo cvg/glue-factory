@@ -51,10 +51,11 @@ Original code: github.com/MagicLeapResearch/SuperPointPretrainedNetwork
 Adapted by Philipp Lindenberger (Phil26AT)
 """
 
+import logging
+from copy import deepcopy
+
 import torch
 from torch import nn
-from copy import deepcopy
-import logging
 
 from gluefactory.models.base_model import BaseModel
 
