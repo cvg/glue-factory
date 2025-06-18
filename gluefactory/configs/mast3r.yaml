@@ -11,7 +11,7 @@ benchmarks:
         data:  ${data}
         eval:
             estimator: opencv
-            ransac_th: 0.5
+            ransac_th: 1.5
     hpatches:
         data:  ${data}
         eval:
