@@ -1,8 +1,11 @@
 import json
+import logging
 
 import h5py
 import numpy as np
 from omegaconf import OmegaConf
+
+logger = logging.getLogger(__name__)
 
 
 def load_eval(dir):
@@ -80,14 +83,19 @@ class EvalPipeline:
         self.save_conf(
             experiment_dir, overwrite=overwrite, overwrite_eval=overwrite_eval
         )
+        logger.info(f"Running eval pipeline {self.__class__.__name__}.")
+        logger.info(f'Loop 1: Exporting predictions to "{experiment_dir}".')
         pred_file = self.get_predictions(
             experiment_dir, model=model, overwrite=overwrite
         )
+        logger.info(f"Loop 1 finished. Predictions saved to {pred_file}.")
 
         f = {}
         if not exists_eval(experiment_dir) or overwrite_eval or overwrite:
+            logger.info(f"Loop 2: Evaluating predictions in {pred_file}.")
             s, f, r = self.run_eval(self.get_dataloader(), pred_file)
             save_eval(experiment_dir, s, f, r)
+            logger.info(f"Loop 2 finished. Results saved to {experiment_dir}.")
         s, r = load_eval(experiment_dir)
         return s, f, r
 
