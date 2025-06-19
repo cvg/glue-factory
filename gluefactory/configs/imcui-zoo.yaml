@@ -1,0 +1,26 @@
+model:
+    name: two_view_pipeline
+    extractor:
+        name: null
+    matcher:
+        name: gluefactory_nonfree.imcui
+        zoo_name: loftr
+        detection_threshold: 0.015
+        match_threshold: 0.0
+        max_num_keypoints: 1000000  # do not filter by default.
+benchmarks:
+    megadepth1500:
+        eval:
+            estimator: opencv
+            ransac_th: -1
+    hpatches:
+        eval:
+            estimator: opencv
+            ransac_th: -1
+        model:
+            matcher:
+                max_num_keypoints: 1024  # overwrite config above
+    scannet1500:
+      eval:
+          estimator: opencv
+          ransac_th: -1
