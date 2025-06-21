@@ -28,8 +28,15 @@ def save_eval(dir, summaries, figures, results):
         for k, v in results.items():
             arr = np.array(v)
             if not np.issubdtype(arr.dtype, np.number):
-                arr = arr.astype("object")
-            hfile.create_dataset(k, data=arr)
+                if not isinstance(v[0], str):
+                    arr = np.array([x.astype(np.float64) for x in v])
+                    dt = h5py.special_dtype(vlen=np.float64)
+                    hfile.create_dataset(k, data=arr, dtype=dt)
+                else:
+                    arr = arr.astype("object")
+                    hfile.create_dataset(k, data=arr)
+            else:
+                hfile.create_dataset(k, data=arr)
         # just to be safe, not used in practice
         for k, v in summaries.items():
             hfile.attrs[k] = v
