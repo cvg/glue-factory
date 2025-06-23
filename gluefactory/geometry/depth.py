@@ -112,5 +112,5 @@ def symmetric_reprojection_error(
         (pts0_1 - pts1).norm(dim=-1) + (pts1_0 - pts0).norm(dim=-1)
     )
 
-    valid = visible0 & visible1
+    valid = valid0 & valid1
     return reprojection_errors_px, valid
