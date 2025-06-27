@@ -34,7 +34,7 @@ class DeepLSD(BaseModel):
         ckpt = DATA_PATH / "weights/deeplsd_md.tar"
         if not ckpt.is_file():
             self.download_model(ckpt)
-        ckpt = torch.load(ckpt, map_location="cpu")
+        ckpt = torch.load(ckpt, map_location="cpu", weights_only=False)
         self.net = deeplsd_inference.DeepLSD(conf.model_conf).eval()
         self.net.load_state_dict(ckpt["model"])
         self.set_initialized()
@@ -93,12 +93,18 @@ class DeepLSD(BaseModel):
             line_scores.append(scores)
             valid_lines.append(valid_mask)
 
+        print(type(lines[0]))
+        exit(0)
+
         # Batch if possible
         if len(image) == 1 or self.conf.force_num_lines:
             lines = torch.from_numpy(np.stack(lines, axis=0)).to(image.device).float()
             line_scores = torch.from_numpy(np.stack(line_scores, axis=0)).to(image.device).float()
             valid_lines = torch.from_numpy(np.stack(valid_lines, axis=0)).to(image.device).bool()
 
+        print(type(lines))
+        print(line_scores.shape)
+        exit(0)
         return {"lines": lines, "line_scores": line_scores, "valid_lines": valid_lines}
 
     def forward_ha(self, data):
@@ -153,7 +159,7 @@ class DeepLSD(BaseModel):
             scores = np.concatenate([scores, np.zeros(pad, dtype=np.float32)], axis=0)
             valid_mask = np.concatenate([valid_mask, np.zeros(pad, dtype=bool)], axis=0)
 
-        return {"lines": segs, "line_scores": scores, "valid_lines": valid_mask}
+        return {"lines": segs, "line_scores": scores}
 
     def loss(self, pred, data):
         raise NotImplementedError
