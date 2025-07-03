@@ -664,7 +664,8 @@ def training(rank, conf, output_dir, args):
 
 def main_worker(rank, conf, output_dir, args):
     if rank == 0:
-        with capture_outputs(output_dir / "log.txt", cleanup_interval=args.cleanup_interval):
+        with capture_outputs(output_dir / "log.txt",
+                             cleanup_interval=args.cleanup_interval):
             training(rank, conf, output_dir, args)
     else:
         training(rank, conf, output_dir, args)
