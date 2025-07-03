@@ -213,7 +213,7 @@ def write_image_summaries(writer, name, figures, step):
             for k, fig in figs.items():
                 writer.add_figure(f"{name}/{i}_{k}", fig, step)
     else:
-        for k, fig in figs.items():
+        for k, fig in figures.items():
             writer.add_figure(f"{name}/{k}", fig, step)
 
 
@@ -420,10 +420,15 @@ def training(rank, conf, output_dir, args):
                     settings.EVAL_PATH / bname / args.experiment / str(epoch),
                     model.eval(),
                 )
-                logger.info(str(summaries))
+                str_summaries = [
+                    f"{k} {v:.3E}"
+                    for k, v in summaries.items()
+                    if isinstance(v, float)
+                ]
+                logger.info(f'[{bname}] {{{", ".join(str_summaries)}}}')
                 write_dict_summaries(writer, f"test/{bname}", summaries, epoch)
                 write_image_summaries(writer, f"figures/{bname}", figures, epoch)
-                del results, figures
+                del summaries, figures
 
         # set the seed
         set_seed(conf.train.seed + epoch)
