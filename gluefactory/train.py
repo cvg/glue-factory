@@ -700,7 +700,9 @@ if __name__ == "__main__":
 
     conf = OmegaConf.from_cli(args.dotlist)
     if args.conf:
-        conf = OmegaConf.merge(OmegaConf.resolve(OmegaConf.load(args.conf)), conf)
+        yaml_conf = OmegaConf.load(args.conf)
+        OmegaConf.resolve(yaml_conf)
+        conf = OmegaConf.merge(yaml_conf, conf)
     elif args.restore:
         restore_conf = OmegaConf.load(output_dir / "config.yaml")
         conf = OmegaConf.merge(restore_conf, conf)
