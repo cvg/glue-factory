@@ -11,7 +11,6 @@ import os
 import subprocess
 import sys
 from contextlib import contextmanager
-from threading import Timer
 
 
 def apply_backspaces_and_linefeeds(text):
@@ -61,14 +60,36 @@ def flush():
         pass  # unsupported
 
 
+def cleanup(filename):
+    with open(str(filename), "r", newline='') as target:
+        text = target.read()
+    text = apply_backspaces_and_linefeeds(text)
+    with open(str(filename), "w") as target:
+        target.write(text)
+
+
 # Duplicate stdout and stderr to a file. Inspired by:
 # http://eli.thegreenplace.net/2015/redirecting-all-kinds-of-stdout-in-python/
 # http://stackoverflow.com/a/651718/1388435
 # http://stackoverflow.com/a/22434262/1388435
 @contextmanager
-def capture_outputs(filename):
+def capture_outputs(filename, cleanup_interval=None):
     """Duplicate stdout and stderr to a file on the file descriptor level."""
-    with open(str(filename), "a+") as target:
+
+    if cleanup_interval is not None:
+        from threading import Timer
+
+        class RepeatTimer(Timer):
+            def run(self):
+                while not self.finished.wait(self.interval):
+                    self.function(*self.args, **self.kwargs)
+
+        timer = RepeatTimer(cleanup_interval, lambda: cleanup(filename))
+        timer.start()
+    else:
+        timer = None
+
+    with open(str(filename), mode="a+", newline="") as target:
         original_stdout_fd = 1
         original_stderr_fd = 2
         target_fd = target.fileno()
@@ -109,26 +130,12 @@ def capture_outputs(filename):
             os.dup2(saved_stdout_fd, original_stdout_fd)
             os.dup2(saved_stderr_fd, original_stderr_fd)
 
-            # wait for completion of the tee processes with timeout
-            # implemented using a timer because timeout support is py3 only
-            def kill_tees():
-                tee_stdout.kill()
-                tee_stderr.kill()
-
-            tee_timer = Timer(1, kill_tees)
-            try:
-                tee_timer.start()
-                tee_stdout.wait()
-                tee_stderr.wait()
-            finally:
-                tee_timer.cancel()
-
+            tee_stdout.wait(timeout=1)
+            tee_stderr.wait(timeout=1)
             os.close(saved_stdout_fd)
             os.close(saved_stderr_fd)
 
-    # Cleanup log file
-    with open(str(filename), "r") as target:
-        text = target.read()
-    text = apply_backspaces_and_linefeeds(text)
-    with open(str(filename), "w") as target:
-        target.write(text)
+            if timer is not None:
+                timer.cancel()
+
+            cleanup(filename)
