@@ -61,7 +61,7 @@ def flush():
 
 
 def cleanup(filename):
-    with open(str(filename), "r", newline='') as target:
+    with open(str(filename), "r", newline="") as target:
         text = target.read()
     text = apply_backspaces_and_linefeeds(text)
     with open(str(filename), "w") as target:
