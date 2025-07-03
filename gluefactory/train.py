@@ -414,14 +414,14 @@ def training(rank, conf, output_dir, args):
         ):
             for bname, eval_conf in conf.get("benchmarks", {}).items():
                 logger.info(f"Running eval on {bname}")
-                results, figures, _ = run_benchmark(
+                summaries, figures, _ = run_benchmark(
                     bname,
                     eval_conf,
                     settings.EVAL_PATH / bname / args.experiment / str(epoch),
                     model.eval(),
                 )
-                logger.info(str(results))
-                write_dict_summaries(writer, f"test/{bname}", results, epoch)
+                logger.info(str(summaries))
+                write_dict_summaries(writer, f"test/{bname}", summaries, epoch)
                 write_image_summaries(writer, f"figures/{bname}", figures, epoch)
                 del results, figures
 
