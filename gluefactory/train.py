@@ -577,7 +577,7 @@ def training(rank, conf, output_dir, args):
                         loss_fn,
                         conf.train,
                         rank,
-                        pbar=(rank == -1),
+                        pbar=(rank == 0),
                     )
 
                 if rank == 0:
@@ -620,7 +620,7 @@ def training(rank, conf, output_dir, args):
                         loss_fn,
                         conf.train,
                         rank,
-                        pbar=(rank == -1),
+                        pbar=(rank == 0),
                     )
                     best_eval = results[conf.train.best_key]
                 best_eval = save_experiment(
@@ -664,7 +664,7 @@ def training(rank, conf, output_dir, args):
 
 def main_worker(rank, conf, output_dir, args):
     if rank == 0:
-        with capture_outputs(output_dir / "log.txt"):
+        with capture_outputs(output_dir / "log.txt", cleanup_interval=args.cleanup_interval):
             training(rank, conf, output_dir, args)
     else:
         training(rank, conf, output_dir, args)
@@ -686,6 +686,11 @@ if __name__ == "__main__":
         default=None,
         type=str,
         choices=["default", "reduce-overhead", "max-autotune"],
+    )
+    parser.add_argument(
+        "--cleanup_interval",
+        default=120,  # Cleanup log files every 120 seconds.
+        type=int,
     )
     parser.add_argument("--overfit", action="store_true")
     parser.add_argument("--restore", action="store_true")
