@@ -68,7 +68,7 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
     if default:
         conf = OmegaConf.merge(default, conf)
 
-    if args.tag is not None:
+    if args.tag:
         name = args.tag
     elif args.conf and conf.checkpoint:
         name = f"{args.conf}_{conf.checkpoint}"
