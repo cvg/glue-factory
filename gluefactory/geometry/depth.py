@@ -2,7 +2,7 @@ import kornia
 import torch
 
 from .utils import get_image_coords
-from .wrappers import Camera
+from .wrappers import Camera, Pose
 
 
 def sample_fmap(pts, fmap):
@@ -86,3 +86,31 @@ def dense_warp_consistency(
     return kpir.unflatten(-2, depthi.shape[-2:]), validir.unflatten(
         -1, (depthj.shape[-2:])
     )
+
+
+def symmetric_reprojection_error(
+    pts0: torch.Tensor,  # B x N x 2
+    pts1: torch.Tensor,  # B x N x 2
+    camera0: Camera,
+    camera1: Camera,
+    T_0to1: Pose,
+    depth0: torch.Tensor,
+    depth1: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    T_1to0 = T_0to1.inv()
+    d0, valid0 = sample_depth(pts0, depth0)
+    d1, valid1 = sample_depth(pts1, depth1)
+
+    pts0_1, visible0 = project(
+        pts0, d0, depth1, camera0, camera1, T_0to1, valid0, ccth=None
+    )
+    pts1_0, visible1 = project(
+        pts1, d1, depth0, camera1, camera0, T_1to0, valid1, ccth=None
+    )
+
+    reprojection_errors_px = 0.5 * (
+        (pts0_1 - pts1).norm(dim=-1) + (pts1_0 - pts0).norm(dim=-1)
+    )
+
+    valid = valid0 & valid1
+    return reprojection_errors_px, valid

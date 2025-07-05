@@ -1,3 +1,5 @@
+from collections.abc import MutableMapping
+
 import torch
 
 
@@ -42,3 +44,14 @@ def unstack_twoviews(data, B, indices=["0to1", "0to2", "1to2"]):
     for i, idx in enumerate(indices):
         out[idx] = {k: v[i * B : (i + 1) * B] for k, v in data.items()}
     return out
+
+
+def flatten(dictionary, parent_key="", separator="."):
+    items = []
+    for key, value in dictionary.items():
+        new_key = parent_key + separator + key if parent_key else key
+        if isinstance(value, MutableMapping):
+            items.extend(flatten(value, new_key, separator=separator).items())
+        else:
+            items.append((new_key, value))
+    return dict(items)
