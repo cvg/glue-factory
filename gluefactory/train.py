@@ -213,7 +213,7 @@ def write_image_summaries(writer, name, figures, step):
             for k, fig in figs.items():
                 writer.add_figure(f"{name}/{i}_{k}", fig, step)
     else:
-        for k, fig in figs.items():
+        for k, fig in figures.items():
             writer.add_figure(f"{name}/{k}", fig, step)
 
 
@@ -414,16 +414,19 @@ def training(rank, conf, output_dir, args):
         ):
             for bname, eval_conf in conf.get("benchmarks", {}).items():
                 logger.info(f"Running eval on {bname}")
-                results, figures, _ = run_benchmark(
+                summaries, figures, _ = run_benchmark(
                     bname,
                     eval_conf,
                     settings.EVAL_PATH / bname / args.experiment / str(epoch),
                     model.eval(),
                 )
-                logger.info(str(results))
-                write_dict_summaries(writer, f"test/{bname}", results, epoch)
+                str_summaries = [
+                    f"{k} {v:.3E}" for k, v in summaries.items() if isinstance(v, float)
+                ]
+                logger.info(f'[{bname}] {{{", ".join(str_summaries)}}}')
+                write_dict_summaries(writer, f"test/{bname}", summaries, epoch)
                 write_image_summaries(writer, f"figures/{bname}", figures, epoch)
-                del results, figures
+                del summaries, figures
 
         # set the seed
         set_seed(conf.train.seed + epoch)
@@ -572,7 +575,7 @@ def training(rank, conf, output_dir, args):
                         loss_fn,
                         conf.train,
                         rank,
-                        pbar=(rank == -1),
+                        pbar=(rank == 0),
                     )
 
                 if rank == 0:
@@ -615,7 +618,7 @@ def training(rank, conf, output_dir, args):
                         loss_fn,
                         conf.train,
                         rank,
-                        pbar=(rank == -1),
+                        pbar=(rank == 0),
                     )
                     best_eval = results[conf.train.best_key]
                 best_eval = save_experiment(
@@ -659,7 +662,9 @@ def training(rank, conf, output_dir, args):
 
 def main_worker(rank, conf, output_dir, args):
     if rank == 0:
-        with capture_outputs(output_dir / "log.txt"):
+        with capture_outputs(
+            output_dir / "log.txt", cleanup_interval=args.cleanup_interval
+        ):
             training(rank, conf, output_dir, args)
     else:
         training(rank, conf, output_dir, args)
@@ -682,6 +687,11 @@ if __name__ == "__main__":
         type=str,
         choices=["default", "reduce-overhead", "max-autotune"],
     )
+    parser.add_argument(
+        "--cleanup_interval",
+        default=120,  # Cleanup log files every 120 seconds.
+        type=int,
+    )
     parser.add_argument("--overfit", action="store_true")
     parser.add_argument("--restore", action="store_true")
     parser.add_argument("--distributed", action="store_true")
@@ -700,7 +710,9 @@ if __name__ == "__main__":
 
     conf = OmegaConf.from_cli(args.dotlist)
     if args.conf:
-        conf = OmegaConf.merge(OmegaConf.resolve(OmegaConf.load(args.conf)), conf)
+        yaml_conf = OmegaConf.load(args.conf)
+        OmegaConf.resolve(yaml_conf)
+        conf = OmegaConf.merge(yaml_conf, conf)
     elif args.restore:
         restore_conf = OmegaConf.load(output_dir / "config.yaml")
         conf = OmegaConf.merge(restore_conf, conf)
