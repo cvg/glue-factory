@@ -46,9 +46,6 @@ def parse_pairs(pairs_file: Path) -> tuple[Path, Path, str]:
     subscene_name = file_name.replace(f"{img_name0}-{img_name1}", "")
     subscene_name = subscene_name.replace(f"{img_name0}_{img_name1}", "")
     subscene_name, sep = subscene_name[:-1], subscene_name[-1]
-    # print(pairs_file.parent, f"{subscene_name}{sep}{img_name0}.*0")
-    # print(pairs_file.parent, f"{subscene_name}{sep}{img_name1}.*1")
-    # print(file_name)
     img_path0 = list(pairs_file.parent.glob(f"{subscene_name}{sep}{img_name0}.*"))[0]
     img_path1 = list(pairs_file.parent.glob(f"{subscene_name}{sep}{img_name1}.*"))[0]
 
