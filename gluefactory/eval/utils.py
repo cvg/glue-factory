@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from kornia.geometry.homography import find_homography_dlt
 
-from ..geometry.epipolar import generalized_epi_dist, relative_pose_error
+from ..geometry.epipolar import generalized_epi_dist, relative_pose_error, sym_epipolar_distance
 from ..geometry.gt_generation import IGNORE_FEATURE
 from ..geometry.homography import homography_corner_error, sym_homography_error
 from ..robust_estimators import load_estimator
@@ -22,7 +22,7 @@ def get_matches_scores(kpts0, kpts1, matches0, mscores0):
     m0 = matches0 > -1
     m1 = matches0[m0]
     pts0 = kpts0[m0]
-    pts1 = kpts1[m1]
+    pts1 = kpts1[m1.long()]
     scores = mscores0[m0]
     return pts0, pts1, scores
 
@@ -63,6 +63,44 @@ def eval_matches_epipolar(data: dict, pred: dict) -> dict:
     results["epi_prec@5e-4"] = (n_epi_err < 5e-4).float().mean()
     results["epi_prec@1e-3"] = (n_epi_err < 1e-3).float().mean()
 
+    results["num_matches"] = pts0.shape[0]
+    results["num_keypoints"] = (kp0.shape[0] + kp1.shape[0]) / 2.0
+
+    return results
+
+
+def eval_matches_epipolar_via_gt_points(data: dict, pred: dict, conf) -> dict:
+    check_keys_recursive(data, ["view0", "view1", "pts_0to1"])
+    check_keys_recursive(
+        pred, ["keypoints0", "keypoints1", "matches0", "matching_scores0"]
+    )
+
+    kp0, kp1 = pred["keypoints0"], pred["keypoints1"]
+    m0, scores0 = pred["matches0"], pred["matching_scores0"]
+    pts0, pts1, scores = get_matches_scores(kp0, kp1, m0, scores0)
+
+    results = {}
+
+    estimator = load_estimator("fundamental_matrix", conf["estimator"])(conf)
+    data_ = {
+        "m_kpts0": pts0,
+        "m_kpts1": pts1,
+    }
+    est = estimator(data_)
+    success = est["success"] and (len(est["inliers"]) > 0)
+    if not success:
+        results["epi_error"] = [1e6 for i in range(len(data['pts_0to1']))]
+        results["ransac_inl"] = 0
+        results["ransac_inl%"] = 0
+    else:
+        M = est["M_0to1"]
+        inl = est["inliers"].numpy()
+        n_epi_err = sym_epipolar_distance(data['pts_0to1'][:,:2].double(), data['pts_0to1'][:,2:].double(), M.double(), squared=False).detach().cpu().numpy()
+        results["epi_error"] = n_epi_err
+        results["ransac_inl"] = np.sum(inl)
+        results["ransac_inl%"] = np.mean(inl)
+
+    # match metrics
     results["num_matches"] = pts0.shape[0]
     results["num_keypoints"] = (kp0.shape[0] + kp1.shape[0]) / 2.0
 
@@ -217,6 +255,36 @@ def eval_poses(pose_results, auc_ths, key, unit="°"):
     summaries[f"{key}_mAA"] = mAAs[best_th]
 
     for k, v in pose_results[best_th].items():
+        arr = np.array(v)
+        if not np.issubdtype(np.array(v).dtype, np.number):
+            continue
+        summaries[f"m{k}"] = round(np.median(arr), 3)
+    return summaries, best_th
+
+
+def eval_fundamental_matrices(fm_results, auc_ths, key, unit="°"):
+    pose_aucs = {}
+    best_th = -1
+    for th, results_i in fm_results.items():
+        pair_mean = []
+        for pair_results in results_i[key]:
+            pair_mean.append(AUCMetric(auc_ths, pair_results).compute())
+        pose_aucs[th] = np.array(pair_mean).mean(axis=0)
+    mAAs = {k: np.mean(v) for k, v in pose_aucs.items()}
+    best_th = max(mAAs, key=mAAs.get)
+
+    if len(pose_aucs) > -1:
+        print("Tested ransac setup with following results:")
+        print("AUC", pose_aucs)
+        print("mAA", mAAs)
+        print("best threshold =", best_th)
+
+    summaries = {}
+    for i, ath in enumerate(auc_ths):
+        summaries[f"{key}@{ath}{unit}"] = pose_aucs[best_th][i]
+    summaries[f"{key}_mAA"] = mAAs[best_th]
+
+    for k, v in fm_results[best_th].items():
         arr = np.array(v)
         if not np.issubdtype(np.array(v).dtype, np.number):
             continue
