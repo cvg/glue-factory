@@ -607,7 +607,6 @@ def training(rank, conf, output_dir, args):
                         )
                         logger.info(f"New best val: {conf.train.best_key}={best_eval}")
                 torch.cuda.empty_cache()  # should be cleared at the first iter
-                del results, pr_metrics, figures
 
             if (tot_it % conf.train.save_every_iter == 0 and tot_it > 0) and rank == 0:
                 if results is None:
