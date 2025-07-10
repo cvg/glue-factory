@@ -1,26 +1,18 @@
 defaults:
-    - data: homographies
-    - model: two_view_pipeline
+    - lightglue_homography
     - model@model.extractor: extractor/sift
-    - model@model.matcher: matcher/lightglue
-    - model@model.ground_truth: matcher/homography_matcher
-    - train: homographies
     - _self_
 
 model:
     extractor:
         max_num_keypoints: 1024
         force_num_keypoints: True
-        nms_radius: 3
         trainable: False
+        nms_radius: 3
     matcher:
         input_dim: 128
-    plot: [5, 'gluefactory.visualization.visualize_batch.make_match_figures']
 benchmarks:
     hpatches:
-      eval:
-        estimator: opencv
-        ransac_th: 0.5
-      model:
-        extractor:
-          nms_radius: 0
+        model:
+          extractor:
+            nms_radius: 0

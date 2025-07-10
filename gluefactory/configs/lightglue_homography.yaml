@@ -1,0 +1,14 @@
+defaults:
+    - data: homographies
+    - model: two_view_pipeline
+    - model@model.matcher: matcher/lightglue
+    - model@model.ground_truth: matcher/homography_matcher
+    - train: homographies
+    - _self_
+train:
+    plot: [5, 'gluefactory.visualization.visualize_batch.make_match_figures']
+benchmarks:
+    hpatches:
+        eval:
+            estimator: opencv
+            ransac_th: 0.5
