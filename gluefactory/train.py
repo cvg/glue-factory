@@ -13,6 +13,7 @@ from collections import defaultdict
 from pathlib import Path
 from pydoc import locate
 
+import hydra
 import numpy as np
 import torch
 from omegaconf import OmegaConf
@@ -709,9 +710,8 @@ if __name__ == "__main__":
 
     conf = OmegaConf.from_cli(args.dotlist)
     if args.conf:
-        yaml_conf = OmegaConf.load(args.conf)
-        OmegaConf.resolve(yaml_conf)
-        conf = OmegaConf.merge(yaml_conf, conf)
+        yaml_conf = hydra.initialize(config_path="configs", version_base=None)
+        conf = hydra.compose(config_name=args.conf, overrides=args.dotlist)
     elif args.restore:
         restore_conf = OmegaConf.load(output_dir / "config.yaml")
         conf = OmegaConf.merge(restore_conf, conf)
