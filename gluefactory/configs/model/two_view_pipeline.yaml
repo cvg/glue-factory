@@ -1,0 +1,6 @@
+name: two_view_pipeline
+extractor:
+matcher:
+filter:
+solver:
+ground_truth:

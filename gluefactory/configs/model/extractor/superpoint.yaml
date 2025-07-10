@@ -1,0 +1,4 @@
+name: gluefactory_nonfree.superpoint
+max_num_keypoints: 2048
+detection_threshold: 0.0
+nms_radius: 3
