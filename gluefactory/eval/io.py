@@ -3,6 +3,7 @@ from pathlib import Path
 from pprint import pprint
 from typing import Optional
 
+import hydra
 import pkg_resources
 from omegaconf import OmegaConf
 
@@ -48,8 +49,8 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
     conf = {"data": {}, "model": {}, "eval": {}}
     if args.conf:
         conf_path = parse_config_path(args.conf, configs_path)
-        custom_conf = OmegaConf.load(conf_path)
-        OmegaConf.resolve(custom_conf)
+        hydra.initialize(version_base=None, config_path=configs_path)
+        custom_conf = hydra.compose(config_name=args.conf)
         conf = extract_benchmark_conf(OmegaConf.merge(conf, custom_conf), benchmark)
         args.tag = (
             args.tag if args.tag is not None else conf_path.name.replace(".yaml", "")

@@ -1,0 +1,3 @@
+name: matchers.homography_matcher
+th_positive: 3
+th_negative: 3
