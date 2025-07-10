@@ -7,6 +7,7 @@ import torch
 from matplotlib.backend_tools import ToolToggleBase
 from matplotlib.widgets import RadioButtons, Slider
 
+from ..geometry.depth import symmetric_reprojection_error
 from ..geometry.epipolar import T_to_F, generalized_epi_dist
 from ..geometry.homography import sym_homography_error
 from ..visualization.viz2d import (
@@ -362,6 +363,13 @@ class HomographyMatchesPlot:
     plot_name = "homography"
     required_keys = ["keypoints0", "keypoints1", "matches0", "H_0to1"]
 
+    def error_fn(self, kpm0, kpm1, data):
+        """Calculate the reprojection error."""
+        H_0to1 = data["H_0to1"][0]
+        return sym_homography_error(kpm0, kpm1, H_0to1), torch.ones(
+            kpm0.shape[0], dtype=torch.bool, device=kpm0.device
+        )
+
     def __init__(self, fig, axes, data, preds):
         self.fig = fig
         self.sbpars = {
@@ -375,7 +383,7 @@ class HomographyMatchesPlot:
         self.range_ax = fig.add_axes([0.3, 0.02, 0.4, 0.06])
         self.range = Slider(
             self.range_ax,
-            label="Homography Error",
+            label="Error [px]",
             valmin=0,
             valmax=5,
             valinit=3.0,
@@ -397,17 +405,18 @@ class HomographyMatchesPlot:
             valid = m0 > -1
             kpm0 = kp0[valid]
             kpm1 = kp1[m0[valid]]
-            errors = sym_homography_error(kpm0, kpm1, data["H_0to1"][0]).numpy()
+            errors, valid_m = self.error_fn(kpm0, kpm1, data)
+            errors, valid_m = errors.cpu().numpy(), valid_m.cpu().numpy()
             plot_matches(
-                kpm0,
-                kpm1,
-                color=cm_RdGn(errors < self.range.val).tolist(),
+                kpm0[valid_m],
+                kpm1[valid_m],
+                color=cm_RdGn(errors[valid_m] < self.range.val).tolist(),
                 axes=axes[i],
-                labels=errors,
-                lw=auto_linewidth(kpm0.shape[0]),
+                labels=errors[valid_m],
+                lw=auto_linewidth(kpm0[valid_m].shape[0]),
                 a=_COMMON["DRAW_LINE_ALPHA"],
             )
-            self.errors.append(errors)
+            self.errors.append(errors[valid_m])
 
     def clear(self):
         w, h = self.fig.get_size_inches()
@@ -429,9 +438,43 @@ class HomographyMatchesPlot:
                         coll.set_facecolors(cm_RdGn(errors < threshold).tolist())
 
 
+class ReprojectionMatchesPlot(HomographyMatchesPlot):
+    plot_name = "depth_matches"
+    required_keys = [
+        "keypoints0",
+        "keypoints1",
+        "matches0",
+        "view0.depth",
+        "view1.depth",
+        "T_0to1",
+    ]
+
+    def error_fn(self, kpm0, kpm1, data):
+        """Calculate the reprojection error."""
+        reproj_error, valid = symmetric_reprojection_error(
+            kpm0[None],
+            kpm1[None],
+            data["view0"]["camera"],
+            data["view1"]["camera"],
+            data["T_0to1"],
+            data["view0"]["depth"],
+            data["view1"]["depth"],
+        )
+
+        reproj_error, valid = reproj_error[0], valid[0]
+        return reproj_error, valid
+
+
 class EpipolarMatchesPlot:
     plot_name = "epipolar_matches"
-    required_keys = ["keypoints0", "keypoints1", "matches0", "T_0to1", "view0", "view1"]
+    required_keys = [
+        "keypoints0",
+        "keypoints1",
+        "matches0",
+        "T_0to1",
+        "view0.camera",
+        "view1.camera",
+    ]
 
     def __init__(self, fig, axes, data, preds):
         self.fig = fig
