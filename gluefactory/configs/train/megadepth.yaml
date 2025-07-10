@@ -1,0 +1,12 @@
+seed: 0
+epochs: 50
+log_every_iter: 100
+eval_every_iter: 1000
+lr: 1e-4
+lr_schedule:
+    start: 30
+    type: exp
+    on_epoch: true
+    exp_div_10: 10
+dataset_callback_fn: sample_new_items
+plot: [5, 'gluefactory.visualization.visualize_batch.make_match_figures']

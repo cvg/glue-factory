@@ -11,6 +11,7 @@ model:
         nms_radius: 3
     matcher:
         input_dim: 128
+        add_scale_ori: True
 benchmarks:
     hpatches:
         model:

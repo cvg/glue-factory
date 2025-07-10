@@ -1,0 +1,33 @@
+defaults:
+    - data: megadepth
+    - model: two_view_pipeline
+    - model@model.matcher: matcher/lightglue
+    - model@model.ground_truth: matcher/depth_matcher
+    - train: megadepth
+    - _self_
+model:
+    name: two_view_pipeline
+    extractor:
+        name: gluefactory_nonfree.superpoint
+        max_num_keypoints: 2048
+        force_num_keypoints: True
+        detection_threshold: 0.0
+        nms_radius: 3
+        trainable: False
+    allow_no_extract: True
+benchmarks:
+    megadepth1500:
+        data:
+            preprocessing:
+                side: long
+                resize: 1600
+        eval:
+            estimator: opencv
+            ransac_th: 0.5
+    hpatches:
+        eval:
+            estimator: opencv
+            ransac_th: 0.5
+        model:
+            extractor:
+                max_num_keypoints: 1024
