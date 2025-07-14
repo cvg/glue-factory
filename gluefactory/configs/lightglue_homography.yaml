@@ -3,9 +3,18 @@ defaults:
     - model: two_view_pipeline
     - model@model.matcher: matcher/lightglue
     - model@model.ground_truth: matcher/homography_matcher
-    - train: homographies
     - _self_
 train:
+    seed: 0
+    epochs: 40
+    log_every_iter: 100
+    eval_every_iter: 500
+    lr: 1e-4
+    lr_schedule:
+        start: 20
+        type: exp
+        on_epoch: true
+        exp_div_10: 10
     plot: [5, 'gluefactory.visualization.visualize_batch.make_match_figures']
 benchmarks:
     hpatches:
