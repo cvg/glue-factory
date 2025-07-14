@@ -1,40 +1,14 @@
 import argparse
 import logging
-import os
-from pathlib import Path
 from pprint import pprint
-from typing import Optional
 
-import hydra
-import pkg_resources
 from omegaconf import OmegaConf
 
 from ..models import get_model
 from ..settings import TRAINING_PATH
-from ..utils.experiments import load_experiment
+from ..utils.experiments import compose_config, load_experiment
 
 logger = logging.getLogger(__name__)
-
-
-def parse_config_path(name_or_path: Optional[str], defaults: str) -> Path:
-    default_configs = {}
-    for c in pkg_resources.resource_listdir("gluefactory", str(defaults)):
-        if c.endswith(".yaml"):
-            default_configs[Path(c).stem] = Path(
-                pkg_resources.resource_filename("gluefactory", defaults + c)
-            )
-    if name_or_path is None:
-        return None
-    if name_or_path in default_configs:
-        return default_configs[name_or_path]
-    path = Path(name_or_path)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Cannot find the config file: {name_or_path}. "
-            f"Not in the default configs {list(default_configs.keys())} "
-            "and not an existing path."
-        )
-    return Path(path)
 
 
 def extract_benchmark_conf(conf, benchmark):
@@ -52,17 +26,11 @@ def extract_benchmark_conf(conf, benchmark):
 def parse_eval_args(benchmark, args, configs_path, default=None):
     conf = {"data": {}, "model": {}, "eval": {}}
     if args.conf:
-        conf_path = parse_config_path(args.conf, configs_path)
-        logger.info(f"Hydra config directory: {conf_path.parent}.")
-
-        # pathlib does not support walk_up with python < 3.12, so use os.path.relpath
-        rel_conf_dir = Path(os.path.relpath(conf_path.parent, Path(__file__).parent))
-        hydra.initialize(version_base=None, config_path=str(rel_conf_dir))
-        custom_conf = hydra.compose(config_name=conf_path.stem)
-        conf = extract_benchmark_conf(OmegaConf.merge(conf, custom_conf), benchmark)
-        args.tag = (
-            args.tag if args.tag is not None else conf_path.name.replace(".yaml", "")
+        conf_path, custom_conf = compose_config(
+            args.conf, default_config_dir=configs_path
         )
+        conf = extract_benchmark_conf(OmegaConf.merge(conf, custom_conf), benchmark)
+        args.tag = args.tag if args.tag is not None else conf_path.stem
 
     cli_conf = OmegaConf.from_cli(args.dotlist)
     conf = OmegaConf.merge(conf, cli_conf)

@@ -9,7 +9,10 @@ import os
 import re
 import shutil
 from pathlib import Path
+from typing import Optional
 
+import hydra
+import pkg_resources
 import torch
 from omegaconf import OmegaConf
 
@@ -17,6 +20,50 @@ from .. import settings
 from ..models import get_model
 
 logger = logging.getLogger(__name__)
+
+
+def list_configs(configs_path: Path) -> list[str]:
+    """List all available configs in a given directory."""
+    return list(sorted([x.stem for x in Path(configs_path).glob("*.yaml")]))
+
+
+def parse_config_path(
+    name_or_path: Optional[str], default_config_dir: str = "configs/"
+) -> Path:
+    default_configs = {}
+    for c in pkg_resources.resource_listdir("gluefactory", str(default_config_dir)):
+        if c.endswith(".yaml"):
+            default_configs[Path(c).stem] = Path(
+                pkg_resources.resource_filename("gluefactory", default_config_dir + c)
+            )
+    if name_or_path is None:
+        return None
+    if name_or_path in default_configs:
+        return default_configs[name_or_path]
+    path = Path(name_or_path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Cannot find the config file: {name_or_path}. "
+            f"Not in the default configs {list(default_configs.keys())} "
+            "and not an existing path."
+        )
+    return Path(path)
+
+
+def compose_config(
+    name_or_path: Optional[str],
+    default_config_dir: str = "configs/",
+    overrides: Optional[list[str]] = None,
+) -> tuple[Path, OmegaConf]:
+
+    conf_path = parse_config_path(name_or_path, default_config_dir)
+    logger.info(f"Hydra config directory: {conf_path.parent}.")
+
+    # pathlib does not support walk_up with python < 3.12, so use os.path.relpath
+    rel_conf_dir = Path(os.path.relpath(conf_path.parent, Path(__file__).parent))
+    hydra.initialize(version_base=None, config_path=str(rel_conf_dir))
+    custom_conf = hydra.compose(config_name=conf_path.stem, overrides=overrides)
+    return conf_path, custom_conf
 
 
 def list_checkpoints(dir_):

@@ -13,7 +13,6 @@ from collections import defaultdict
 from pathlib import Path
 from pydoc import locate
 
-import hydra
 import numpy as np
 import torch
 from omegaconf import OmegaConf
@@ -24,7 +23,13 @@ from . import __module_name__, logger, settings
 from .datasets import get_dataset
 from .eval import run_benchmark
 from .models import get_model
-from .utils.experiments import get_best_checkpoint, get_last_checkpoint, save_experiment
+from .utils.experiments import (
+    compose_config,
+    get_best_checkpoint,
+    get_last_checkpoint,
+    list_configs,
+    save_experiment,
+)
 from .utils.stdout_capturing import capture_outputs
 from .utils.tensor import batch_to_device
 from .utils.tools import (
@@ -673,7 +678,12 @@ def main_worker(rank, conf, output_dir, args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("experiment", type=str)
-    parser.add_argument("--conf", type=str)
+    default_config_names = list_configs(Path(__file__).parent / "configs")
+    parser.add_argument(
+        "--conf",
+        type=str,
+        help=f"Configuration path (.yaml) or one of: {default_config_names}",
+    )
     parser.add_argument(
         "--mixed_precision",
         "--mp",
@@ -691,27 +701,65 @@ if __name__ == "__main__":
         "--cleanup_interval",
         default=120,  # Cleanup log files every 120 seconds.
         type=int,
+        help="Interval in seconds to cleanup log files",
     )
-    parser.add_argument("--overfit", action="store_true")
-    parser.add_argument("--restore", action="store_true")
-    parser.add_argument("--distributed", action="store_true")
-    parser.add_argument("--profile", action="store_true")
-    parser.add_argument("--print_arch", "--pa", action="store_true")
-    parser.add_argument("--detect_anomaly", "--da", action="store_true")
-    parser.add_argument("--log_it", "--log_it", action="store_true")
-    parser.add_argument("--no_eval_0", action="store_true")
-    parser.add_argument("--run_benchmarks", action="store_true")
+    parser.add_argument(
+        "--overfit", action="store_true", help="Overfit on a single batch"
+    )
+    parser.add_argument(
+        "--restore", action="store_true", help="Restore from previous experiment"
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing experiment directory",
+    )
+    parser.add_argument(
+        "--distributed", action="store_true", help="Run in distributed mode"
+    )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Profile the training with PyTorch profiler",
+    )
+    parser.add_argument(
+        "--print_arch", "--pa", action="store_true", help="Print model architecture"
+    )
+    parser.add_argument(
+        "--detect_anomaly",
+        "--da",
+        action="store_true",
+        help="Detect anomalies in gradients",
+    )
+    parser.add_argument(
+        "--log_it",
+        "--log_it",
+        action="store_true",
+        help="Log tensorboard on iteration (default is num_samples)",
+    )
+    parser.add_argument(
+        "--no_eval_0", action="store_true", help="Disable evaluation on the first epoch"
+    )
+    parser.add_argument("--run_benchmarks", action="store_true", help="Run benchmarks")
     parser.add_argument("dotlist", nargs="*")
     args = parser.parse_intermixed_args()
 
     logger.info(f"Starting experiment {args.experiment}")
     output_dir = Path(settings.TRAINING_PATH, args.experiment)
-    output_dir.mkdir(exist_ok=True, parents=True)
+    if output_dir.exists() and not (args.restore or args.overwrite):
+        raise FileExistsError(
+            f"Output directory {output_dir} already exists. "
+            "Use --restore to continue training or --overwrite to delete it."
+        )
+    output_dir.mkdir(exist_ok=args.overwrite, parents=True)
+    logger.info(f"Output directory: {output_dir}")
 
     conf = OmegaConf.from_cli(args.dotlist)
+    OmegaConf.save(conf, str(output_dir / "cli_config.yaml"))
     if args.conf:
-        yaml_conf = hydra.initialize(config_path="configs", version_base=None)
-        conf = hydra.compose(config_name=args.conf, overrides=args.dotlist)
+        conf_path, conf = compose_config(args.conf, overrides=args.dotlist)
+        # Copy a more readable config file to the output dir
+        shutil.copy(conf_path, output_dir / "raw_config.yaml")
     elif args.restore:
         restore_conf = OmegaConf.load(output_dir / "config.yaml")
         conf = OmegaConf.merge(restore_conf, conf)
