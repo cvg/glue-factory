@@ -15,16 +15,13 @@ benchmarks:
           resize: 1600
       eval:
         estimator: opencv
-        ransac_th: 0.5
     hpatches:
       eval:
         estimator: opencv
-        ransac_th: 0.5
       model:
         extractor:
           max_num_keypoints: 1024  # overwrite config above
     scannet1500:
         eval:
             estimator: opencv
-            ransac_th: 1.0
 

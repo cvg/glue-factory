@@ -41,7 +41,7 @@ class MegaDepth1500Pipeline(EvalPipeline):
         },
         "eval": {
             "estimator": "poselib",
-            "ransac_th": 1.0,  # -1 runs a bunch of thresholds and selects the best
+            "ransac_th": -1.0,  # -1 runs a bunch of thresholds and selects the best
         },
     }
 

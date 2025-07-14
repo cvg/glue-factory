@@ -41,8 +41,8 @@ class ScanNet1500Pipeline(EvalPipeline):
             }
         },
         "eval": {
-            "estimator": "opencv",
-            "ransac_th": 1.0,  # -1 runs a bunch of thresholds and selects the best
+            "estimator": "poselib",
+            "ransac_th": -1.0,  # -1 runs a bunch of thresholds and selects the best
         },
     }
 

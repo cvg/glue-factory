@@ -20,4 +20,3 @@ benchmarks:
     hpatches:
         eval:
             estimator: opencv
-            ransac_th: 0.5
