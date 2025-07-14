@@ -741,6 +741,7 @@ if __name__ == "__main__":
         "--no_eval_0", action="store_true", help="Disable evaluation on the first epoch"
     )
     parser.add_argument("--run_benchmarks", action="store_true", help="Run benchmarks")
+    parser.add_argument("--strict", action="store_true", help="Strict config merge")
     parser.add_argument("dotlist", nargs="*")
     args = parser.parse_intermixed_args()
 
@@ -757,7 +758,9 @@ if __name__ == "__main__":
     conf = OmegaConf.from_cli(args.dotlist)
     OmegaConf.save(conf, str(output_dir / "cli_config.yaml"))
     if args.conf:
-        conf_path, conf = compose_config(args.conf, overrides=args.dotlist)
+        conf_path, raw_conf = compose_config(args.conf)
+        OmegaConf.set_struct(raw_conf, args.strict)
+        conf = OmegaConf.merge(raw_conf, conf)
         # Copy a more readable config file to the output dir
         shutil.copy(conf_path, output_dir / "raw_config.yaml")
     elif args.restore:
