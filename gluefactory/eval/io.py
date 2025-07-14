@@ -1,4 +1,6 @@
 import argparse
+import logging
+import os
 from pathlib import Path
 from pprint import pprint
 from typing import Optional
@@ -10,6 +12,8 @@ from omegaconf import OmegaConf
 from ..models import get_model
 from ..settings import TRAINING_PATH
 from ..utils.experiments import load_experiment
+
+logger = logging.getLogger(__name__)
 
 
 def parse_config_path(name_or_path: Optional[str], defaults: str) -> Path:
@@ -49,8 +53,12 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
     conf = {"data": {}, "model": {}, "eval": {}}
     if args.conf:
         conf_path = parse_config_path(args.conf, configs_path)
-        hydra.initialize(version_base=None, config_path=configs_path)
-        custom_conf = hydra.compose(config_name=args.conf)
+        logger.info(f"Hydra config directory: {conf_path.parent}.")
+
+        # pathlib does not support walk_up with python < 3.12, so use os.path.relpath
+        rel_conf_dir = Path(os.path.relpath(conf_path.parent, Path(__file__).parent))
+        hydra.initialize(version_base=None, config_path=str(rel_conf_dir))
+        custom_conf = hydra.compose(config_name=conf_path.stem)
         conf = extract_benchmark_conf(OmegaConf.merge(conf, custom_conf), benchmark)
         args.tag = (
             args.tag if args.tag is not None else conf_path.name.replace(".yaml", "")
@@ -79,9 +87,9 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
         name = conf.checkpoint
     if len(args.dotlist) > 0 and not args.tag:
         name = name + "_" + ":".join(args.dotlist)
-    print("Running benchmark:", benchmark)
-    print("Experiment tag:", name)
-    print("Config:")
+    logger.info("Running benchmark: %s", benchmark)
+    logger.info("Experiment tag: %s", name)
+    logger.info("Config:")
     pprint(OmegaConf.to_container(conf))
     return name, conf
 

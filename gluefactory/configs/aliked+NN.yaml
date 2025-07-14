@@ -1,6 +1,6 @@
 defaults:
     - model: two_view_pipeline
-    - model@model.extractor: extractors.aliked
+    - model@model.extractor: extractor/aliked
     - _self_
 
 model:

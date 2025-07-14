@@ -1,6 +1,6 @@
 defaults:
     - model: two_view_pipeline
-    - model@model.extractor: extractors.disk_kornia
+    - model@model.extractor: extractor/disk_kornia
     - _self_
 
 model:

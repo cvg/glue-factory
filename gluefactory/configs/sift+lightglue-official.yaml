@@ -1,7 +1,7 @@
 defaults:
   - model: two_view_pipeline
-  - model@model.extractor: extractors.sift
-  - model@model.matcher: matchers.lightglue_pretrained
+  - model@model.extractor: extractor/sift
+  - model@model.matcher: matcher/lightglue_pretrained
   - _self_
 
 model:

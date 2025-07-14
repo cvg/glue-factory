@@ -1,6 +1,6 @@
 defaults:
     - model: two_view_pipeline
-    - model@model.extractor: extractors.superpoint_open
+    - model@model.extractor: extractor/superpoint_open
     - _self_
 
 model:

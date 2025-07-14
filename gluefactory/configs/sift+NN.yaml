@@ -1,6 +1,6 @@
 defaults:
   - model: two_view_pipeline
-  - model@model.extractor: extractors.sift
+  - model@model.extractor: extractor/sift
   - _self_
 
 model:
