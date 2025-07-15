@@ -4,6 +4,7 @@ Various handy Python and PyTorch utils.
 Author: Paul-Edouard Sarlin (skydes)
 """
 
+import collections
 import os
 import random
 import time
@@ -188,6 +189,79 @@ class Timer(object):
         self.duration = time.time() - self.tstart
         if self.name is not None:
             print("[%s] Elapsed: %s" % (self.name, self.duration))
+
+
+class RunningStats:
+    """
+    A numerically stable running statistics tracker using Welford's algorithm.
+    Avoids overflow and maintains precision for large datasets.
+    """
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        """Reset all statistics to initial state."""
+        self.count = 0
+        self.mean = 0.0
+        self.M2 = 0.0  # Sum of squares of deviations from mean
+
+    def update(self, val: float) -> None:
+        # Welford's online algorithm
+        self.count += 1
+        delta = val - self.mean
+        self.mean += delta / self.count
+        delta2 = val - self.mean
+        self.M2 += delta * delta2
+
+    def compute(self) -> tuple[float, float]:
+        """Compute the mean and standard deviation."""
+        if self.count == 0:
+            return 0.0, 0.0
+        elif self.count == 1:
+            return self.mean, 0.0
+        else:
+            variance = self.M2 / self.count  # Population variance
+            std = np.sqrt(variance)
+            return self.mean, std
+
+
+class StepTimer:
+    def __init__(self):
+        self.stats = collections.defaultdict(RunningStats)
+        self.start = None
+
+    def reset(self):
+        """Reset the timer for a specific name."""
+        self.start = time.time()
+
+    def measure(self, name: str):
+        """Measure the time taken for a specific operation."""
+        elapsed = time.time() - self.start
+        self.stats[name].update(elapsed)
+        self.start = time.time()
+
+    def compute(self) -> tuple[float, dict[str, float]]:
+        """Compute the average time for each operation (in seconds)."""
+        avg_step_times = {k: v.compute()[0] for k, v in self.stats.items()}
+        total_time = sum(avg_step_times.values())
+        return total_time, avg_step_times
+
+    def plot(self):
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots()
+        total_time = 0
+        for name, stats in self.stats.items():
+            section_time, section_var = stats.compute()
+            ax.bar(name, section_time * 1000, label=name, yerr=section_var * 1000)
+            total_time += section_time
+        ax.set_ylabel("Duration (ms)")
+        ax.set_title(
+            f"Step Time Composition "
+            f"(total: {total_time:.2f}s = {1 / total_time:.2f} steps/s)"
+        )
+        return fig
 
 
 def get_class(mod_path, BaseClass):

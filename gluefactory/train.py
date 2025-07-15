@@ -37,11 +37,11 @@ from .utils.tools import (
     MedianMetric,
     PRMetric,
     RecallMetric,
+    StepTimer,
     fork_rng,
     set_seed,
 )
 
-# @TODO: Fix pbar pollution in logs
 # @TODO: add plotting during evaluation
 
 default_train_conf = {
@@ -408,6 +408,8 @@ def training(rank, conf, output_dir, args):
             with_stack=True,
         )
         prof.__enter__()
+
+    step_timer = StepTimer()
     while epoch < conf.train.epochs and not stop:
         if rank == 0:
             logger.info(f"Starting epoch {epoch}")
@@ -459,13 +461,15 @@ def training(rank, conf, output_dir, args):
                     getattr(loader.dataset, conf.train.dataset_callback_fn)(
                         conf.train.seed + epoch
                     )
+        step_timer.reset()
         for it, data in enumerate(train_loader):
+            step_timer.measure("data")
             tot_it = (len(train_loader) * epoch + it) * (
                 args.n_gpus if args.distributed else 1
             )
             tot_n_samples = tot_it
             if not args.log_it:
-                # We normalize the x-axis of tensorflow to num samples!
+                # We normalize the x-axis of tensorboard to num samples!
                 tot_n_samples *= train_loader.batch_size
 
             model.train()
@@ -477,9 +481,12 @@ def training(rank, conf, output_dir, args):
                 dtype=mp_dtype,
             ):
                 data = batch_to_device(data, device, non_blocking=True)
+                step_timer.measure("to_device")
                 pred = model(data)
+                step_timer.measure("forward")
                 losses, _ = loss_fn(pred, data)
                 loss = torch.mean(losses["total"])
+                step_timer.measure("loss_fn")
             if torch.isnan(loss).any():
                 print(f"Detected NAN, skipping iteration {it}")
                 del pred, data, loss, losses
@@ -494,6 +501,7 @@ def training(rank, conf, output_dir, args):
                 do_backward = do_backward > 0
             if do_backward:
                 scaler.scale(loss).backward()
+                step_timer.measure("backward")
                 if args.detect_anomaly:
                     # Check for params without any gradient which causes
                     # problems in distributed training with checkpointing
@@ -519,6 +527,7 @@ def training(rank, conf, output_dir, args):
                 else:
                     scaler.step(optimizer)
                     scaler.update()
+                step_timer.measure("step")
                 if not conf.train.lr_schedule.on_epoch:
                     lr_scheduler.step()
             else:
@@ -548,6 +557,36 @@ def training(rank, conf, output_dir, args):
                         "training/lr", optimizer.param_groups[0]["lr"], tot_n_samples
                     )
                     writer.add_scalar("training/epoch", epoch, tot_n_samples)
+
+                    step_duration, section_times = step_timer.compute()
+                    writer.add_scalar("step/total", step_duration, tot_n_samples)
+                    writer.add_scalar("step/_per_sec", 1 / step_duration, tot_n_samples)
+                    writer.add_scalar(
+                        "step/_samples_per_sec",
+                        1 / step_duration * train_loader.batch_size,
+                        tot_n_samples,
+                    )
+                    # Write section timings and fractions of step duration.
+                    for section_name, duration in section_times.items():
+                        writer.add_scalar(
+                            f"step/{section_name}", duration, tot_n_samples
+                        )
+
+                    writer.add_scalar(
+                        "step/io_fraction",
+                        (section_times["data"] + section_times["to_device"])
+                        / step_duration,
+                        tot_n_samples,
+                    )
+
+                    writer.add_figure(
+                        "step/sections",
+                        step_timer.plot(),
+                        tot_n_samples,
+                        close=True,
+                    )
+                    # Reset the stats after logging
+                    step_timer.stats.clear()
 
             if conf.train.log_grad_every_iter is not None:
                 if it % conf.train.log_grad_every_iter == 0:
@@ -641,6 +680,8 @@ def training(rank, conf, output_dir, args):
                 )
             if stop:
                 break
+            # Reset the step timer for the next iteration
+            step_timer.reset()
 
         if rank == 0:
             best_eval = save_experiment(
