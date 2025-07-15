@@ -395,13 +395,14 @@ def training(rank, conf, output_dir, args):
 
     if args.profile:
         prof = torch.profiler.profile(
-            schedule=torch.profiler.schedule(wait=1, warmup=1, active=1, repeat=1),
+            schedule=torch.profiler.schedule(
+                wait=5, warmup=1, active=args.profile, repeat=1, skip_first=10
+            ),
             on_trace_ready=torch.profiler.tensorboard_trace_handler(str(output_dir)),
             record_shapes=True,
             profile_memory=True,
             with_stack=True,
         )
-        prof.__enter__()
 
     step_timer = StepTimer()
     while epoch < conf.train.epochs and not stop:
@@ -456,6 +457,8 @@ def training(rank, conf, output_dir, args):
                         conf.train.seed + epoch
                     )
         step_timer.reset()
+        if args.profile:
+            prof.start()
         for it, data in enumerate(train_loader):
             step_timer.measure("data")
             tot_it = (len(train_loader) * epoch + it) * (
@@ -530,6 +533,24 @@ def training(rank, conf, output_dir, args):
 
             if args.profile:
                 prof.step()
+
+            if args.record_memory:
+                offset = 2  # Avoid recording memory in first step
+                if it == offset:
+                    logger.info(
+                        f"Recording memory usage over {args.record_memory} iterations "
+                        f"(skip first {offset})."
+                    )
+                    torch.cuda.memory._record_memory_history(enabled="all")
+                elif it == offset + args.record_memory:
+                    # Record memory usage every args.record_memory iterations
+                    snapshot_path = (
+                        output_dir
+                        / f"memory_snapshot_{args.experiment.replace('/', '-')}.json"
+                    )
+                    logger.info(f"Dumping memory snapshot to {snapshot_path}.")
+                    torch.cuda.memory._dump_snapshot(snapshot_path)
+                    logger.info("Stop tracking memory usage.")
 
             if it % conf.train.log_every_iter == 0:
                 for k in sorted(losses.keys()):
@@ -760,8 +781,15 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--profile",
-        action="store_true",
-        help="Profile the training with PyTorch profiler",
+        type=int,
+        default=None,
+        help="Profile the training with PyTorch profiler (number of steps to profile)",
+    )
+    parser.add_argument(
+        "--record_memory",
+        type=int,
+        default=None,
+        help="Record memory usage during training (number of steps to record)",
     )
     parser.add_argument(
         "--print_arch", "--pa", action="store_true", help="Print model architecture"
