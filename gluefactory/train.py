@@ -38,6 +38,7 @@ from .utils.tools import (
     PRMetric,
     RecallMetric,
     StepTimer,
+    collect_device_stats,
     fork_rng,
     set_seed,
 )
@@ -392,13 +393,6 @@ def training(rank, conf, output_dir, args):
             "Starting training with configuration:\n%s", OmegaConf.to_yaml(conf)
         )
 
-    def trace_handler(p):
-        # torch.profiler.tensorboard_trace_handler(str(output_dir))
-        output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=10)
-        print(output)
-        p.export_chrome_trace("trace_" + str(p.step_num) + ".json")
-        p.export_stacks("/tmp/profiler_stacks.txt", "self_cuda_time_total")
-
     if args.profile:
         prof = torch.profiler.profile(
             schedule=torch.profiler.schedule(wait=1, warmup=1, active=1, repeat=1),
@@ -587,6 +581,12 @@ def training(rank, conf, output_dir, args):
                     )
                     # Reset the stats after logging
                     step_timer.stats.clear()
+
+                    # Log memory stats
+                    if torch.cuda.is_available():
+                        device_stats = collect_device_stats()
+                        for key, value in device_stats.items():
+                            writer.add_scalar(f"memory/{key}", value, tot_n_samples)
 
             if conf.train.log_grad_every_iter is not None:
                 if it % conf.train.log_grad_every_iter == 0:

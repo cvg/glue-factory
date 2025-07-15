@@ -264,6 +264,45 @@ class StepTimer:
         return fig
 
 
+def collect_device_stats() -> dict[str, float]:
+    """Collect device usage statistics."""
+
+    def _per_device_stats(device: torch.device | None = None) -> dict[str, float]:
+        free, total = torch.cuda.mem_get_info(device)
+        used = total - free
+        bytes_stats = {
+            "allocated": torch.cuda.memory_allocated(device),
+            "allocated_peak": torch.cuda.max_memory_allocated(device),
+            "reserved": torch.cuda.memory_reserved(device),
+            "reserved_peak": torch.cuda.max_memory_reserved(device),
+            "free": free,
+            "used": used,
+            "total": total,
+        }
+
+        device_stats = {k: v / 10**9 for k, v in bytes_stats.items()}
+        device_stats["utilization"] = device_stats["used"] / device_stats["total"]
+        # Reset peak memory stats for next cycle
+        torch.cuda.reset_peak_memory_stats(device)
+        return device_stats
+
+    num_devices = torch.cuda.device_count()
+    all_devices = [torch.cuda.device(i) for i in range(num_devices)]
+    all_device_stats = [_per_device_stats(d) for d in all_devices]
+    all_device_stats = {
+        k: [pds[k] for pds in all_device_stats] for k in all_device_stats[0]
+    }
+    device_stats = {k: np.mean(v).item() for k, v in all_device_stats.items()}
+    for i in range(num_devices):
+        device_stats[f"utilization_{i}"] = all_device_stats["utilization"][i]
+    device_stats["num_devices"] = num_devices
+    # Assumes all devices have the same memory stats.
+    device_stats["global_total"] = sum(all_device_stats["total"])
+    device_stats["global_used"] = sum(all_device_stats["used"])
+    device_stats["num_cpus"] = torch.cpu.device_count()
+    return device_stats
+
+
 def get_class(mod_path, BaseClass):
     """Get the class object which inherits from BaseClass and is defined in
     the module named mod_name, child of base_path.
