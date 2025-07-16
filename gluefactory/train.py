@@ -81,7 +81,7 @@ def do_evaluation(model, loader, device, loss_fn, conf, rank, pbar=True):
     results = {}
     pr_metrics = defaultdict(PRMetric)
     figures = []
-    if conf.plot is not None and rank == 0:
+    if conf.plot is not None:
         n, plot_fn = conf.plot
         plot_ids = np.random.choice(len(loader), min(len(loader), n), replace=False)
     for i, data in enumerate(
@@ -607,7 +607,6 @@ def training(rank, conf, output_dir, args):
                         )
                         logger.info(f"New best val: {conf.train.best_key}={best_eval}")
                 torch.cuda.empty_cache()  # should be cleared at the first iter
-                del results, pr_metrics, figures
 
             if (tot_it % conf.train.save_every_iter == 0 and tot_it > 0) and rank == 0:
                 if results is None:
@@ -634,7 +633,6 @@ def training(rank, conf, output_dir, args):
                     stop,
                     args.distributed,
                 )
-
             if stop:
                 break
 
@@ -653,6 +651,7 @@ def training(rank, conf, output_dir, args):
                 distributed=args.distributed,
             )
 
+        results = None  # free memory
         epoch += 1
 
     logger.info(f"Finished training on process {rank}.")
@@ -725,7 +724,6 @@ if __name__ == "__main__":
     for module in conf.train.get("submodules", []) + [__module_name__]:
         mod_dir = Path(__import__(str(module)).__file__).parent
         shutil.copytree(mod_dir, output_dir / module, dirs_exist_ok=True)
-
     if args.distributed:
         args.n_gpus = torch.cuda.device_count()
         args.lock_file = output_dir / "distributed_lock"
