@@ -171,7 +171,7 @@ if __name__ == "__main__":
     )
 
     experiment_dir = output_dir / name
-    experiment_dir.mkdir(exist_ok=True)
+    experiment_dir.mkdir(exist_ok=True, parents=True)
 
     pipeline = ETH3DPipeline(conf)
     s, f, r = pipeline.run(

@@ -37,7 +37,7 @@ if __name__ == "__main__":
 
     for name in args.dotlist:
         possible_paths = [
-            settings.EVAL_PATH / args.benchmark / name,
+            settings.EVAL_PATH / args.benchmark / name,  # Preferred
             settings.TRAINING_PATH / name / args.benchmark,
         ]
         experiment_dir = None

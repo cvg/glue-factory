@@ -1,5 +1,6 @@
 import argparse
 import logging
+from pathlib import Path
 from pprint import pprint
 
 from omegaconf import OmegaConf
@@ -36,10 +37,15 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
     conf = OmegaConf.merge(conf, cli_conf)
     conf.checkpoint = args.checkpoint if args.checkpoint else conf.get("checkpoint")
 
+    checkpoint_name = conf.checkpoint
     if conf.checkpoint and not conf.checkpoint.endswith(".tar"):
-        checkpoint_conf = OmegaConf.load(
-            TRAINING_PATH / conf.checkpoint / "config.yaml"
-        )
+        if Path(conf.checkpoint).exists():
+            checkpoint_dir = Path(conf.checkpoint).absolute()
+            if checkpoint_dir.is_relative_to(TRAINING_PATH):
+                checkpoint_name = str(checkpoint_dir.relative_to(TRAINING_PATH))
+        else:
+            checkpoint_dir = TRAINING_PATH / conf.checkpoint
+        checkpoint_conf = OmegaConf.load(checkpoint_dir / "config.yaml")
         conf = OmegaConf.merge(extract_benchmark_conf(checkpoint_conf, benchmark), conf)
 
     if default:
@@ -47,12 +53,12 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
 
     if args.tag:
         name = args.tag
-    elif args.conf and conf.checkpoint:
-        name = f"{args.conf}_{conf.checkpoint}"
+    elif args.conf and checkpoint_name:
+        name = f"{args.conf}_{checkpoint_name}"
     elif args.conf:
         name = args.conf
-    elif conf.checkpoint:
-        name = conf.checkpoint
+    elif checkpoint_name:
+        name = checkpoint_name
     if len(args.dotlist) > 0 and not args.tag:
         name = name + "_" + ":".join(args.dotlist)
     logger.info("Running benchmark: %s", benchmark)

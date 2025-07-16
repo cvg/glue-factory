@@ -83,7 +83,11 @@ def list_checkpoints(dir_):
 
 def get_last_checkpoint(exper, allow_interrupted=True):
     """Get the last saved checkpoint for a given experiment name."""
-    ckpts = list_checkpoints(Path(settings.TRAINING_PATH, exper))
+    if Path(exper).exists():
+        experiment_dir = Path(exper)
+    else:
+        experiment_dir = Path(settings.TRAINING_PATH, exper)
+    ckpts = list_checkpoints(experiment_dir)
     if not allow_interrupted:
         ckpts = [(n, p) for (n, p) in ckpts if "_interrupted" not in p.name]
     assert len(ckpts) > 0
@@ -92,7 +96,11 @@ def get_last_checkpoint(exper, allow_interrupted=True):
 
 def get_best_checkpoint(exper):
     """Get the checkpoint with the best loss, for a given experiment name."""
-    p = Path(settings.TRAINING_PATH, exper, "checkpoint_best.tar")
+    if Path(exper).exists():
+        experiment_dir = Path(exper)
+    else:
+        experiment_dir = Path(settings.TRAINING_PATH, exper)
+    p = experiment_dir / "checkpoint_best.tar"
     return p
 
 
