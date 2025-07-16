@@ -6,7 +6,7 @@ from pprint import pprint
 import matplotlib
 import matplotlib.pyplot as plt
 
-from ..settings import EVAL_PATH
+from .. import settings
 from ..visualization.global_frame import GlobalFrame
 from ..visualization.two_view_frame import TwoViewFrame
 from . import get_benchmark
@@ -25,8 +25,6 @@ if __name__ == "__main__":
     parser.add_argument("dotlist", nargs="*")
     args = parser.parse_intermixed_args()
 
-    output_dir = Path(EVAL_PATH, args.benchmark)
-
     results = {}
     summaries = defaultdict(dict)
 
@@ -39,7 +37,20 @@ if __name__ == "__main__":
     loader = bm.get_dataloader()
 
     for name in args.dotlist:
-        experiment_dir = output_dir / name
+        possible_paths = [
+            settings.EVAL_PATH / args.benchmark / name,
+            settings.TRAINING_PATH / name / args.benchmark,
+        ]
+        experiment_dir = None
+        for path in possible_paths:
+            if path.exists():
+                experiment_dir = path
+                break
+        if experiment_dir is None:
+            raise FileNotFoundError(
+                f"Experiment directory for {name} not found. "
+                f" Checked: {possible_paths}"
+            )
         pred_file = experiment_dir / "predictions.h5"
         s, results[name] = load_eval(experiment_dir)
         predictions[name] = pred_file
