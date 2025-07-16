@@ -1,6 +1,5 @@
 import argparse
 from collections import defaultdict
-from pathlib import Path
 from pprint import pprint
 
 import matplotlib
