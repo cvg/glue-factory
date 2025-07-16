@@ -12,6 +12,7 @@ that corresponds to the keypoint i in image 0. m0[i] = -1 if i is unmatched.
 
 from omegaconf import OmegaConf
 
+from ..utils import misc
 from . import get_model
 from .base_model import BaseModel
 
@@ -59,8 +60,7 @@ class TwoViewPipeline(BaseModel):
                 to_ctr(conf.ground_truth)
             )
 
-    def extract_view(self, data, i):
-        data_i = data[f"view{i}"]
+    def extract_view(self, data_i):
         pred_i = data_i.get("cache", {})
         skip_extract = len(pred_i) > 0 and self.conf.allow_no_extract
         if self.conf.extractor.name and not skip_extract:
@@ -70,8 +70,16 @@ class TwoViewPipeline(BaseModel):
         return pred_i
 
     def _forward(self, data):
-        pred0 = self.extract_view(data, "0")
-        pred1 = self.extract_view(data, "1")
+        if self.conf.get("extract_parallel", False) and self.training:
+            bs = len(data["name"])
+            data_01 = misc.concat_tree([data["view0"], data["view1"]])
+            pred_01 = self.extract_view(data_01)
+            pred0 = misc.flat_map(pred_01, lambda _, v: v[:bs], unflatten=True)
+            pred1 = misc.flat_map(pred_01, lambda _, v: v[bs:], unflatten=True)
+        else:
+            pred0 = self.extract_view(data["view0"])
+            pred1 = self.extract_view(data["view1"])
+
         pred = {
             **{k + "0": v for k, v in pred0.items()},
             **{k + "1": v for k, v in pred1.items()},
