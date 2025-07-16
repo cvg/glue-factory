@@ -66,7 +66,7 @@ default_train_conf = {
     "log_every_iter": 200,  # interval for logging the loss to the console
     "log_grad_every_iter": None,  # interval for logging gradient hists
     "test_every_epoch": 1,  # interval for evaluation on the test benchmarks
-    "keep_last_checkpoints": 10,  # keep only the last X checkpoints
+    "keep_last_checkpoints": 3,  # keep only the last X checkpoints
     "load_experiment": None,  # initialize the model from a previous experiment
     "median_metrics": [],  # add the median of some metrics
     "recall_metrics": {},  # add the recall of some metrics
@@ -399,8 +399,8 @@ def training(rank, conf, output_dir, args):
                 wait=5, warmup=1, active=args.profile, repeat=1, skip_first=10
             ),
             on_trace_ready=torch.profiler.tensorboard_trace_handler(str(output_dir)),
-            record_shapes=True,
-            profile_memory=True,
+            record_shapes=False,
+            profile_memory=False,
             with_stack=True,
         )
 
@@ -415,20 +415,22 @@ def training(rank, conf, output_dir, args):
             and epoch % conf.train.test_every_epoch == 0
             and args.run_benchmarks
         ):
-            for bname, eval_conf in conf.get("benchmarks", {}).items():
-                logger.info(f"Running eval on {bname}")
+            for benchmark_name, eval_conf in conf.get("benchmarks", {}).items():
+                logger.info(f"Running eval on {benchmark_name}")
                 summaries, figures, _ = run_benchmark(
-                    bname,
+                    benchmark_name,
                     eval_conf,
-                    settings.EVAL_PATH / bname / args.experiment / str(epoch),
+                    output_dir / str(epoch) / benchmark_name,
                     model.eval(),
                 )
                 str_summaries = [
                     f"{k} {v:.3E}" for k, v in summaries.items() if isinstance(v, float)
                 ]
-                logger.info(f'[{bname}] {{{", ".join(str_summaries)}}}')
-                write_dict_summaries(writer, f"test/{bname}", summaries, epoch)
-                write_image_summaries(writer, f"figures/{bname}", figures, epoch)
+                logger.info(f'[{benchmark_name}] {{{", ".join(str_summaries)}}}')
+                write_dict_summaries(writer, f"test/{benchmark_name}", summaries, epoch)
+                write_image_summaries(
+                    writer, f"figures/{benchmark_name}", figures, epoch
+                )
                 del summaries, figures
 
         # set the seed
