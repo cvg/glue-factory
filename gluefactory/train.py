@@ -266,7 +266,6 @@ def training(rank, conf, output_dir, args):
             conf.model = OmegaConf.merge(
                 OmegaConf.create(init_cp["conf"]).model, conf.model
             )
-            print(conf.model)
         else:
             init_cp = None
 
@@ -487,7 +486,7 @@ def training(rank, conf, output_dir, args):
                 loss = torch.mean(losses["total"])
                 step_timer.measure("loss_fn")
             if torch.isnan(loss).any():
-                print(f"Detected NAN, skipping iteration {it}")
+                logger.warning(f"Detected NAN, skipping iteration {it}")
                 del pred, data, loss, losses
                 continue
 
@@ -507,7 +506,7 @@ def training(rank, conf, output_dir, args):
                     detected_anomaly = False
                     for name, param in model.named_parameters():
                         if param.grad is None and param.requires_grad:
-                            print(f"param {name} has no gradient.")
+                            logger.warning(f"param {name} has no gradient.")
                             detected_anomaly = True
                     if detected_anomaly:
                         raise RuntimeError("Detected anomaly in training.")
