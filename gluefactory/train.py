@@ -351,6 +351,10 @@ def training(rank, conf, output_dir, args):
     if args.detect_anomaly:
         torch.autograd.set_detect_anomaly(True)
 
+    if args.debug_sync:
+        torch.cuda.set_sync_debug_mode(args.debug_sync)
+        logger.info(f"Debug sync mode set to {args.debug_sync}")
+
     optimizer_fn = {
         "sgd": torch.optim.SGD,
         "adam": torch.optim.Adam,
@@ -395,10 +399,14 @@ def training(rank, conf, output_dir, args):
 
     if args.profile:
         prof = torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
             schedule=torch.profiler.schedule(
                 wait=5, warmup=1, active=args.profile, repeat=1, skip_first=10
             ),
-            on_trace_ready=tensorboard_trace_handler(str(output_dir), use_gzip=True),
+            on_trace_ready=tensorboard_trace_handler(str(output_dir), use_gzip=False),
             record_shapes=False,
             profile_memory=False,
             with_stack=True,
@@ -808,6 +816,13 @@ if __name__ == "__main__":
         action="store_true",
         help="Detect anomalies in gradients",
     )
+
+    parser.add_argument(
+        "--debug_sync",
+        type=int,
+        default=0,
+        help="Debug ",
+    )
     parser.add_argument(
         "--log_it",
         "--log_it",
@@ -847,6 +862,9 @@ if __name__ == "__main__":
         if conf.train.seed is None:
             conf.train.seed = torch.initial_seed() & (2**32 - 1)
         OmegaConf.save(conf, str(output_dir / "config.yaml"))
+
+    if conf.train.get("overfit") is not None:
+        args.overfit = conf.train.overfit
 
     # copy gluefactory and submodule into output dir
     for module in conf.train.get("submodules", []) + [__module_name__]:
