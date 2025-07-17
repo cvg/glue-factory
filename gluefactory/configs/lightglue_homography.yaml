@@ -4,6 +4,8 @@ defaults:
     - model@model.matcher: matcher/lightglue
     - model@model.ground_truth: matcher/homography_matcher
     - _self_
+data:
+    batch_size: 128
 train:
     seed: 0
     epochs: 40

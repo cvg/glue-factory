@@ -4,6 +4,8 @@ defaults:
     - model@model.matcher: matcher/lightglue
     - model@model.ground_truth: matcher/depth_matcher
     - _self_
+data:
+    batch_size: 32
 model:
     name: two_view_pipeline
     extractor:
