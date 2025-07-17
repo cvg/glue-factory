@@ -29,6 +29,7 @@ from .utils.experiments import (
     get_last_checkpoint,
     list_configs,
     save_experiment,
+    tensorboard_trace_handler,
 )
 from .utils.stdout_capturing import capture_outputs
 from .utils.tensor import batch_to_device
@@ -397,7 +398,7 @@ def training(rank, conf, output_dir, args):
             schedule=torch.profiler.schedule(
                 wait=5, warmup=1, active=args.profile, repeat=1, skip_first=10
             ),
-            on_trace_ready=torch.profiler.tensorboard_trace_handler(str(output_dir)),
+            on_trace_ready=tensorboard_trace_handler(str(output_dir), use_gzip=True),
             record_shapes=False,
             profile_memory=False,
             with_stack=True,
@@ -460,6 +461,8 @@ def training(rank, conf, output_dir, args):
         step_timer.reset()
         if args.profile:
             prof.start()
+
+        train_losses = defaultdict(AverageMetric)
         for it, data in enumerate(train_loader):
             step_timer.measure("data")
             tot_it = (len(train_loader) * epoch + it) * (
@@ -484,6 +487,11 @@ def training(rank, conf, output_dir, args):
                 step_timer.measure("forward")
                 losses, _ = loss_fn(pred, data)
                 loss = torch.mean(losses["total"])
+                for k, v in losses.items():
+                    if args.distributed:
+                        torch.distributed.all_reduce(v)
+                        v /= args.n_gpus
+                    train_losses[k].update(v)
                 step_timer.measure("loss_fn")
             if torch.isnan(loss).any():
                 logger.warning(f"Detected NAN, skipping iteration {it}")
@@ -553,63 +561,60 @@ def training(rank, conf, output_dir, args):
                     torch.cuda.memory._dump_snapshot(snapshot_path)
                     logger.info("Stop tracking memory usage.")
 
-            if it % conf.train.log_every_iter == 0:
-                for k in sorted(losses.keys()):
-                    if args.distributed:
-                        losses[k] = losses[k].sum(-1)
-                        torch.distributed.reduce(losses[k], dst=0)
-                        losses[k] /= train_loader.batch_size * args.n_gpus
-                    losses[k] = torch.mean(losses[k], -1)
-                    losses[k] = losses[k].item()
-                if rank == 0:
-                    str_losses = [f"{k} {v:.3E}" for k, v in losses.items()]
-                    logger.info(
-                        "[E {} | it {}] loss {{{}}}".format(
-                            epoch, it, ", ".join(str_losses)
-                        )
+            if (it % conf.train.log_every_iter == 0) and rank == 0:
+                losses = {k: v.compute() for k, v in train_losses.items()}
+                str_losses = [f"{k} {v:.3E}" for k, v in losses.items()]
+                # Write training losses
+                logger.info(
+                    "[E {} | it {}] loss {{{}}}".format(
+                        epoch, it, ", ".join(str_losses)
                     )
-                    write_dict_summaries(writer, "training/", losses, tot_n_samples)
-                    writer.add_scalar(
-                        "training/lr", optimizer.param_groups[0]["lr"], tot_n_samples
-                    )
-                    writer.add_scalar("training/epoch", epoch, tot_n_samples)
+                )
+                write_dict_summaries(writer, "training/", losses, tot_n_samples)
+                writer.add_scalar(
+                    "training/lr", optimizer.param_groups[0]["lr"], tot_n_samples
+                )
+                # Reset training loss aggregators
+                train_losses.clear()
 
-                    step_duration, section_times = step_timer.compute()
-                    writer.add_scalar("step/total", step_duration, tot_n_samples)
-                    writer.add_scalar("step/_per_sec", 1 / step_duration, tot_n_samples)
-                    writer.add_scalar(
-                        "step/_samples_per_sec",
-                        1 / step_duration * train_loader.batch_size,
-                        tot_n_samples,
-                    )
-                    # Write section timings and fractions of step duration.
-                    for section_name, duration in section_times.items():
-                        writer.add_scalar(
-                            f"step/{section_name}", duration, tot_n_samples
-                        )
+                # Write Epoch
+                writer.add_scalar("training/epoch", epoch, tot_n_samples)
 
-                    writer.add_scalar(
-                        "step/io_fraction",
-                        (section_times["data"] + section_times["to_device"])
-                        / step_duration,
-                        tot_n_samples,
-                    )
+                step_duration, section_times = step_timer.compute()
+                writer.add_scalar("step/total", step_duration, tot_n_samples)
+                writer.add_scalar("step/_per_sec", 1 / step_duration, tot_n_samples)
+                writer.add_scalar(
+                    "step/_samples_per_sec",
+                    1 / step_duration * train_loader.batch_size * args.n_gpus,
+                    tot_n_samples,
+                )
+                # Write section timings and fractions of step duration.
+                for section_name, duration in section_times.items():
+                    writer.add_scalar(f"step/{section_name}", duration, tot_n_samples)
 
-                    writer.add_figure(
-                        "step/sections",
-                        step_timer.plot(),
-                        tot_n_samples,
-                        close=True,
-                    )
-                    # Reset the stats after logging
-                    step_timer.stats.clear()
+                writer.add_scalar(
+                    "step/io_fraction",
+                    (section_times["data"] + section_times["to_device"])
+                    / step_duration,
+                    tot_n_samples,
+                )
 
-                    # Log memory stats
-                    if torch.cuda.is_available():
-                        device_stats = collect_device_stats()
-                        for key, value in device_stats.items():
-                            writer.add_scalar(f"memory/{key}", value, tot_n_samples)
+                writer.add_figure(
+                    "step/sections",
+                    step_timer.plot(),
+                    tot_n_samples,
+                    close=True,
+                )
+                # Reset the stats after logging
+                step_timer.stats.clear()
 
+                # Log memory stats
+                if torch.cuda.is_available():
+                    device_stats = collect_device_stats()
+                    for key, value in device_stats.items():
+                        writer.add_scalar(f"memory/{key}", value, tot_n_samples)
+
+            # Log gradients of the model. Useful for debugging.
             if conf.train.log_grad_every_iter is not None:
                 if it % conf.train.log_grad_every_iter == 0:
                     grad_txt = ""
@@ -675,6 +680,7 @@ def training(rank, conf, output_dir, args):
                         logger.info(f"New best val: {conf.train.best_key}={best_eval}")
                 torch.cuda.empty_cache()  # should be cleared at the first iter
 
+            # Handle checkpointing.
             if (tot_it % conf.train.save_every_iter == 0 and tot_it > 0) and rank == 0:
                 if results is None:
                     results, _, _ = do_evaluation(
@@ -705,6 +711,7 @@ def training(rank, conf, output_dir, args):
             # Reset the step timer for the next iteration
             step_timer.reset()
 
+        # Epoch checkpointing: REMOVE
         if rank == 0:
             best_eval = save_experiment(
                 model,
@@ -854,4 +861,5 @@ if __name__ == "__main__":
             main_worker, nprocs=args.n_gpus, args=(conf, output_dir, args)
         )
     else:
+        args.n_gpus = 1
         main_worker(0, conf, output_dir, args)

@@ -187,3 +187,57 @@ def save_experiment(
         shutil.copy(cp_path, str(output_dir / "checkpoint_best.tar"))
     delete_old_checkpoints(output_dir, conf.train.keep_last_checkpoints)
     return best_eval
+
+
+# Adaptation of torch.profiler.tensorboard_trace_handler
+def tensorboard_trace_handler(
+    dir_name: str, worker_name: Optional[str] = None, use_gzip: bool = False
+):
+    """
+    Outputs tracing files to directory of ``dir_name``, then that directory can be
+    directly delivered to tensorboard as logdir.
+    ``worker_name`` should be unique for each worker in distributed scenario,
+    it will be set to '[hostname]_[pid]' by default.
+    """
+    import os
+    import socket
+    import time
+
+    def file_replace(filepath, pattern, target):
+        # Read in the file
+        with open(filepath, "r") as file:
+            filedata = file.read()
+
+        # Replace the target string
+        filedata = filedata.replace(pattern, target)
+
+        # Write the file out again
+        with open(filepath, "w") as file:
+            file.write(filedata)
+
+    def handler_fn(prof) -> None:
+        nonlocal worker_name
+        if not os.path.isdir(dir_name):
+            try:
+                os.makedirs(dir_name, exist_ok=True)
+            except Exception as e:
+                raise RuntimeError("Can't create directory: " + dir_name) from e
+        if not worker_name:
+            worker_name = f"{socket.gethostname()}_{os.getpid()}"
+        # Use nanosecond here to avoid naming clash when exporting the trace
+        file_name = f"{worker_name}.{time.time_ns()}.pt.trace.json"
+        file_path = os.path.join(dir_name, file_name)
+        prof.export_chrome_trace(file_path)
+
+        # Fix problem with tb profile: https://github.com/pytorch/kineto/issues/688
+        file_replace(file_path, '"user_annotation', '"cpu_op')
+
+        if use_gzip:
+            import gzip
+
+            with open(file_path, "rb") as fin:
+                with gzip.open(file_path + ".gz", "wb") as fout:
+                    fout.writelines(fin)
+            os.remove(file_path)
+
+    return handler_fn
