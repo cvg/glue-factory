@@ -2,7 +2,7 @@ import pprint
 
 import numpy as np
 
-from ..utils.misc import flatten
+from ..utils import misc
 from . import viz2d
 from .tools import _COMMON, RadioHideTool, ToggleTool, __plot_dict__
 
@@ -44,10 +44,10 @@ class TwoViewFrame:
         keys = None
         for _, pred in preds.items():
             if keys is None:
-                keys = set((flatten(pred)).keys())
+                keys = set((misc.flatten_dict(pred)).keys())
             else:
-                keys = keys.intersection(flatten(pred).keys())
-        keys = keys.union(flatten(data).keys())
+                keys = keys.intersection(misc.flatten_dict(pred).keys())
+        keys = keys.union(misc.flatten_dict(data).keys())
 
         self.options = [
             k for k, v in self.plot_dict.items() if set(v.required_keys).issubset(keys)

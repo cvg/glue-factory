@@ -31,7 +31,7 @@ class ImagePreprocessor:
         """Resize and preprocess an image, return image and resize scale"""
         h, w = img.shape[-2:]
         size = h, w
-        if self.conf.resize is not None:
+        if self.conf.resize is not None or self.conf.edge_divisible_by is not None:
             if interpolation is None:
                 interpolation = self.conf.interpolation
             size = self.get_new_image_size(h, w)
@@ -80,20 +80,24 @@ class ImagePreprocessor:
         if isinstance(self.conf.resize, collections.Iterable):
             assert len(self.conf.resize) == 2
             return tuple(self.conf.resize)
-        side_size = self.conf.resize
-        aspect_ratio = w / h
-        if side not in ("short", "long", "vert", "horz"):
-            raise ValueError(
-                f"side can be one of 'short', 'long', 'vert', and 'horz'. Got '{side}'"
-            )
-        if side == "vert":
-            size = side_size, int(side_size * aspect_ratio)
-        elif side == "horz":
-            size = int(side_size / aspect_ratio), side_size
-        elif (side == "short") ^ (aspect_ratio < 1.0):
-            size = side_size, int(side_size * aspect_ratio)
+        elif isinstance(self.conf.resize, int):
+            side_size = self.conf.resize
+            aspect_ratio = w / h
+            if side not in ("short", "long", "vert", "horz"):
+                raise ValueError(
+                    f"side can be one of 'short', 'long', 'vert', and 'horz'. Got '{side}'"  # noqa: E501
+                )
+            if side == "vert":
+                size = side_size, int(side_size * aspect_ratio)
+            elif side == "horz":
+                size = int(side_size / aspect_ratio), side_size
+            elif (side == "short") ^ (aspect_ratio < 1.0):
+                size = side_size, int(side_size * aspect_ratio)
+            else:
+                size = int(side_size / aspect_ratio), side_size
         else:
-            size = int(side_size / aspect_ratio), side_size
+            assert self.conf.resize is None
+            size = (h, w)
 
         if self.conf.edge_divisible_by is not None:
             df = self.conf.edge_divisible_by

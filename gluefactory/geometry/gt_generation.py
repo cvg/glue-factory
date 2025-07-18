@@ -49,8 +49,7 @@ def gt_matches_from_pose_depth(
     dist0 = torch.sum((kp0_1.unsqueeze(-2) - kp1.unsqueeze(-3)) ** 2, -1)
     dist1 = torch.sum((kp0.unsqueeze(-2) - kp1_0.unsqueeze(-3)) ** 2, -1)
     dist = torch.max(dist0, dist1)
-    inf = dist.new_tensor(float("inf"))
-    dist = torch.where(mask_visible, dist, inf)
+    dist = torch.where(mask_visible, dist, torch.inf)
 
     min0 = dist.min(-1).indices
     min1 = dist.min(-2).indices
@@ -67,28 +66,28 @@ def gt_matches_from_pose_depth(
     # pack the indices of positive matches
     # if -1: unmatched point
     # if -2: ignore point
-    unmatched = min0.new_tensor(UNMATCHED_FEATURE)
-    ignore = min0.new_tensor(IGNORE_FEATURE)
-    m0 = torch.where(positive.any(-1), min0, ignore)
-    m1 = torch.where(positive.any(-2), min1, ignore)
-    m0 = torch.where(negative0, unmatched, m0)
-    m1 = torch.where(negative1, unmatched, m1)
+    m0 = torch.where(positive.any(-1), min0, IGNORE_FEATURE)
+    m1 = torch.where(positive.any(-2), min1, IGNORE_FEATURE)
+    m0 = torch.where(negative0, UNMATCHED_FEATURE, m0)
+    m1 = torch.where(negative1, UNMATCHED_FEATURE, m1)
 
     F = (
-        camera1.calibration_matrix().inverse().transpose(-1, -2)
+        torch.linalg.inv_ex(camera1.calibration_matrix())[0].transpose(-1, -2)
         @ T_to_E(T_0to1)
-        @ camera0.calibration_matrix().inverse()
+        @ torch.linalg.inv_ex(camera0.calibration_matrix())[0]
     )
     epi_dist = sym_epipolar_distance_all(kp0, kp1, F)
 
     # Add some more unmatched points using epipolar geometry
     if epi_th is not None:
-        mask_ignore = (m0.unsqueeze(-1) == ignore) & (m1.unsqueeze(-2) == ignore)
-        epi_dist = torch.where(mask_ignore, epi_dist, inf)
+        mask_ignore = (m0.unsqueeze(-1) == IGNORE_FEATURE) & (
+            m1.unsqueeze(-2) == IGNORE_FEATURE
+        )
+        epi_dist = torch.where(mask_ignore, epi_dist, torch.inf)
         exclude0 = epi_dist.min(-1).values > neg_th
         exclude1 = epi_dist.min(-2).values > neg_th
-        m0 = torch.where((~valid0) & exclude0, ignore.new_tensor(-1), m0)
-        m1 = torch.where((~valid1) & exclude1, ignore.new_tensor(-1), m1)
+        m0 = torch.where((~valid0) & exclude0, UNMATCHED_FEATURE, m0)
+        m1 = torch.where((~valid1) & exclude1, UNMATCHED_FEATURE, m1)
 
     return {
         "assignment": positive,
@@ -142,12 +141,10 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
     # pack the indices of positive matches
     # if -1: unmatched point
     # if -2: ignore point
-    unmatched = min0.new_tensor(UNMATCHED_FEATURE)
-    ignore = min0.new_tensor(IGNORE_FEATURE)
-    m0 = torch.where(positive.any(-1), min0, ignore)
-    m1 = torch.where(positive.any(-2), min1, ignore)
-    m0 = torch.where(negative0, unmatched, m0)
-    m1 = torch.where(negative1, unmatched, m1)
+    m0 = torch.where(positive.any(-1), min0, IGNORE_FEATURE)
+    m1 = torch.where(positive.any(-2), min1, IGNORE_FEATURE)
+    m0 = torch.where(negative0, UNMATCHED_FEATURE, m0)
+    m1 = torch.where(negative1, UNMATCHED_FEATURE, m1)
 
     return {
         "assignment": positive,

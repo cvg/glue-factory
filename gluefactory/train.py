@@ -11,7 +11,6 @@ import shutil
 import signal
 from collections import defaultdict
 from pathlib import Path
-from pydoc import locate
 
 import numpy as np
 import torch
@@ -23,7 +22,14 @@ from . import __module_name__, logger, settings
 from .datasets import get_dataset
 from .eval import run_benchmark
 from .models import get_model
-from .utils.experiments import get_best_checkpoint, get_last_checkpoint, save_experiment
+from .utils.experiments import (
+    compose_config,
+    get_best_checkpoint,
+    get_last_checkpoint,
+    list_configs,
+    save_experiment,
+    tensorboard_trace_handler,
+)
 from .utils.stdout_capturing import capture_outputs
 from .utils.tensor import batch_to_device
 from .utils.tools import (
@@ -31,12 +37,11 @@ from .utils.tools import (
     MedianMetric,
     PRMetric,
     RecallMetric,
+    StepTimer,
+    collect_device_stats,
     fork_rng,
     set_seed,
 )
-
-# @TODO: Fix pbar pollution in logs
-# @TODO: add plotting during evaluation
 
 default_train_conf = {
     "seed": "???",  # training seed
@@ -59,40 +64,40 @@ default_train_conf = {
     "log_every_iter": 200,  # interval for logging the loss to the console
     "log_grad_every_iter": None,  # interval for logging gradient hists
     "test_every_epoch": 1,  # interval for evaluation on the test benchmarks
-    "keep_last_checkpoints": 10,  # keep only the last X checkpoints
+    "keep_last_checkpoints": 3,  # keep only the last X checkpoints
     "load_experiment": None,  # initialize the model from a previous experiment
     "median_metrics": [],  # add the median of some metrics
     "recall_metrics": {},  # add the recall of some metrics
-    "pr_metrics": {},  # add pr curves, set labels/predictions/mask keys
     "best_key": "loss/total",  # key to use to select the best checkpoint
     "dataset_callback_fn": None,  # data func called at the start of each epoch
     "dataset_callback_on_val": False,  # call data func on val data?
     "clip_grad": None,
-    "pr_curves": {},
-    "plot": None,
+    "pr_curves": {},  # add pr curves, set labels/predictions/mask keys
+    "num_eval_plots": 4,  # Number of plots to show during evaluation (0=skip)
+    "plot_every_iter": None,  # plot figures every X iterations
     "submodules": [],
 }
 default_train_conf = OmegaConf.create(default_train_conf)
 
 
 @torch.no_grad()
-def do_evaluation(model, loader, device, loss_fn, conf, rank, pbar=True):
+def do_evaluation(model, loader, device, conf, rank, pbar=True):
     model.eval()
     results = {}
     pr_metrics = defaultdict(PRMetric)
     figures = []
-    if conf.plot is not None:
-        n, plot_fn = conf.plot
-        plot_ids = np.random.choice(len(loader), min(len(loader), n), replace=False)
+    plot_ids = np.random.choice(
+        len(loader), min(len(loader), conf.num_eval_plots), replace=False
+    )
     for i, data in enumerate(
         tqdm(loader, desc="Evaluation", ascii=True, disable=not pbar)
     ):
         data = batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
             pred = model(data)
-            losses, metrics = loss_fn(pred, data)
-            if conf.plot is not None and i in plot_ids:
-                figures.append(locate(plot_fn)(pred, data))
+            losses, metrics = model.loss(pred, data)
+            if i in plot_ids:
+                figures.append(model.visualize(pred, data))
             # add PR curves
             for k, v in conf.pr_curves.items():
                 pr_metrics[k].update(
@@ -208,13 +213,25 @@ def write_dict_summaries(writer, name, items, step):
 
 
 def write_image_summaries(writer, name, figures, step):
+    # Stacked grayscale is not supported, convert to RGB!
+    def _add_plot(tag, fig_or_image, step):
+        if isinstance(fig_or_image, (np.ndarray, torch.Tensor)):
+            if fig_or_image.ndim in (2, 3):
+                writer.add_image(tag, fig_or_image, step)
+            else:
+                assert fig_or_image.ndim == 4
+                writer.add_images(tag, fig_or_image, step)
+        else:
+            # Figure or list[Figure]
+            writer.add_figure(tag, fig_or_image, step, close=True)
+
     if isinstance(figures, list):
         for i, figs in enumerate(figures):
             for k, fig in figs.items():
-                writer.add_figure(f"{name}/{i}_{k}", fig, step)
+                _add_plot(f"{name}/{i}_{k}", fig, step)
     else:
         for k, fig in figures.items():
-            writer.add_figure(f"{name}/{k}", fig, step)
+            _add_plot(f"{name}/{k}", fig, step)
 
 
 def training(rank, conf, output_dir, args):
@@ -256,10 +273,10 @@ def training(rank, conf, output_dir, args):
                 str(init_cp), map_location="cpu", weights_only=not settings.ALLOW_PICKLE
             )
             # load the model config of the old setup, and overwrite with current config
-            conf.model = OmegaConf.merge(
-                OmegaConf.create(init_cp["conf"]).model, conf.model
-            )
-            print(conf.model)
+            if conf.train.get("load_model_config", False):
+                conf.model = OmegaConf.merge(
+                    OmegaConf.create(init_cp["conf"]).model, conf.model
+                )
         else:
             init_cp = None
 
@@ -331,7 +348,6 @@ def training(rank, conf, output_dir, args):
     model = get_model(conf.model.name)(conf.model).to(device)
     if args.compile:
         model = torch.compile(model, mode=args.compile)
-    loss_fn = model.loss
     if init_cp is not None:
         model.load_state_dict(init_cp["model"], strict=False)
     if args.distributed:
@@ -343,6 +359,10 @@ def training(rank, conf, output_dir, args):
     torch.backends.cudnn.benchmark = True
     if args.detect_anomaly:
         torch.autograd.set_detect_anomaly(True)
+
+    if args.debug_sync:
+        torch.cuda.set_sync_debug_mode(args.debug_sync)
+        logger.info(f"Debug sync mode set to {args.debug_sync}")
 
     optimizer_fn = {
         "sgd": torch.optim.SGD,
@@ -386,22 +406,24 @@ def training(rank, conf, output_dir, args):
             "Starting training with configuration:\n%s", OmegaConf.to_yaml(conf)
         )
 
-    def trace_handler(p):
-        # torch.profiler.tensorboard_trace_handler(str(output_dir))
-        output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=10)
-        print(output)
-        p.export_chrome_trace("trace_" + str(p.step_num) + ".json")
-        p.export_stacks("/tmp/profiler_stacks.txt", "self_cuda_time_total")
-
     if args.profile:
         prof = torch.profiler.profile(
-            schedule=torch.profiler.schedule(wait=1, warmup=1, active=1, repeat=1),
-            on_trace_ready=torch.profiler.tensorboard_trace_handler(str(output_dir)),
-            record_shapes=True,
-            profile_memory=True,
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
+            schedule=torch.profiler.schedule(
+                wait=5, warmup=1, active=args.profile, repeat=1, skip_first=10
+            ),
+            on_trace_ready=tensorboard_trace_handler(
+                str(output_dir), use_gzip=not args.store_raw_trace
+            ),
+            record_shapes=False,
+            profile_memory=False,
             with_stack=True,
         )
-        prof.__enter__()
+
+    step_timer = StepTimer()
     while epoch < conf.train.epochs and not stop:
         if rank == 0:
             logger.info(f"Starting epoch {epoch}")
@@ -412,20 +434,20 @@ def training(rank, conf, output_dir, args):
             and epoch % conf.train.test_every_epoch == 0
             and args.run_benchmarks
         ):
-            for bname, eval_conf in conf.get("benchmarks", {}).items():
-                logger.info(f"Running eval on {bname}")
+            for benchmark_name, eval_conf in conf.get("benchmarks", {}).items():
+                logger.info(f"Running eval on {benchmark_name}")
                 summaries, figures, _ = run_benchmark(
-                    bname,
+                    benchmark_name,
                     eval_conf,
-                    settings.EVAL_PATH / bname / args.experiment / str(epoch),
+                    output_dir / str(epoch) / benchmark_name,
                     model.eval(),
                 )
                 str_summaries = [
                     f"{k} {v:.3E}" for k, v in summaries.items() if isinstance(v, float)
                 ]
-                logger.info(f'[{bname}] {{{", ".join(str_summaries)}}}')
-                write_dict_summaries(writer, f"test/{bname}", summaries, epoch)
-                write_image_summaries(writer, f"figures/{bname}", figures, epoch)
+                logger.info(f'[{benchmark_name}] {{{", ".join(str_summaries)}}}')
+                write_dict_summaries(writer, f"test_{benchmark_name}", summaries, epoch)
+                write_image_summaries(writer, f"test_{benchmark_name}", figures, epoch)
                 del summaries, figures
 
         # set the seed
@@ -453,13 +475,19 @@ def training(rank, conf, output_dir, args):
                     getattr(loader.dataset, conf.train.dataset_callback_fn)(
                         conf.train.seed + epoch
                     )
+        step_timer.reset()
+        if args.profile:
+            prof.start()
+
+        train_loss_metrics = defaultdict(AverageMetric)
         for it, data in enumerate(train_loader):
+            step_timer.measure("data")
             tot_it = (len(train_loader) * epoch + it) * (
                 args.n_gpus if args.distributed else 1
             )
             tot_n_samples = tot_it
             if not args.log_it:
-                # We normalize the x-axis of tensorflow to num samples!
+                # We normalize the x-axis of tensorboard to num samples!
                 tot_n_samples *= train_loader.batch_size
 
             model.train()
@@ -471,11 +499,23 @@ def training(rank, conf, output_dir, args):
                 dtype=mp_dtype,
             ):
                 data = batch_to_device(data, device, non_blocking=True)
+                step_timer.measure("to_device")
                 pred = model(data)
-                losses, _ = loss_fn(pred, data)
+                step_timer.measure("forward")
+                losses, metrics = model.loss(pred, data)
                 loss = torch.mean(losses["total"])
+                loss_metrics = {
+                    **metrics,
+                    **{"loss/" + k: v for k, v in losses.items()},
+                }
+                for k, v in loss_metrics.items():
+                    if args.distributed:
+                        torch.distributed.all_reduce(v)
+                        v /= args.n_gpus
+                    train_loss_metrics[k].update(v)
+                step_timer.measure("loss_fn")
             if torch.isnan(loss).any():
-                print(f"Detected NAN, skipping iteration {it}")
+                logger.warning(f"Detected NAN, skipping iteration {it}")
                 del pred, data, loss, losses
                 continue
 
@@ -488,13 +528,14 @@ def training(rank, conf, output_dir, args):
                 do_backward = do_backward > 0
             if do_backward:
                 scaler.scale(loss).backward()
+                step_timer.measure("backward")
                 if args.detect_anomaly:
                     # Check for params without any gradient which causes
                     # problems in distributed training with checkpointing
                     detected_anomaly = False
                     for name, param in model.named_parameters():
                         if param.grad is None and param.requires_grad:
-                            print(f"param {name} has no gradient.")
+                            logger.warning(f"param {name} has no gradient.")
                             detected_anomaly = True
                     if detected_anomaly:
                         raise RuntimeError("Detected anomaly in training.")
@@ -513,6 +554,7 @@ def training(rank, conf, output_dir, args):
                 else:
                     scaler.step(optimizer)
                     scaler.update()
+                step_timer.measure("step")
                 if not conf.train.lr_schedule.on_epoch:
                     lr_scheduler.step()
             else:
@@ -522,27 +564,82 @@ def training(rank, conf, output_dir, args):
             if args.profile:
                 prof.step()
 
-            if it % conf.train.log_every_iter == 0:
-                for k in sorted(losses.keys()):
-                    if args.distributed:
-                        losses[k] = losses[k].sum(-1)
-                        torch.distributed.reduce(losses[k], dst=0)
-                        losses[k] /= train_loader.batch_size * args.n_gpus
-                    losses[k] = torch.mean(losses[k], -1)
-                    losses[k] = losses[k].item()
-                if rank == 0:
-                    str_losses = [f"{k} {v:.3E}" for k, v in losses.items()]
+            if args.record_memory:
+                offset = 2  # Avoid recording memory in first step
+                if it == offset:
                     logger.info(
-                        "[E {} | it {}] loss {{{}}}".format(
-                            epoch, it, ", ".join(str_losses)
-                        )
+                        f"Recording memory usage over {args.record_memory} iterations "
+                        f"(skip first {offset})."
                     )
-                    write_dict_summaries(writer, "training/", losses, tot_n_samples)
-                    writer.add_scalar(
-                        "training/lr", optimizer.param_groups[0]["lr"], tot_n_samples
+                    torch.cuda.memory._record_memory_history(enabled="all")
+                elif it == offset + args.record_memory:
+                    # Record memory usage every args.record_memory iterations
+                    snapshot_path = (
+                        output_dir
+                        / f"memory_snapshot_{args.experiment.replace('/', '-')}.json"
                     )
-                    writer.add_scalar("training/epoch", epoch, tot_n_samples)
+                    logger.info(f"Dumping memory snapshot to {snapshot_path}.")
+                    torch.cuda.memory._dump_snapshot(snapshot_path)
+                    logger.info("Stop tracking memory usage.")
 
+            if (it % conf.train.log_every_iter == 0) and rank == 0:
+                loss_metrics = {k: v.compute() for k, v in train_loss_metrics.items()}
+                str_loss_metrics = [f"{k} {v:.3E}" for k, v in loss_metrics.items()]
+                # Write training losses
+                logger.info(
+                    "[E {} | it {}] loss {{{}}}".format(
+                        epoch, it, ", ".join(str_loss_metrics)
+                    )
+                )
+                write_dict_summaries(writer, "training", loss_metrics, tot_n_samples)
+                writer.add_scalar(
+                    "training/lr", optimizer.param_groups[0]["lr"], tot_n_samples
+                )
+                # Reset training loss aggregators
+                train_loss_metrics.clear()
+
+                # Write Epoch
+                writer.add_scalar("training/epoch", epoch, tot_n_samples)
+
+                step_duration, section_times = step_timer.compute()
+                writer.add_scalar("step/total", step_duration, tot_n_samples)
+                writer.add_scalar("step/_per_sec", 1 / step_duration, tot_n_samples)
+                writer.add_scalar(
+                    "step/_samples_per_sec",
+                    1 / step_duration * train_loader.batch_size * args.n_gpus,
+                    tot_n_samples,
+                )
+                # Write section timings and fractions of step duration.
+                for section_name, duration in section_times.items():
+                    writer.add_scalar(f"step/{section_name}", duration, tot_n_samples)
+
+                writer.add_scalar(
+                    "step/io_fraction",
+                    (section_times["data"] + section_times["to_device"])
+                    / step_duration,
+                    tot_n_samples,
+                )
+
+                writer.add_figure(
+                    "step/sections",
+                    step_timer.plot(),
+                    tot_n_samples,
+                    close=True,
+                )
+                # Reset the stats after logging
+                step_timer.stats.clear()
+
+                # Log memory stats
+                if torch.cuda.is_available():
+                    device_stats = collect_device_stats()
+                    write_dict_summaries(writer, "memory", device_stats, tot_n_samples)
+
+            if conf.train.plot_every_iter is not None:
+                if it % conf.train.plot_every_iter == 0 and rank == 0:
+                    figures = model.visualize(pred, data)
+                    write_image_summaries(writer, "training", figures, tot_n_samples)
+
+            # Log gradients of the model. Useful for debugging.
             if conf.train.log_grad_every_iter is not None:
                 if it % conf.train.log_grad_every_iter == 0:
                     grad_txt = ""
@@ -572,7 +669,6 @@ def training(rank, conf, output_dir, args):
                         model,
                         val_loader,
                         device,
-                        loss_fn,
                         conf.train,
                         rank,
                         pbar=(rank == 0),
@@ -585,9 +681,9 @@ def training(rank, conf, output_dir, args):
                         if isinstance(v, float)
                     ]
                     logger.info(f'[Validation] {{{", ".join(str_results)}}}')
-                    write_dict_summaries(writer, "val", results, tot_n_samples)
-                    write_dict_summaries(writer, "val", pr_metrics, tot_n_samples)
-                    write_image_summaries(writer, "figures", figures, tot_n_samples)
+                    write_dict_summaries(writer, "eval", results, tot_n_samples)
+                    write_dict_summaries(writer, "eval", pr_metrics, tot_n_samples)
+                    write_image_summaries(writer, "eval", figures, tot_n_samples)
                     # @TODO: optional always save checkpoint
                     if results[conf.train.best_key] < best_eval:
                         best_eval = results[conf.train.best_key]
@@ -608,13 +704,13 @@ def training(rank, conf, output_dir, args):
                         logger.info(f"New best val: {conf.train.best_key}={best_eval}")
                 torch.cuda.empty_cache()  # should be cleared at the first iter
 
+            # Handle checkpointing.
             if (tot_it % conf.train.save_every_iter == 0 and tot_it > 0) and rank == 0:
                 if results is None:
                     results, _, _ = do_evaluation(
                         model,
                         val_loader,
                         device,
-                        loss_fn,
                         conf.train,
                         rank,
                         pbar=(rank == 0),
@@ -635,7 +731,10 @@ def training(rank, conf, output_dir, args):
                 )
             if stop:
                 break
+            # Reset the step timer for the next iteration
+            step_timer.reset()
 
+        # Epoch checkpointing: REMOVE
         if rank == 0:
             best_eval = save_experiment(
                 model,
@@ -672,7 +771,12 @@ def main_worker(rank, conf, output_dir, args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("experiment", type=str)
-    parser.add_argument("--conf", type=str)
+    default_config_names = list_configs(Path(__file__).parent / "configs")
+    parser.add_argument(
+        "--conf",
+        type=str,
+        help=f"Configuration path (.yaml) or one of: {default_config_names}",
+    )
     parser.add_argument(
         "--mixed_precision",
         "--mp",
@@ -690,28 +794,95 @@ if __name__ == "__main__":
         "--cleanup_interval",
         default=120,  # Cleanup log files every 120 seconds.
         type=int,
+        help="Interval in seconds to cleanup log files",
     )
-    parser.add_argument("--overfit", action="store_true")
-    parser.add_argument("--restore", action="store_true")
-    parser.add_argument("--distributed", action="store_true")
-    parser.add_argument("--profile", action="store_true")
-    parser.add_argument("--print_arch", "--pa", action="store_true")
-    parser.add_argument("--detect_anomaly", "--da", action="store_true")
-    parser.add_argument("--log_it", "--log_it", action="store_true")
-    parser.add_argument("--no_eval_0", action="store_true")
-    parser.add_argument("--run_benchmarks", action="store_true")
+    parser.add_argument(
+        "--overfit", action="store_true", help="Overfit on a single batch"
+    )
+    parser.add_argument(
+        "--restore", action="store_true", help="Restore from previous experiment"
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing experiment directory",
+    )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Delete the output directory if it exists",
+    )
+    parser.add_argument(
+        "--distributed", action="store_true", help="Run in distributed mode"
+    )
+    parser.add_argument(
+        "--profile",
+        type=int,
+        default=None,
+        help="Profile the training with PyTorch profiler (number of steps to profile)",
+    )
+    parser.add_argument(
+        "--store_raw_trace",
+        action="store_true",
+        help="Save raw trace files (json) instead of compressed ones (gzip)",
+    )
+    parser.add_argument(
+        "--record_memory",
+        type=int,
+        default=None,
+        help="Record memory usage during training (number of steps to record)",
+    )
+    parser.add_argument(
+        "--print_arch", "--pa", action="store_true", help="Print model architecture"
+    )
+    parser.add_argument(
+        "--detect_anomaly",
+        "--da",
+        action="store_true",
+        help="Detect anomalies in gradients",
+    )
+
+    parser.add_argument(
+        "--debug_sync",
+        type=int,
+        default=0,
+        help="Debug ",
+    )
+    parser.add_argument(
+        "--log_it",
+        "--log_it",
+        action="store_true",
+        help="Log tensorboard on iteration (default is num_samples)",
+    )
+    parser.add_argument(
+        "--no_eval_0", action="store_true", help="Disable evaluation on the first epoch"
+    )
+    parser.add_argument("--run_benchmarks", action="store_true", help="Run benchmarks")
+    parser.add_argument("--strict", action="store_true", help="Strict config merge")
     parser.add_argument("dotlist", nargs="*")
     args = parser.parse_intermixed_args()
 
     logger.info(f"Starting experiment {args.experiment}")
     output_dir = Path(settings.TRAINING_PATH, args.experiment)
-    output_dir.mkdir(exist_ok=True, parents=True)
+    if output_dir.exists() and not (args.restore or args.overwrite or args.clean):
+        raise FileExistsError(
+            f"Output directory {output_dir} already exists. "
+            "Use --restore to continue training or --overwrite to delete it."
+        )
+    if output_dir.exists() and args.clean:
+        logger.info(f"Cleaning output directory {output_dir}")
+        shutil.rmtree(output_dir, ignore_errors=True)
+    output_dir.mkdir(exist_ok=args.overwrite or args.clean, parents=True)
+    logger.info(f"Output directory: {output_dir}")
 
     conf = OmegaConf.from_cli(args.dotlist)
+    OmegaConf.save(conf, str(output_dir / "cli_config.yaml"))
     if args.conf:
-        yaml_conf = OmegaConf.load(args.conf)
-        OmegaConf.resolve(yaml_conf)
-        conf = OmegaConf.merge(yaml_conf, conf)
+        conf_path, raw_conf = compose_config(args.conf)
+        OmegaConf.set_struct(raw_conf, args.strict)
+        conf = OmegaConf.merge(raw_conf, conf)
+        # Copy a more readable config file to the output dir
+        shutil.copy(conf_path, output_dir / "raw_config.yaml")
     elif args.restore:
         restore_conf = OmegaConf.load(output_dir / "config.yaml")
         conf = OmegaConf.merge(restore_conf, conf)
@@ -719,6 +890,9 @@ if __name__ == "__main__":
         if conf.train.seed is None:
             conf.train.seed = torch.initial_seed() & (2**32 - 1)
         OmegaConf.save(conf, str(output_dir / "config.yaml"))
+
+    if conf.train.get("overfit") is not None:
+        args.overfit = conf.train.overfit
 
     # copy gluefactory and submodule into output dir
     for module in conf.train.get("submodules", []) + [__module_name__]:
@@ -733,4 +907,5 @@ if __name__ == "__main__":
             main_worker, nprocs=args.n_gpus, args=(conf, output_dir, args)
         )
     else:
+        args.n_gpus = 1
         main_worker(0, conf, output_dir, args)

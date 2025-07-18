@@ -50,7 +50,7 @@ class MegaDepth1500Pipeline(EvalPipeline):
         },
         "eval": {
             "estimator": "poselib",
-            "ransac_th": 1.0,  # -1 runs a bunch of thresholds and selects the best
+            "ransac_th": -1.0,  # -1 runs a bunch of thresholds and selects the best
         },
     }
 
@@ -183,7 +183,7 @@ if __name__ == "__main__":
     )
 
     experiment_dir = output_dir / name
-    experiment_dir.mkdir(exist_ok=True)
+    experiment_dir.mkdir(exist_ok=True, parents=True)
 
     pipeline = MegaDepth1500Pipeline(conf)
     s, f, r = pipeline.run(

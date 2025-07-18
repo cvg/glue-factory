@@ -127,11 +127,11 @@ class BaseAugmentation(object):
             self.compose = A.Compose
         if self.conf.dtype == "uint8":
             self.dtype = np.uint8
-            self.preprocess = A.FromFloat(always_apply=True, dtype="uint8")
-            self.postprocess = A.ToFloat(always_apply=True)
+            self.preprocess = A.FromFloat(dtype="uint8")
+            self.postprocess = A.ToFloat()
         elif self.conf.dtype == "float32":
             self.dtype = np.float32
-            self.preprocess = A.ToFloat(always_apply=True)
+            self.preprocess = A.ToFloat()
             self.postprocess = IdentityTransform()
         else:
             raise ValueError(f"Unsupported dtype {self.conf.dtype}")

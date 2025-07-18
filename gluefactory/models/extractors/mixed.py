@@ -40,12 +40,15 @@ class MixedExtractor(BaseModel):
 
         if self.conf.interpolate_descriptors_from:
             h, w = data["image"].shape[-2:]
-            kpts = pred["keypoints"]
-            pts = (kpts / kpts.new_tensor([[w, h]]) * 2 - 1)[:, None]
+            kpts = pred["keypoints"].clone()
+            kpts[..., 0] = kpts[..., 0] * 2 / w - 1
+            kpts[..., 1] = kpts[..., 1] * 2 / h - 1
+
+            kpts = kpts[:, None]
             pred["descriptors"] = (
                 F.grid_sample(
                     pred[self.conf.interpolate_descriptors_from],
-                    pts,
+                    kpts,
                     align_corners=False,
                     mode="bilinear",
                 )

@@ -1,0 +1,10 @@
+name: homographies
+data_dir: revisitop1m
+train_size: 150000
+val_size: 2000
+num_workers: 14
+homography:
+    difficulty: 0.7
+    max_angle: 45
+photometric:
+    name: lg

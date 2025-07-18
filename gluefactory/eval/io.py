@@ -1,35 +1,15 @@
 import argparse
+import logging
 from pathlib import Path
 from pprint import pprint
-from typing import Optional
 
-import pkg_resources
 from omegaconf import OmegaConf
 
 from ..models import get_model
 from ..settings import TRAINING_PATH
-from ..utils.experiments import load_experiment
+from ..utils.experiments import compose_config, load_experiment
 
-
-def parse_config_path(name_or_path: Optional[str], defaults: str) -> Path:
-    default_configs = {}
-    for c in pkg_resources.resource_listdir("gluefactory", str(defaults)):
-        if c.endswith(".yaml"):
-            default_configs[Path(c).stem] = Path(
-                pkg_resources.resource_filename("gluefactory", defaults + c)
-            )
-    if name_or_path is None:
-        return None
-    if name_or_path in default_configs:
-        return default_configs[name_or_path]
-    path = Path(name_or_path)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Cannot find the config file: {name_or_path}. "
-            f"Not in the default configs {list(default_configs.keys())} "
-            "and not an existing path."
-        )
-    return Path(path)
+logger = logging.getLogger(__name__)
 
 
 def extract_benchmark_conf(conf, benchmark):
@@ -47,22 +27,25 @@ def extract_benchmark_conf(conf, benchmark):
 def parse_eval_args(benchmark, args, configs_path, default=None):
     conf = {"data": {}, "model": {}, "eval": {}}
     if args.conf:
-        conf_path = parse_config_path(args.conf, configs_path)
-        custom_conf = OmegaConf.load(conf_path)
-        OmegaConf.resolve(custom_conf)
-        conf = extract_benchmark_conf(OmegaConf.merge(conf, custom_conf), benchmark)
-        args.tag = (
-            args.tag if args.tag is not None else conf_path.name.replace(".yaml", "")
+        conf_path, custom_conf = compose_config(
+            args.conf, default_config_dir=configs_path
         )
+        conf = extract_benchmark_conf(OmegaConf.merge(conf, custom_conf), benchmark)
+        args.tag = args.tag if args.tag is not None else conf_path.stem
 
     cli_conf = OmegaConf.from_cli(args.dotlist)
     conf = OmegaConf.merge(conf, cli_conf)
     conf.checkpoint = args.checkpoint if args.checkpoint else conf.get("checkpoint")
 
+    checkpoint_name = conf.checkpoint
     if conf.checkpoint and not conf.checkpoint.endswith(".tar"):
-        checkpoint_conf = OmegaConf.load(
-            TRAINING_PATH / conf.checkpoint / "config.yaml"
-        )
+        if Path(conf.checkpoint).exists():
+            checkpoint_dir = Path(conf.checkpoint).absolute()
+            if checkpoint_dir.is_relative_to(TRAINING_PATH):
+                checkpoint_name = str(checkpoint_dir.relative_to(TRAINING_PATH))
+        else:
+            checkpoint_dir = TRAINING_PATH / conf.checkpoint
+        checkpoint_conf = OmegaConf.load(checkpoint_dir / "config.yaml")
         conf = OmegaConf.merge(extract_benchmark_conf(checkpoint_conf, benchmark), conf)
 
     if default:
@@ -70,17 +53,17 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
 
     if args.tag:
         name = args.tag
-    elif args.conf and conf.checkpoint:
-        name = f"{args.conf}_{conf.checkpoint}"
+    elif args.conf and checkpoint_name:
+        name = f"{args.conf}_{checkpoint_name}"
     elif args.conf:
         name = args.conf
-    elif conf.checkpoint:
-        name = conf.checkpoint
+    elif checkpoint_name:
+        name = checkpoint_name
     if len(args.dotlist) > 0 and not args.tag:
         name = name + "_" + ":".join(args.dotlist)
-    print("Running benchmark:", benchmark)
-    print("Experiment tag:", name)
-    print("Config:")
+    logger.info("Running benchmark: %s", benchmark)
+    logger.info("Experiment tag: %s", name)
+    logger.info("Config:")
     pprint(OmegaConf.to_container(conf))
     return name, conf
 

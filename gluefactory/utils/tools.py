@@ -4,6 +4,7 @@ Various handy Python and PyTorch utils.
 Author: Paul-Edouard Sarlin (skydes)
 """
 
+import collections
 import os
 import random
 import time
@@ -21,8 +22,7 @@ class AverageMetric:
 
     def update(self, tensor):
         assert tensor.dim() == 1
-        tensor = tensor[~torch.isnan(tensor)]
-        self._sum += tensor.sum().item()
+        self._sum += torch.nansum(tensor).item()
         self._num_examples += len(tensor)
 
     def compute(self):
@@ -188,6 +188,115 @@ class Timer(object):
         self.duration = time.time() - self.tstart
         if self.name is not None:
             print("[%s] Elapsed: %s" % (self.name, self.duration))
+
+
+class RunningStats:
+    """
+    A numerically stable running statistics tracker using Welford's algorithm.
+    Avoids overflow and maintains precision for large datasets.
+    """
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        """Reset all statistics to initial state."""
+        self.count = 0
+        self.mean = 0.0
+        self.M2 = 0.0  # Sum of squares of deviations from mean
+
+    def update(self, val: float) -> None:
+        # Welford's online algorithm
+        self.count += 1
+        delta = val - self.mean
+        self.mean += delta / self.count
+        delta2 = val - self.mean
+        self.M2 += delta * delta2
+
+    def compute(self) -> tuple[float, float]:
+        """Compute the mean and standard deviation."""
+        if self.count == 0:
+            return 0.0, 0.0
+        elif self.count == 1:
+            return self.mean, 0.0
+        else:
+            variance = self.M2 / self.count  # Population variance
+            std = np.sqrt(variance)
+            return self.mean, std
+
+
+class StepTimer:
+    def __init__(self):
+        self.stats = collections.defaultdict(RunningStats)
+        self.start = None
+
+    def reset(self):
+        """Reset the timer for a specific name."""
+        self.start = time.time()
+
+    def measure(self, name: str):
+        """Measure the time taken for a specific operation."""
+        elapsed = time.time() - self.start
+        self.stats[name].update(elapsed)
+        self.start = time.time()
+
+    def compute(self) -> tuple[float, dict[str, float]]:
+        """Compute the average time for each operation (in seconds)."""
+        avg_step_times = {k: v.compute()[0] for k, v in self.stats.items()}
+        total_time = sum(avg_step_times.values())
+        return total_time, avg_step_times
+
+    def plot(self):
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots()
+        total_time = 0
+        for name, stats in self.stats.items():
+            section_time, section_var = stats.compute()
+            ax.bar(name, section_time * 1000, label=name, yerr=section_var * 1000)
+            total_time += section_time
+        ax.set_ylabel("Duration (ms)")
+        ax.set_title(
+            f"Step Time Composition "
+            f"(total: {total_time:.2f}s = {1 / total_time:.2f} steps/s)"
+        )
+        return fig
+
+
+def collect_device_stats() -> dict[str, float]:
+    """Collect device usage statistics."""
+
+    def _per_device_stats(device: torch.device | None = None) -> dict[str, float]:
+        free, total = torch.cuda.mem_get_info(device)
+        used = total - free
+        bytes_stats = {
+            # "z_allocated": torch.cuda.memory_allocated(device),
+            # "z_reserved": torch.cuda.memory_reserved(device),
+            "z_allocated_peak": torch.cuda.max_memory_allocated(device),
+            "z_reserved_peak": torch.cuda.max_memory_reserved(device),
+            "used": used,
+            "total": total,
+        }
+
+        device_stats = {k: v / 10**9 for k, v in bytes_stats.items()}
+        device_stats["utilization"] = device_stats["used"] / device_stats["total"]
+        # Reset peak memory stats for next cycle
+        torch.cuda.reset_peak_memory_stats(device)
+        return device_stats
+
+    num_devices = torch.cuda.device_count()
+    all_devices = [torch.cuda.device(i) for i in range(num_devices)]
+    all_device_stats = [_per_device_stats(d) for d in all_devices]
+    all_device_stats = {
+        k: [pds[k] for pds in all_device_stats] for k in all_device_stats[0]
+    }
+    device_stats = {k: np.mean(v).item() for k, v in all_device_stats.items()}
+    for i in range(num_devices):
+        device_stats[f"utilization_{i}"] = all_device_stats["utilization"][i]
+    # Assumes all devices have the same memory stats.
+    device_stats["global_total"] = sum(all_device_stats["total"])
+    device_stats["global_used"] = sum(all_device_stats["used"])
+    return device_stats
 
 
 def get_class(mod_path, BaseClass):
