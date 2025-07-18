@@ -11,6 +11,7 @@ import numpy as np
 import PIL.Image
 import torch
 from omegaconf import OmegaConf
+from tqdm import tqdm
 
 from ..geometry.wrappers import Camera, Pose
 from ..models.cache_loader import CacheLoader
@@ -153,6 +154,7 @@ class _PairDataset(torch.utils.data.Dataset):
             self.intrinsics[scene] = info["intrinsics"]
             self.scenes.append(scene)
 
+        self.items = []
         if load_sample:
             self.sample_new_items(conf.seed)
             assert len(self.items) > 0
@@ -198,7 +200,11 @@ class _PairDataset(torch.utils.data.Dataset):
                 ids = [(scene, i) for i in ids]
                 self.items.extend(ids)
         else:
-            for scene in self.scenes:
+            for scene in tqdm(
+                self.scenes,
+                desc="Sampling pairs",
+                enabled=self.conf.get("use_pbar", True),
+            ):
                 path = self.info_dir / (scene + ".npz")
                 assert path.exists(), path
                 info = np.load(str(path), allow_pickle=True)
