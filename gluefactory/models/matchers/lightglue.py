@@ -5,10 +5,10 @@ from typing import Callable, List, Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
-from omegaconf import OmegaConf
 from torch import nn
 
 from ...settings import DATA_PATH
+from ..base_model import BaseModel
 from ..utils.losses import NLLLoss
 from ..utils.metrics import matcher_metrics
 
@@ -308,7 +308,7 @@ def filter_matches(scores: torch.Tensor, th: float):
     return m0, m1, mscores0, mscores1
 
 
-class LightGlue(nn.Module):
+class LightGlue(BaseModel):
     default_conf = {
         "name": "lightglue",  # just for interfacing
         "input_dim": 256,  # input descriptor dimension (autoselected from weights)
@@ -335,9 +335,7 @@ class LightGlue(nn.Module):
 
     url = "https://github.com/cvg/LightGlue/releases/download/{}/{}_lightglue.pth"
 
-    def __init__(self, conf) -> None:
-        super().__init__()
-        self.conf = conf = OmegaConf.merge(self.default_conf, conf)
+    def _init(self, conf) -> None:
         if conf.input_dim != conf.descriptor_dim:
             self.input_proj = nn.Linear(conf.input_dim, conf.descriptor_dim, bias=True)
         else:
@@ -408,10 +406,7 @@ class LightGlue(nn.Module):
                 self.transformers[i], mode=mode, fullgraph=True
             )
 
-    def forward(self, data: dict) -> dict:
-        for key in self.required_data_keys:
-            assert key in data, f"Missing key {key} in data"
-
+    def _forward(self, data: dict) -> dict:
         kpts0, kpts1 = data["keypoints0"], data["keypoints1"]
         b, m, _ = kpts0.shape
         b, n, _ = kpts1.shape
@@ -634,6 +629,3 @@ class LightGlue(nn.Module):
             data,
             **kwargs,
         )
-
-
-__main_model__ = LightGlue
