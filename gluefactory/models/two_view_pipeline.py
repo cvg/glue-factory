@@ -120,3 +120,11 @@ class TwoViewPipeline(BaseModel):
                 metrics = {**metrics, **metrics_}
                 total = losses_["total"] + total
         return {**losses, "total": total}, metrics
+
+    def visualize(self, pred, data, **kwargs):
+        """Visualize the matches."""
+        figures = {}
+        for k in self.components:
+            if self.conf[k].name and self.conf[k].get("visualize", True):
+                figures.update(getattr(self, k).visualize(pred, data, **kwargs))
+        return figures

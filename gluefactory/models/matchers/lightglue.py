@@ -625,5 +625,15 @@ class LightGlue(nn.Module):
             metrics = {}
         return losses, metrics
 
+    def visualize(self, pred, data, **kwargs):
+        """visualize matches"""
+        from ...visualization.visualize_batch import make_match_figures
+
+        return make_match_figures(
+            pred,
+            data,
+            **kwargs,
+        )
+
 
 __main_model__ = LightGlue

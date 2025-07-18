@@ -97,3 +97,15 @@ class TripletPipeline(TwoViewPipeline):
                         metrics[k] = v
 
         return losses, metrics
+
+    def visualize(self, pred, data, **kwargs):
+        """Visualize the matches."""
+        figures = {}
+        for idx in ["0to1", "0to2", "1to2"]:
+            data_i = get_twoview(data, idx)
+            pred_i = pred[idx]
+            for k in self.components:
+                if self.conf[k].name and self.conf[k].get("visualize", True):
+                    vdict = getattr(self, k).visualize(pred_i, data_i, **kwargs)
+                    figures.update({k + "_" + idx: v for k, v in vdict.items()})
+        return figures

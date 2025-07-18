@@ -11,7 +11,6 @@ import shutil
 import signal
 from collections import defaultdict
 from pathlib import Path
-from pydoc import locate
 
 import numpy as np
 import torch
@@ -44,8 +43,6 @@ from .utils.tools import (
     set_seed,
 )
 
-# @TODO: add plotting during evaluation
-
 default_train_conf = {
     "seed": "???",  # training seed
     "epochs": 1,  # number of epochs
@@ -76,7 +73,8 @@ default_train_conf = {
     "dataset_callback_on_val": False,  # call data func on val data?
     "clip_grad": None,
     "pr_curves": {},  # add pr curves, set labels/predictions/mask keys
-    "plot": None,
+    "num_eval_plots": 4,  # Number of plots to show during evaluation (0=skip)
+    "plot_every_iter": None,  # plot figures every X iterations
     "submodules": [],
 }
 default_train_conf = OmegaConf.create(default_train_conf)
@@ -88,9 +86,9 @@ def do_evaluation(model, loader, device, conf, rank, pbar=True):
     results = {}
     pr_metrics = defaultdict(PRMetric)
     figures = []
-    if conf.plot is not None:
-        n, plot_fn = conf.plot
-        plot_ids = np.random.choice(len(loader), min(len(loader), n), replace=False)
+    plot_ids = np.random.choice(
+        len(loader), min(len(loader), conf.num_eval_plots), replace=False
+    )
     for i, data in enumerate(
         tqdm(loader, desc="Evaluation", ascii=True, disable=not pbar)
     ):
@@ -98,8 +96,8 @@ def do_evaluation(model, loader, device, conf, rank, pbar=True):
         with torch.no_grad():
             pred = model(data)
             losses, metrics = model.loss(pred, data)
-            if conf.plot is not None and i in plot_ids:
-                figures.append(locate(plot_fn)(pred, data))
+            if i in plot_ids:
+                figures.append(model.visualize(pred, data))
             # add PR curves
             for k, v in conf.pr_curves.items():
                 pr_metrics[k].update(
@@ -624,6 +622,11 @@ def training(rank, conf, output_dir, args):
                     device_stats = collect_device_stats()
                     write_dict_summaries(writer, "memory", device_stats, tot_n_samples)
 
+            if conf.train.plot_every_iter is not None:
+                if it % conf.train.plot_every_iter == 0 and rank == 0:
+                    figures = model.visualize(pred, data)
+                    write_image_summaries(writer, "training", figures, tot_n_samples)
+
             # Log gradients of the model. Useful for debugging.
             if conf.train.log_grad_every_iter is not None:
                 if it % conf.train.log_grad_every_iter == 0:
@@ -856,7 +859,7 @@ if __name__ == "__main__":
         )
     if output_dir.exists() and args.clean:
         logger.info(f"Cleaning output directory {output_dir}")
-        shutil.rmtree(output_dir)
+        shutil.rmtree(output_dir, ignore_errors=True)
     output_dir.mkdir(exist_ok=args.overwrite or args.clean, parents=True)
     logger.info(f"Output directory: {output_dir}")
 

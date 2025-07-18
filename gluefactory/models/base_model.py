@@ -56,6 +56,7 @@ class BaseModel(nn.Module, metaclass=MetaModel):
         "trainable": True,  # if false: do not optimize this model parameters
         "freeze_batch_normalization": False,  # use test-time statistics
         "timeit": False,  # time forward pass
+        "visualize": True,  # visualize model predictions
     }
     required_data_keys = []
     strict_conf = False
@@ -127,6 +128,10 @@ class BaseModel(nn.Module, metaclass=MetaModel):
     def loss(self, pred, data):
         """To be implemented by the child class."""
         raise NotImplementedError
+
+    def visualize(self, pred, data, **kwargs):
+        """To be implemented by the child class."""
+        return {}
 
     def load_state_dict(self, *args, **kwargs):
         """Load the state dict of the model, and set the model to initialized."""
