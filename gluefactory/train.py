@@ -793,6 +793,11 @@ if __name__ == "__main__":
         help="Overwrite existing experiment directory",
     )
     parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Delete the output directory if it exists",
+    )
+    parser.add_argument(
         "--distributed", action="store_true", help="Run in distributed mode"
     )
     parser.add_argument(
@@ -844,12 +849,15 @@ if __name__ == "__main__":
 
     logger.info(f"Starting experiment {args.experiment}")
     output_dir = Path(settings.TRAINING_PATH, args.experiment)
-    if output_dir.exists() and not (args.restore or args.overwrite):
+    if output_dir.exists() and not (args.restore or args.overwrite or args.clean):
         raise FileExistsError(
             f"Output directory {output_dir} already exists. "
             "Use --restore to continue training or --overwrite to delete it."
         )
-    output_dir.mkdir(exist_ok=args.overwrite, parents=True)
+    if output_dir.exists() and args.clean:
+        logger.info(f"Cleaning output directory {output_dir}")
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(exist_ok=args.overwrite or args.clean, parents=True)
     logger.info(f"Output directory: {output_dir}")
 
     conf = OmegaConf.from_cli(args.dotlist)
