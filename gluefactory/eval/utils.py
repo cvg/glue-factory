@@ -2,11 +2,12 @@ import numpy as np
 import torch
 from kornia.geometry.homography import find_homography_dlt
 
+from ..geometry.depth import symmetric_reprojection_error
 from ..geometry.epipolar import generalized_epi_dist, relative_pose_error
-from ..geometry.gt_generation import IGNORE_FEATURE
+from ..geometry.gt_generation import IGNORE_FEATURE, gt_matches_from_pose_depth
 from ..geometry.homography import homography_corner_error, sym_homography_error
 from ..robust_estimators import load_estimator
-from ..utils.tensor import index_batch
+from ..utils.tensor import batch_to_device, index_batch
 from ..utils.tools import AUCMetric
 
 
@@ -59,13 +60,77 @@ def eval_matches_epipolar(data: dict, pred: dict) -> dict:
         False,
         essential=True,
     )[0]
-    results["epi_prec@1e-4"] = (n_epi_err < 1e-4).float().mean()
-    results["epi_prec@5e-4"] = (n_epi_err < 5e-4).float().mean()
-    results["epi_prec@1e-3"] = (n_epi_err < 1e-3).float().mean()
+    results["epi_prec@1e-4"] = (n_epi_err < 1e-4).float().mean().nan_to_num()
+    results["epi_prec@5e-4"] = (n_epi_err < 5e-4).float().mean().nan_to_num()
+    results["epi_prec@1e-3"] = (n_epi_err < 1e-3).float().mean().nan_to_num()
 
     results["num_matches"] = pts0.shape[0]
     results["num_keypoints"] = (kp0.shape[0] + kp1.shape[0]) / 2.0
 
+    return results
+
+
+def eval_matches_depth(data: dict, pred: dict) -> dict:
+    check_keys_recursive(data, ["view0", "view1", "T_0to1"])
+    check_keys_recursive(data["view0"], ["depth", "camera"])
+    check_keys_recursive(data["view1"], ["depth", "camera"])
+    check_keys_recursive(
+        pred, ["keypoints0", "keypoints1", "matches0", "matching_scores0"]
+    )
+
+    kp0, kp1 = pred["keypoints0"], pred["keypoints1"]
+    m0, scores0 = pred["matches0"], pred["matching_scores0"]
+    pts0, pts1, _ = get_matches_scores(kp0, kp1, m0, scores0)
+
+    camera0, camera1 = data["view0"]["camera"], data["view1"]["camera"]
+    T_0to1 = data["T_0to1"]
+
+    depth0 = data["view0"]["depth"]
+    depth1 = data["view1"]["depth"]
+
+    reproj_error, valid = symmetric_reprojection_error(
+        pts0[None],
+        pts1[None],
+        camera0,
+        camera1,
+        T_0to1,
+        depth0,
+        depth1,
+    )
+    reproj_error, valid = reproj_error[0], valid[0]
+
+    results = {}
+    reproj_error = reproj_error[valid].nan_to_num(nan=float("inf"))
+    results["reproj_prec@1px"] = (reproj_error < 1).float().mean().nan_to_num().item()
+    results["reproj_prec@3px"] = (reproj_error < 3).float().mean().nan_to_num().item()
+    results["reproj_prec@5px"] = (reproj_error < 5).float().mean().nan_to_num().item()
+    results["covisible"] = valid.float().sum().item()
+    results["covisible_percent"] = valid.float().mean().item() * 100.0
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    gt_pred = gt_matches_from_pose_depth(
+        kp0[None].to(device),
+        kp1[None].to(device),
+        batch_to_device(data, device),
+        pos_th=3.0,
+        neg_th=5.0,
+    )
+
+    def recall(m, gt_m):
+        mask = (gt_m > -1).float()
+        return ((m == gt_m) * mask).sum(1) / (1e-8 + mask.sum(1))
+
+    results["gt_match_recall@3px"] = recall(
+        pred["matches0"][None], gt_pred["matches0"].cpu()
+    )[0].item()
+
+    def precision(m, gt_m):
+        mask = ((m > -1) & (gt_m >= -1)).float()
+        return ((m == gt_m) * mask).sum(1) / (1e-8 + mask.sum(1))
+
+    results["gt_match_precision@3px"] = precision(
+        pred["matches0"][None], gt_pred["matches0"].cpu()
+    )[0].item()
     return results
 
 

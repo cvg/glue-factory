@@ -24,7 +24,7 @@ def gt_matches_from_pose_depth(
         m1 = -torch.ones_like(kp1[:, :, 0]).long()
         return assignment, m0, m1
     camera0, camera1 = data["view0"]["camera"], data["view1"]["camera"]
-    T_0to1, T_1to0 = data["T_0to1"], data["T_1to0"]
+    T_0to1, T_1to0 = data["T_0to1"], data.get("T_1to0", data["T_0to1"].inv())
 
     depth0 = data["view0"].get("depth")
     depth1 = data["view1"].get("depth")
@@ -280,7 +280,7 @@ def gt_line_matches_from_pose_depth(
         data["view0"]["depth"],
         data["view1"]["camera"],
         data["view0"]["camera"],
-        data["T_1to0"],
+        data.get(data["T_1to0"], data["T_0to1"].inv()),
         valid1_pts1,
     )
 

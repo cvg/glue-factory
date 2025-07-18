@@ -18,7 +18,12 @@ from ..utils.export_predictions import export_predictions
 from ..visualization.viz2d import plot_cumulative
 from .eval_pipeline import EvalPipeline
 from .io import get_eval_parser, load_model, parse_eval_args
-from .utils import eval_matches_epipolar, eval_poses, eval_relative_pose_robust
+from .utils import (
+    eval_matches_depth,
+    eval_matches_epipolar,
+    eval_poses,
+    eval_relative_pose_robust,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +31,14 @@ logger = logging.getLogger(__name__)
 class MegaDepth1500Pipeline(EvalPipeline):
     default_conf = {
         "data": {
-            "name": "image_pairs",
-            "pairs": "megadepth1500/pairs_calibrated.txt",
-            "root": "megadepth1500/images/",
-            "extra_data": "relative_pose",
+            "name": "posed_images",
+            "root": "",
+            "image_dir": "{scene}/images",
+            "depth_dir": "{scene}/depths",
+            "views": "{scene}/views.txt",
+            "view_groups": "{scene}/pairs.txt",
+            "depth_format": "h5",
+            "scene_list": ["megadepth1500"],
             "preprocessing": {
                 "side": "long",
             },
@@ -105,6 +114,8 @@ class MegaDepth1500Pipeline(EvalPipeline):
             pred = cache_loader(data)
             # add custom evaluations here
             results_i = eval_matches_epipolar(data, pred)
+            if "depth" in data["view0"].keys():
+                results_i.update(eval_matches_depth(data, pred))
             for th in test_thresholds:
                 pose_results_i = eval_relative_pose_robust(
                     data,
