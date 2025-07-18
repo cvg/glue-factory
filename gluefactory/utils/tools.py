@@ -270,11 +270,10 @@ def collect_device_stats() -> dict[str, float]:
         free, total = torch.cuda.mem_get_info(device)
         used = total - free
         bytes_stats = {
-            "allocated": torch.cuda.memory_allocated(device),
-            "allocated_peak": torch.cuda.max_memory_allocated(device),
-            "reserved": torch.cuda.memory_reserved(device),
-            "reserved_peak": torch.cuda.max_memory_reserved(device),
-            "free": free,
+            # "z_allocated": torch.cuda.memory_allocated(device),
+            # "z_reserved": torch.cuda.memory_reserved(device),
+            "z_allocated_peak": torch.cuda.max_memory_allocated(device),
+            "z_reserved_peak": torch.cuda.max_memory_reserved(device),
             "used": used,
             "total": total,
         }
@@ -294,11 +293,9 @@ def collect_device_stats() -> dict[str, float]:
     device_stats = {k: np.mean(v).item() for k, v in all_device_stats.items()}
     for i in range(num_devices):
         device_stats[f"utilization_{i}"] = all_device_stats["utilization"][i]
-    device_stats["num_devices"] = num_devices
     # Assumes all devices have the same memory stats.
     device_stats["global_total"] = sum(all_device_stats["total"])
     device_stats["global_used"] = sum(all_device_stats["used"])
-    device_stats["num_cpus"] = torch.cpu.device_count()
     return device_stats
 
 

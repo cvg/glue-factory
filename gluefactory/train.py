@@ -71,12 +71,11 @@ default_train_conf = {
     "load_experiment": None,  # initialize the model from a previous experiment
     "median_metrics": [],  # add the median of some metrics
     "recall_metrics": {},  # add the recall of some metrics
-    "pr_metrics": {},  # add pr curves, set labels/predictions/mask keys
     "best_key": "loss/total",  # key to use to select the best checkpoint
     "dataset_callback_fn": None,  # data func called at the start of each epoch
     "dataset_callback_on_val": False,  # call data func on val data?
     "clip_grad": None,
-    "pr_curves": {},
+    "pr_curves": {},  # add pr curves, set labels/predictions/mask keys
     "plot": None,
     "submodules": [],
 }
@@ -84,7 +83,7 @@ default_train_conf = OmegaConf.create(default_train_conf)
 
 
 @torch.no_grad()
-def do_evaluation(model, loader, device, loss_fn, conf, rank, pbar=True):
+def do_evaluation(model, loader, device, conf, rank, pbar=True):
     model.eval()
     results = {}
     pr_metrics = defaultdict(PRMetric)
@@ -98,7 +97,7 @@ def do_evaluation(model, loader, device, loss_fn, conf, rank, pbar=True):
         data = batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
             pred = model(data)
-            losses, metrics = loss_fn(pred, data)
+            losses, metrics = model.loss(pred, data)
             if conf.plot is not None and i in plot_ids:
                 figures.append(locate(plot_fn)(pred, data))
             # add PR curves
@@ -339,7 +338,6 @@ def training(rank, conf, output_dir, args):
     model = get_model(conf.model.name)(conf.model).to(device)
     if args.compile:
         model = torch.compile(model, mode=args.compile)
-    loss_fn = model.loss
     if init_cp is not None:
         model.load_state_dict(init_cp["model"], strict=False)
     if args.distributed:
@@ -438,10 +436,8 @@ def training(rank, conf, output_dir, args):
                     f"{k} {v:.3E}" for k, v in summaries.items() if isinstance(v, float)
                 ]
                 logger.info(f'[{benchmark_name}] {{{", ".join(str_summaries)}}}')
-                write_dict_summaries(writer, f"test/{benchmark_name}", summaries, epoch)
-                write_image_summaries(
-                    writer, f"figures/{benchmark_name}", figures, epoch
-                )
+                write_dict_summaries(writer, f"test_{benchmark_name}", summaries, epoch)
+                write_image_summaries(writer, f"test_{benchmark_name}", figures, epoch)
                 del summaries, figures
 
         # set the seed
@@ -496,7 +492,7 @@ def training(rank, conf, output_dir, args):
                 step_timer.measure("to_device")
                 pred = model(data)
                 step_timer.measure("forward")
-                losses, metrics = loss_fn(pred, data)
+                losses, metrics = model.loss(pred, data)
                 loss = torch.mean(losses["total"])
                 loss_metrics = {
                     **metrics,
@@ -626,8 +622,7 @@ def training(rank, conf, output_dir, args):
                 # Log memory stats
                 if torch.cuda.is_available():
                     device_stats = collect_device_stats()
-                    for key, value in device_stats.items():
-                        writer.add_scalar(f"memory/{key}", value, tot_n_samples)
+                    write_dict_summaries(writer, "memory", device_stats, tot_n_samples)
 
             # Log gradients of the model. Useful for debugging.
             if conf.train.log_grad_every_iter is not None:
@@ -659,7 +654,6 @@ def training(rank, conf, output_dir, args):
                         model,
                         val_loader,
                         device,
-                        loss_fn,
                         conf.train,
                         rank,
                         pbar=(rank == 0),
@@ -672,9 +666,9 @@ def training(rank, conf, output_dir, args):
                         if isinstance(v, float)
                     ]
                     logger.info(f'[Validation] {{{", ".join(str_results)}}}')
-                    write_dict_summaries(writer, "val", results, tot_n_samples)
-                    write_dict_summaries(writer, "val", pr_metrics, tot_n_samples)
-                    write_image_summaries(writer, "figures", figures, tot_n_samples)
+                    write_dict_summaries(writer, "eval", results, tot_n_samples)
+                    write_dict_summaries(writer, "eval", pr_metrics, tot_n_samples)
+                    write_image_summaries(writer, "eval", figures, tot_n_samples)
                     # @TODO: optional always save checkpoint
                     if results[conf.train.best_key] < best_eval:
                         best_eval = results[conf.train.best_key]
@@ -702,7 +696,6 @@ def training(rank, conf, output_dir, args):
                         model,
                         val_loader,
                         device,
-                        loss_fn,
                         conf.train,
                         rank,
                         pbar=(rank == 0),
