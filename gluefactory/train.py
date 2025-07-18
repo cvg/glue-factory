@@ -473,7 +473,7 @@ def training(rank, conf, output_dir, args):
         if args.profile:
             prof.start()
 
-        train_losses = defaultdict(AverageMetric)
+        train_loss_metrics = defaultdict(AverageMetric)
         for it, data in enumerate(train_loader):
             step_timer.measure("data")
             tot_it = (len(train_loader) * epoch + it) * (
@@ -496,13 +496,17 @@ def training(rank, conf, output_dir, args):
                 step_timer.measure("to_device")
                 pred = model(data)
                 step_timer.measure("forward")
-                losses, _ = loss_fn(pred, data)
+                losses, metrics = loss_fn(pred, data)
                 loss = torch.mean(losses["total"])
-                for k, v in losses.items():
+                loss_metrics = {
+                    **metrics,
+                    **{"loss/" + k: v for k, v in losses.items()},
+                }
+                for k, v in loss_metrics.items():
                     if args.distributed:
                         torch.distributed.all_reduce(v)
                         v /= args.n_gpus
-                    train_losses[k].update(v)
+                    train_loss_metrics[k].update(v)
                 step_timer.measure("loss_fn")
             if torch.isnan(loss).any():
                 logger.warning(f"Detected NAN, skipping iteration {it}")
@@ -573,20 +577,20 @@ def training(rank, conf, output_dir, args):
                     logger.info("Stop tracking memory usage.")
 
             if (it % conf.train.log_every_iter == 0) and rank == 0:
-                losses = {k: v.compute() for k, v in train_losses.items()}
-                str_losses = [f"{k} {v:.3E}" for k, v in losses.items()]
+                loss_metrics = {k: v.compute() for k, v in train_loss_metrics.items()}
+                str_loss_metrics = [f"{k} {v:.3E}" for k, v in loss_metrics.items()]
                 # Write training losses
                 logger.info(
                     "[E {} | it {}] loss {{{}}}".format(
-                        epoch, it, ", ".join(str_losses)
+                        epoch, it, ", ".join(str_loss_metrics)
                     )
                 )
-                write_dict_summaries(writer, "training/", losses, tot_n_samples)
+                write_dict_summaries(writer, "training", loss_metrics, tot_n_samples)
                 writer.add_scalar(
                     "training/lr", optimizer.param_groups[0]["lr"], tot_n_samples
                 )
                 # Reset training loss aggregators
-                train_losses.clear()
+                train_loss_metrics.clear()
 
                 # Write Epoch
                 writer.add_scalar("training/epoch", epoch, tot_n_samples)
