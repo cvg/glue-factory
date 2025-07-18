@@ -264,9 +264,10 @@ def training(rank, conf, output_dir, args):
                 str(init_cp), map_location="cpu", weights_only=not settings.ALLOW_PICKLE
             )
             # load the model config of the old setup, and overwrite with current config
-            conf.model = OmegaConf.merge(
-                OmegaConf.create(init_cp["conf"]).model, conf.model
-            )
+            if conf.train.get("load_model_config", False):
+                conf.model = OmegaConf.merge(
+                    OmegaConf.create(init_cp["conf"]).model, conf.model
+                )
         else:
             init_cp = None
 
@@ -406,7 +407,9 @@ def training(rank, conf, output_dir, args):
             schedule=torch.profiler.schedule(
                 wait=5, warmup=1, active=args.profile, repeat=1, skip_first=10
             ),
-            on_trace_ready=tensorboard_trace_handler(str(output_dir), use_gzip=False),
+            on_trace_ready=tensorboard_trace_handler(
+                str(output_dir), use_gzip=not args.store_raw_trace
+            ),
             record_shapes=False,
             profile_memory=False,
             with_stack=True,
@@ -800,6 +803,11 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="Profile the training with PyTorch profiler (number of steps to profile)",
+    )
+    parser.add_argument(
+        "--store_raw_trace",
+        action="store_true",
+        help="Save raw trace files (json) instead of compressed ones (gzip)",
     )
     parser.add_argument(
         "--record_memory",
