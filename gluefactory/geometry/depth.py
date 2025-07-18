@@ -5,10 +5,20 @@ from .utils import get_image_coords
 from .wrappers import Camera
 
 
+def shape_normalize(kpts, w, h):
+    """Normalize points to [-1, 1] range."""
+    kpts = kpts.clone()
+    kpts[..., 0] = kpts[..., 0] * 2 / w - 1
+    kpts[..., 1] = kpts[..., 1] * 2 / h - 1
+
+    kpts = kpts[:, None]
+    return kpts
+
+
 def sample_fmap(pts, fmap):
     h, w = fmap.shape[-2:]
     grid_sample = torch.nn.functional.grid_sample
-    pts = (pts / pts.new_tensor([[w, h]]) * 2 - 1)[:, None]
+    pts = shape_normalize(pts, w, h)
     # @TODO: This might still be a source of noise --> bilinear interpolation dangerous
     interp_lin = grid_sample(fmap, pts, align_corners=False, mode="bilinear")
     interp_nn = grid_sample(fmap, pts, align_corners=False, mode="nearest")
@@ -18,7 +28,7 @@ def sample_fmap(pts, fmap):
 
 
 def sample_depth(pts, depth_):
-    depth = torch.where(depth_ > 0, depth_, depth_.new_tensor(float("nan")))
+    depth = torch.where(depth_ > 0, depth_, torch.nan)
     depth = depth[:, None]
     interp = sample_fmap(pts, depth).squeeze(-1)
     valid = (~torch.isnan(interp)) & (interp > 0)

@@ -22,8 +22,7 @@ class AverageMetric:
 
     def update(self, tensor):
         assert tensor.dim() == 1
-        tensor = tensor[~torch.isnan(tensor)]
-        self._sum += tensor.sum().item()
+        self._sum += torch.nansum(tensor).item()
         self._num_examples += len(tensor)
 
     def compute(self):

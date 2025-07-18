@@ -173,7 +173,7 @@ def warp_points_torch(points, H, inverse=True):
     points = to_homogeneous(points)
 
     # Apply the homography
-    H_mat = (torch.inverse(H) if inverse else H).transpose(-2, -1)
+    H_mat = (torch.linalg.inv_ex(H)[0] if inverse else H).transpose(-2, -1)
     warped_points = torch.einsum("...nj,...ji->...ni", points, H_mat)
 
     warped_points = from_homogeneous(warped_points, eps=1e-5)
