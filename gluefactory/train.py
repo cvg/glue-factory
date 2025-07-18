@@ -213,13 +213,25 @@ def write_dict_summaries(writer, name, items, step):
 
 
 def write_image_summaries(writer, name, figures, step):
+    # Stacked grayscale is not supported, convert to RGB!
+    def _add_plot(tag, fig_or_image, step):
+        if isinstance(fig_or_image, (np.ndarray, torch.Tensor)):
+            if fig_or_image.ndim in (2, 3):
+                writer.add_image(tag, fig_or_image, step)
+            else:
+                assert fig_or_image.ndim == 4
+                writer.add_images(tag, fig_or_image, step)
+        else:
+            # Figure or list[Figure]
+            writer.add_figure(tag, fig_or_image, step, close=True)
+
     if isinstance(figures, list):
         for i, figs in enumerate(figures):
             for k, fig in figs.items():
-                writer.add_figure(f"{name}/{i}_{k}", fig, step)
+                _add_plot(f"{name}/{i}_{k}", fig, step)
     else:
         for k, fig in figures.items():
-            writer.add_figure(f"{name}/{k}", fig, step)
+            _add_plot(f"{name}/{k}", fig, step)
 
 
 def training(rank, conf, output_dir, args):
