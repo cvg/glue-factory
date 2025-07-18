@@ -99,12 +99,8 @@ def do_evaluation(model, loader, device, conf, rank, pbar=True):
             if i in plot_ids:
                 figures.append(model.visualize(pred, data))
             # add PR curves
-            for k, v in conf.pr_curves.items():
-                pr_metrics[k].update(
-                    pred[v["labels"]],
-                    pred[v["predictions"]],
-                    mask=pred[v["mask"]] if "mask" in v.keys() else None,
-                )
+            for k, labels_preds in model.pr_metrics(pred, data).items():
+                pr_metrics[k].update(*labels_preds)
             del pred, data
         numbers = {**metrics, **{"loss/" + k: v for k, v in losses.items()}}
         for k, v in numbers.items():

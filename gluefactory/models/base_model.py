@@ -133,6 +133,10 @@ class BaseModel(nn.Module, metaclass=MetaModel):
         """To be implemented by the child class."""
         return {}
 
+    def pr_metrics(self, pred, data):
+        """To be implemented by the child class."""
+        return {}
+
     def load_state_dict(self, *args, **kwargs):
         """Load the state dict of the model, and set the model to initialized."""
         ret = super().load_state_dict(*args, **kwargs)

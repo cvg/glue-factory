@@ -128,3 +128,11 @@ class TwoViewPipeline(BaseModel):
             if self.conf[k].name and self.conf[k].get("visualize", True):
                 figures.update(getattr(self, k).visualize(pred, data, **kwargs))
         return figures
+
+    def pr_metrics(self, pred, data):
+        """Compute precision-recall metrics."""
+        pr_metrics = {}
+        for k in self.components:
+            if self.conf[k].name and hasattr(getattr(self, k), "pr_metrics"):
+                pr_metrics.update(getattr(self, k).pr_metrics(pred, data))
+        return pr_metrics
