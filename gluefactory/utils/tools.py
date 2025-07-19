@@ -5,14 +5,18 @@ Author: Paul-Edouard Sarlin (skydes)
 """
 
 import collections
+import logging
 import os
 import random
+import re
 import time
 from collections.abc import Iterable
 from contextlib import contextmanager
 
 import numpy as np
 import torch
+
+logger = logging.getLogger(__name__)
 
 
 class AverageMetric:
@@ -376,3 +380,110 @@ def fork_rng(seed=None, with_cuda=True):
         yield
     finally:
         set_random_state(state)
+
+
+def filter_parameters(params, regexp):
+    """Filter trainable parameters based on regular expressions."""
+
+    # Examples of regexp:
+    #     '.*(weight|bias)$'
+    #     'cnn\.(enc0|enc1).*bias'
+    def filter_fn(x):
+        n, p = x
+        match = re.search(regexp, n)
+        if not match:
+            p.requires_grad = False
+        return match
+
+    params = list(filter(filter_fn, params))
+    assert len(params) > 0, regexp
+    logger.info("Selected parameters:\n" + "\n".join(n for n, p in params))
+    return params
+
+
+def get_lr_scheduler(optimizer, conf):
+    """Get lr scheduler specified by conf.train.lr_schedule."""
+    if conf.type not in ["factor", "exp", None]:
+        if hasattr(conf.options, "schedulers"):
+            # Add option to chain multiple schedulers together
+            # This is useful for e.g. warmup, then cosine decay
+            schedulers = []
+            for scheduler_conf in conf.options.schedulers:
+                scheduler = get_lr_scheduler(optimizer, scheduler_conf)
+                schedulers.append(scheduler)
+
+            options = {k: v for k, v in conf.options.items() if k != "schedulers"}
+            return getattr(torch.optim.lr_scheduler, conf.type)(
+                optimizer, schedulers, **options
+            )
+
+        return getattr(torch.optim.lr_scheduler, conf.type)(optimizer, **conf.options)
+
+    # backward compatibility
+    def lr_fn(it):  # noqa: E306
+        if conf.type is None:
+            return 1
+        if conf.type == "factor":
+            return 1.0 if it < conf.start else conf.factor
+        if conf.type == "exp":
+            gam = 10 ** (-1 / conf.exp_div_10)
+            return 1.0 if it < conf.start else gam
+        else:
+            raise ValueError(conf.type)
+
+    return torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_fn)
+
+
+def pack_lr_parameters(params, base_lr, lr_scaling):
+    """Pack each group of parameters with the respective scaled learning rate."""
+    filters, scales = tuple(zip(*[(n, s) for s, names in lr_scaling for n in names]))
+    scale2params = collections.defaultdict(list)
+    for n, p in params:
+        scale = 1
+        # TODO: use proper regexp rather than just this inclusion check
+        is_match = [f in n for f in filters]
+        if any(is_match):
+            scale = scales[is_match.index(True)]
+        scale2params[scale].append((n, p))
+    logger.info(
+        "Parameters with scaled learning rate:\n%s",
+        {s: [n for n, _ in ps] for s, ps in scale2params.items() if s != 1},
+    )
+    lr_params = [
+        {"lr": scale * base_lr, "params": [p for _, p in ps]}
+        for scale, ps in scale2params.items()
+    ]
+    return lr_params
+
+
+def write_dict_summaries(writer, name, items, step):
+    for k, v in items.items():
+        key = f"{name}/{k}"
+        if isinstance(v, dict):
+            writer.add_scalars(key, v, step)
+        elif isinstance(v, tuple):
+            writer.add_pr_curve(key, *v, step)
+        else:
+            writer.add_scalar(key, v, step)
+
+
+def write_image_summaries(writer, name, figures, step):
+    # Stacked grayscale is not supported, convert to RGB!
+    def _add_plot(tag, fig_or_image, step):
+        if isinstance(fig_or_image, (np.ndarray, torch.Tensor)):
+            if fig_or_image.ndim in (2, 3):
+                writer.add_image(tag, fig_or_image, step)
+            else:
+                assert fig_or_image.ndim == 4
+                writer.add_images(tag, fig_or_image, step)
+        else:
+            # Figure or list[Figure]
+            writer.add_figure(tag, fig_or_image, step, close=True)
+
+    if isinstance(figures, list):
+        for i, figs in enumerate(figures):
+            for k, fig in figs.items():
+                _add_plot(f"{name}/{i}_{k}", fig, step)
+    else:
+        for k, fig in figures.items():
+            _add_plot(f"{name}/{k}", fig, step)

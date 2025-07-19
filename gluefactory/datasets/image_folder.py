@@ -8,16 +8,16 @@ from pathlib import Path
 import omegaconf
 import torch
 
-from ..utils.image import ImagePreprocessor, load_image
-from .base_dataset import BaseDataset
+from ..utils import preprocess
+from . import base_dataset
 
 
-class ImageFolder(BaseDataset, torch.utils.data.Dataset):
+class ImageFolder(base_dataset.BaseDataset, torch.utils.data.Dataset):
     default_conf = {
         "glob": ["*.jpg", "*.png", "*.jpeg", "*.JPG", "*.PNG"],
         "images": "???",
         "root_folder": "/",
-        "preprocessing": ImagePreprocessor.default_conf,
+        "preprocessing": preprocess.ImagePreprocessor.default_conf,
     }
 
     def _init(self, conf):
@@ -44,14 +44,14 @@ class ImageFolder(BaseDataset, torch.utils.data.Dataset):
         else:
             raise ValueError(conf.images)
 
-        self.preprocessor = ImagePreprocessor(conf.preprocessing)
+        self.preprocessor = preprocess.ImagePreprocessor(conf.preprocessing)
 
     def get_dataset(self, split):
         return self
 
     def __getitem__(self, idx):
         path = self.images[idx]
-        img = load_image(path)
+        img = preprocess.load_image(path)
         data = {"name": str(path), **self.preprocessor(img)}
         return data
 

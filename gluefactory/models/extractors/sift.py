@@ -11,8 +11,8 @@ try:
 except ImportError:
     pycolmap = None
 
+from ...utils.misc import pad_to_length
 from ..base_model import BaseModel
-from ..utils.misc import pad_to_length
 
 
 def filter_dog_point(points, scales, angles, image_shape, nms_radius, scores=None):

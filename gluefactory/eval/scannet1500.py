@@ -11,19 +11,16 @@ import torch
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
-from ..datasets import get_dataset
+from .. import datasets, settings
 from ..models.cache_loader import CacheLoader
-from ..settings import DATA_PATH, EVAL_PATH
 from ..utils.export_predictions import export_predictions
-from ..visualization.viz2d import plot_cumulative
-from .eval_pipeline import EvalPipeline
-from .io import get_eval_parser, load_model, parse_eval_args
-from .utils import eval_matches_epipolar, eval_poses, eval_relative_pose_robust
+from ..visualization import viz2d
+from . import eval_pipeline, io, utils
 
 logger = logging.getLogger(__name__)
 
 
-class ScanNet1500Pipeline(EvalPipeline):
+class ScanNet1500Pipeline(eval_pipeline.EvalPipeline):
     default_conf = {
         "data": {
             "name": "image_pairs",
@@ -59,21 +56,21 @@ class ScanNet1500Pipeline(EvalPipeline):
     optional_export_keys = []
 
     def _init(self, conf):
-        if not (DATA_PATH / "scannet1500").exists():
+        if not (settings.DATA_PATH / "scannet1500").exists():
             logger.info("Downloading the ScanNet-1500 dataset.")
             url = "https://cvg-data.inf.ethz.ch/scannet/scannet1500.zip"
-            zip_path = DATA_PATH / url.rsplit("/", 1)[-1]
+            zip_path = settings.DATA_PATH / url.rsplit("/", 1)[-1]
             zip_path.parent.mkdir(exist_ok=True, parents=True)
             torch.hub.download_url_to_file(url, zip_path)
             with zipfile.ZipFile(zip_path) as fid:
-                fid.extractall(DATA_PATH)
+                fid.extractall(settings.DATA_PATH)
             zip_path.unlink()
 
     @classmethod
     def get_dataloader(self, data_conf=None):
         """Returns a data loader with samples for each eval datapoint"""
         data_conf = data_conf if data_conf else self.default_conf["data"]
-        dataset = get_dataset(data_conf["name"])(data_conf)
+        dataset = datasets.get_dataset(data_conf["name"])(data_conf)
         return dataset.get_data_loader("test")
 
     def get_predictions(self, experiment_dir, model=None, overwrite=False):
@@ -81,7 +78,7 @@ class ScanNet1500Pipeline(EvalPipeline):
         pred_file = experiment_dir / "predictions.h5"
         if not pred_file.exists() or overwrite:
             if model is None:
-                model = load_model(self.conf.model, self.conf.checkpoint)
+                model = io.load_model(self.conf.model, self.conf.checkpoint)
             export_predictions(
                 self.get_dataloader(self.conf.data),
                 model,
@@ -105,9 +102,9 @@ class ScanNet1500Pipeline(EvalPipeline):
         for i, data in enumerate(tqdm(loader)):
             pred = cache_loader(data)
             # add custom evaluations here
-            results_i = eval_matches_epipolar(data, pred)
+            results_i = utils.eval_matches_epipolar(data, pred)
             for th in test_thresholds:
-                pose_results_i = eval_relative_pose_robust(
+                pose_results_i = utils.eval_relative_pose_robust(
                     data,
                     pred,
                     {"estimator": conf.estimator, "ransac_th": th},
@@ -131,7 +128,7 @@ class ScanNet1500Pipeline(EvalPipeline):
                 continue
             summaries[f"m{k}"] = round(np.mean(arr), 3)
 
-        best_pose_results, best_th = eval_poses(
+        best_pose_results, best_th = utils.eval_poses(
             pose_results, auc_ths=[5, 10, 20], key="rel_pose_error"
         )
         results = {**results, **pose_results[best_th]}
@@ -141,7 +138,7 @@ class ScanNet1500Pipeline(EvalPipeline):
         }
 
         figures = {
-            "pose_recall": plot_cumulative(
+            "pose_recall": viz2d.plot_cumulative(
                 {self.conf.eval.estimator: results["rel_pose_error"]},
                 [0, 30],
                 unit="°",
@@ -156,16 +153,16 @@ if __name__ == "__main__":
     from .. import logger  # overwrite the logger
 
     dataset_name = Path(__file__).stem
-    parser = get_eval_parser()
+    parser = io.get_eval_parser()
     args = parser.parse_intermixed_args()
 
     default_conf = OmegaConf.create(ScanNet1500Pipeline.default_conf)
 
     # mingle paths
-    output_dir = Path(EVAL_PATH, dataset_name)
+    output_dir = Path(settings.EVAL_PATH, dataset_name)
     output_dir.mkdir(exist_ok=True, parents=True)
 
-    name, conf = parse_eval_args(
+    name, conf = io.parse_eval_args(
         dataset_name,
         args,
         "configs/",

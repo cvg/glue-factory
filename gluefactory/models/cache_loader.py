@@ -3,39 +3,38 @@ import string
 import h5py
 import torch
 
-from ..datasets.base_dataset import collate
-from ..settings import DATA_PATH
-from ..utils.tensor import batch_to_device
+from .. import settings
+from ..datasets import base_dataset
+from ..utils import misc
 from .base_model import BaseModel
-from .utils.misc import pad_to_length
 
 
 def pad_local_features(pred: dict, seq_l: int):
-    pred["keypoints"] = pad_to_length(
+    pred["keypoints"] = misc.pad_to_length(
         pred["keypoints"],
         seq_l,
         -2,
         mode="random_c",
     )
     if "keypoint_scores" in pred.keys():
-        pred["keypoint_scores"] = pad_to_length(
+        pred["keypoint_scores"] = misc.pad_to_length(
             pred["keypoint_scores"], seq_l, -1, mode="zeros"
         )
     if "descriptors" in pred.keys():
-        pred["descriptors"] = pad_to_length(
+        pred["descriptors"] = misc.pad_to_length(
             pred["descriptors"], seq_l, -2, mode="random"
         )
     if "scales" in pred.keys():
-        pred["scales"] = pad_to_length(pred["scales"], seq_l, -1, mode="zeros")
+        pred["scales"] = misc.pad_to_length(pred["scales"], seq_l, -1, mode="zeros")
     if "oris" in pred.keys():
-        pred["oris"] = pad_to_length(pred["oris"], seq_l, -1, mode="zeros")
+        pred["oris"] = misc.pad_to_length(pred["oris"], seq_l, -1, mode="zeros")
 
     if "depth_keypoints" in pred.keys():
-        pred["depth_keypoints"] = pad_to_length(
+        pred["depth_keypoints"] = misc.pad_to_length(
             pred["depth_keypoints"], seq_l, -1, mode="zeros"
         )
     if "valid_depth_keypoints" in pred.keys():
-        pred["valid_depth_keypoints"] = pad_to_length(
+        pred["valid_depth_keypoints"] = misc.pad_to_length(
             pred["valid_depth_keypoints"], seq_l, -1, mode="zeros"
         )
     return pred
@@ -101,7 +100,7 @@ class CacheLoader(BaseModel):
         for i, name in enumerate(data["name"]):
             fpath = self.conf.path.format(**{k: data[k][i] for k in var_names})
             if self.conf.add_data_path:
-                fpath = DATA_PATH / fpath
+                fpath = settings.DATA_PATH / fpath
             hfile = h5py.File(str(fpath), "r")
             grp = hfile[name]
             pkeys = (
@@ -118,7 +117,7 @@ class CacheLoader(BaseModel):
                     )
                     for k, v in pred.items()
                 }
-            pred = batch_to_device(pred, device)
+            pred = misc.batch_to_device(pred, device)
             for k, v in pred.items():
                 for pattern in self.conf.scale:
                     if k.startswith(pattern):
@@ -135,10 +134,10 @@ class CacheLoader(BaseModel):
             preds.append(pred)
             hfile.close()
         if self.conf.collate:
-            return batch_to_device(collate(preds), device)
+            return misc.batch_to_device(base_dataset.collate(preds), device)
         else:
             assert len(preds) == 1
-            return batch_to_device(preds[0], device)
+            return misc.batch_to_device(preds[0], device)
 
     def loss(self, pred, data):
         raise NotImplementedError

@@ -1,17 +1,17 @@
+import copy
 import functools
 import traceback
-from copy import deepcopy
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.widgets import Button
 from omegaconf import OmegaConf
 
-from ..datasets.base_dataset import collate
+from ..datasets import base_dataset
 
 # from ..eval.export_predictions import load_predictions
 from ..models.cache_loader import CacheLoader
-from .tools import RadioHideTool
+from . import tools as vtools
 
 
 class GlobalFrame:
@@ -61,7 +61,7 @@ class GlobalFrame:
 
         self.xradios = self.fig.canvas.manager.toolmanager.add_tool(
             "x",
-            RadioHideTool,
+            vtools.RadioHideTool,
             options=self.metrics,
             callback_fn=self.update_x,
             active=self.conf.x,
@@ -70,7 +70,7 @@ class GlobalFrame:
 
         self.yradios = self.fig.canvas.manager.toolmanager.add_tool(
             "y",
-            RadioHideTool,
+            vtools.RadioHideTool,
             options=self.metrics,
             callback_fn=self.update_y,
             active=self.conf.y,
@@ -200,7 +200,7 @@ class GlobalFrame:
         if self.child_frame is None:
             return
 
-        data = collate([self.loader.dataset[ind]])
+        data = base_dataset.collate([self.loader.dataset[ind]])
 
         preds = {}
 
@@ -214,7 +214,7 @@ class GlobalFrame:
         }
         frame = self.child_frame(
             self.conf.child,
-            deepcopy(data),
+            copy.deepcopy(data),
             preds,
             title=str(data["name"][0]),
             event=event,

@@ -7,7 +7,7 @@ from homography_est import (
     ransac_point_line_homography,
 )
 
-from ...utils.tensor import batch_to_numpy
+from ...utils import misc
 from ..base_estimator import BaseEstimator
 
 
@@ -52,7 +52,7 @@ class PointLineHomographyEstimator(BaseEstimator):
 
     def _forward(self, data):
         feat = data["m_kpts0"] if "m_kpts0" in data else data["m_lines0"]
-        data = batch_to_numpy(data)
+        data = misc.batch_to_numpy(data)
         m_features = {
             "kpts0": data["m_kpts1"] if "m_kpts1" in data else None,
             "kpts1": data["m_kpts0"] if "m_kpts0" in data else None,

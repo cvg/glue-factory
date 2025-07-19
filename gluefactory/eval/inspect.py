@@ -8,8 +8,7 @@ import matplotlib.pyplot as plt
 from .. import settings
 from ..visualization.global_frame import GlobalFrame
 from ..visualization.two_view_frame import TwoViewFrame
-from . import get_benchmark
-from .eval_pipeline import load_eval
+from . import eval_pipeline, get_benchmark
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -51,7 +50,7 @@ if __name__ == "__main__":
                 f" Checked: {possible_paths}"
             )
         pred_file = experiment_dir / "predictions.h5"
-        s, results[name] = load_eval(experiment_dir)
+        s, results[name] = eval_pipeline.load_eval(experiment_dir)
         predictions[name] = pred_file
         for k, v in s.items():
             summaries[k][name] = v

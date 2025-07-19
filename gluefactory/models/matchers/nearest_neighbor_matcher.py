@@ -8,8 +8,8 @@ import logging
 import torch
 import torch.nn.functional as F
 
+from ...utils.metrics import matcher_metrics
 from ..base_model import BaseModel
-from ..utils.metrics import matcher_metrics
 
 
 @torch.no_grad()

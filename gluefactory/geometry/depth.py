@@ -1,8 +1,8 @@
 import kornia
 import torch
 
-from .utils import get_image_coords
-from .wrappers import Camera, Pose
+from ..utils import misc
+from . import reconstruction
 
 
 def shape_normalize(kpts, w, h):
@@ -82,11 +82,11 @@ def dense_warp_consistency(
     depthi: torch.Tensor,
     depthj: torch.Tensor,
     T_itoj: torch.Tensor,
-    camerai: Camera,
-    cameraj: Camera,
+    camerai: reconstruction.Camera,
+    cameraj: reconstruction.Camera,
     **kwargs,
 ):
-    kpi = get_image_coords(depthi).flatten(-3, -2)
+    kpi = misc.get_image_coords(depthi).flatten(-3, -2)
     di = depthi.flatten(
         -2,
     )
@@ -101,9 +101,9 @@ def dense_warp_consistency(
 def symmetric_reprojection_error(
     pts0: torch.Tensor,  # B x N x 2
     pts1: torch.Tensor,  # B x N x 2
-    camera0: Camera,
-    camera1: Camera,
-    T_0to1: Pose,
+    camera0: reconstruction.Camera,
+    camera1: reconstruction.Camera,
+    T_0to1: reconstruction.Pose,
     depth0: torch.Tensor,
     depth1: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:

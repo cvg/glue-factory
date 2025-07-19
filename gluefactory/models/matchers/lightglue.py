@@ -8,9 +8,9 @@ import torch.nn.functional as F
 from torch import nn
 
 from ...settings import DATA_PATH
+from ...utils.losses import NLLLoss
+from ...utils.metrics import matcher_metrics
 from ..base_model import BaseModel
-from ..utils.losses import NLLLoss
-from ..utils.metrics import matcher_metrics
 
 FLASH_AVAILABLE = hasattr(F, "scaled_dot_product_attention")
 

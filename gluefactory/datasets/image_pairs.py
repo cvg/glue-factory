@@ -7,9 +7,9 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from ..geometry.wrappers import Camera, Pose
-from ..settings import DATA_PATH
-from ..utils.image import ImagePreprocessor, load_image
+from .. import settings
+from ..geometry import reconstruction
+from ..utils import preprocess
 from .base_dataset import BaseDataset
 
 
@@ -17,7 +17,7 @@ def names_to_pair(name0, name1, separator="/"):
     return separator.join((name0.replace("/", "-"), name1.replace("/", "-")))
 
 
-def parse_homography(homography_elems) -> Camera:
+def parse_homography(homography_elems) -> reconstruction.Camera:
     return (
         np.array([float(x) for x in homography_elems[:9]])
         .reshape(3, 3)
@@ -25,21 +25,21 @@ def parse_homography(homography_elems) -> Camera:
     )
 
 
-def parse_camera(calib_elems) -> Camera:
+def parse_camera(calib_elems) -> reconstruction.Camera:
     # assert len(calib_list) == 9
     K = np.array([float(x) for x in calib_elems[:9]]).reshape(3, 3).astype(np.float32)
-    return Camera.from_calibration_matrix(K)
+    return reconstruction.Camera.from_calibration_matrix(K)
 
 
-def parse_relative_pose(pose_elems) -> Pose:
+def parse_relative_pose(pose_elems) -> reconstruction.Pose:
     if len(pose_elems) == 12:
         R, t = pose_elems[:9], pose_elems[9:12]
         R = np.array([float(x) for x in R]).reshape(3, 3).astype(np.float32)
         t = np.array([float(x) for x in t]).astype(np.float32)
-        return Pose.from_Rt(R, t)
+        return reconstruction.Pose.from_Rt(R, t)
     elif len(pose_elems) == 16:
         T = np.array([float(x) for x in pose_elems]).reshape(4, 4).astype(np.float32)
-        return Pose.from_4x4mat(T)
+        return reconstruction.Pose.from_4x4mat(T)
     else:
         raise ValueError(f"Can not interpret pose {pose_elems}.")
 
@@ -48,24 +48,26 @@ class ImagePairs(BaseDataset, torch.utils.data.Dataset):
     default_conf = {
         "pairs": "???",  # ToDo: add image folder interface
         "root": "???",
-        "preprocessing": ImagePreprocessor.default_conf,
+        "preprocessing": preprocess.ImagePreprocessor.default_conf,
         "extra_data": None,  # relative_pose, homography
     }
 
     def _init(self, conf):
         pair_f = (
-            Path(conf.pairs) if Path(conf.pairs).exists() else DATA_PATH / conf.pairs
+            Path(conf.pairs)
+            if Path(conf.pairs).exists()
+            else settings.DATA_PATH / conf.pairs
         )
         with open(str(pair_f), "r") as f:
             self.items = [line.rstrip() for line in f]
-        self.preprocessor = ImagePreprocessor(conf.preprocessing)
+        self.preprocessor = preprocess.ImagePreprocessor(conf.preprocessing)
 
     def get_dataset(self, split):
         return self
 
     def _read_view(self, name):
-        path = DATA_PATH / self.conf.root / name
-        img = load_image(path)
+        path = settings.DATA_PATH / self.conf.root / name
+        img = preprocess.load_image(path)
         return self.preprocessor(img)
 
     def __getitem__(self, idx):

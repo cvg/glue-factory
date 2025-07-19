@@ -6,7 +6,6 @@ Author: Paul-Edouard Sarlin (skydes)
 
 import argparse
 import copy
-import re
 import shutil
 import signal
 from collections import defaultdict
@@ -18,30 +17,8 @@ from omegaconf import OmegaConf
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from . import __module_name__, logger, settings
-from .datasets import get_dataset
-from .eval import run_benchmark
-from .models import get_model
-from .utils.experiments import (
-    compose_config,
-    get_best_checkpoint,
-    get_last_checkpoint,
-    list_configs,
-    save_experiment,
-    tensorboard_trace_handler,
-)
-from .utils.stdout_capturing import capture_outputs
-from .utils.tensor import batch_to_device
-from .utils.tools import (
-    AverageMetric,
-    MedianMetric,
-    PRMetric,
-    RecallMetric,
-    StepTimer,
-    collect_device_stats,
-    fork_rng,
-    set_seed,
-)
+from . import __module_name__, datasets, eval, logger, models, settings
+from .utils import experiments, misc, stdout_capturing, tools
 
 default_train_conf = {
     "seed": "???",  # training seed
@@ -80,11 +57,108 @@ default_train_conf = {
 default_train_conf = OmegaConf.create(default_train_conf)
 
 
+def parse_args():
+    """Parse command line arguments and return them."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("experiment", type=str)
+    default_config_names = experiments.list_configs(Path(__file__).parent / "configs")
+    parser.add_argument(
+        "--conf",
+        type=str,
+        help=f"Configuration path (.yaml) or one of: {default_config_names}",
+    )
+    parser.add_argument(
+        "--mixed_precision",
+        "--mp",
+        default=None,
+        type=str,
+        choices=["float16", "bfloat16"],
+    )
+    parser.add_argument(
+        "--compile",
+        default=None,
+        type=str,
+        choices=["default", "reduce-overhead", "max-autotune"],
+    )
+    parser.add_argument(
+        "--cleanup_interval",
+        default=120,  # Cleanup log files every 120 seconds.
+        type=int,
+        help="Interval in seconds to cleanup log files",
+    )
+    parser.add_argument(
+        "--overfit", action="store_true", help="Overfit on a single batch"
+    )
+    parser.add_argument(
+        "--restore", action="store_true", help="Restore from previous experiment"
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing experiment directory",
+    )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Delete the output directory if it exists",
+    )
+    parser.add_argument(
+        "--distributed", action="store_true", help="Run in distributed mode"
+    )
+    parser.add_argument(
+        "--profile",
+        type=int,
+        default=None,
+        help="Profile the training with PyTorch profiler (number of steps to profile)",
+    )
+    parser.add_argument(
+        "--store_raw_trace",
+        action="store_true",
+        help="Save raw trace files (json) instead of compressed ones (gzip)",
+    )
+    parser.add_argument(
+        "--record_memory",
+        type=int,
+        default=None,
+        help="Record memory usage during training (number of steps to record)",
+    )
+    parser.add_argument(
+        "--print_arch", "--pa", action="store_true", help="Print model architecture"
+    )
+    parser.add_argument(
+        "--detect_anomaly",
+        "--da",
+        action="store_true",
+        help="Detect anomalies in gradients",
+    )
+
+    parser.add_argument(
+        "--debug_sync",
+        type=int,
+        default=0,
+        help="Debug ",
+    )
+    parser.add_argument(
+        "--log_it",
+        "--log_it",
+        action="store_true",
+        help="Log tensorboard on iteration (default is num_samples)",
+    )
+    parser.add_argument(
+        "--no_eval_0", action="store_true", help="Disable evaluation on the first epoch"
+    )
+    parser.add_argument("--run_benchmarks", action="store_true", help="Run benchmarks")
+    parser.add_argument("--strict", action="store_true", help="Strict config merge")
+    parser.add_argument("dotlist", nargs="*")
+    args = parser.parse_intermixed_args()
+    return args
+
+
 @torch.no_grad()
-def do_evaluation(model, loader, device, conf, rank, pbar=True):
+def run_evaluation(model, loader, device, conf, rank, pbar=True):
     model.eval()
     results = {}
-    pr_metrics = defaultdict(PRMetric)
+    pr_metrics = defaultdict(tools.PRMetric)
     figures = []
     plot_ids = np.random.choice(
         len(loader), min(len(loader), conf.num_eval_plots), replace=False
@@ -92,7 +166,7 @@ def do_evaluation(model, loader, device, conf, rank, pbar=True):
     for i, data in enumerate(
         tqdm(loader, desc="Evaluation", ascii=True, disable=not pbar)
     ):
-        data = batch_to_device(data, device, non_blocking=True)
+        data = misc.batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
             pred = model(data)
             losses, metrics = model.loss(pred, data)
@@ -105,12 +179,12 @@ def do_evaluation(model, loader, device, conf, rank, pbar=True):
         numbers = {**metrics, **{"loss/" + k: v for k, v in losses.items()}}
         for k, v in numbers.items():
             if k not in results:
-                results[k] = AverageMetric()
+                results[k] = tools.AverageMetric()
                 if k in conf.median_metrics:
-                    results[k + "_median"] = MedianMetric()
+                    results[k + "_median"] = tools.MedianMetric()
                 if k in conf.recall_metrics.keys():
                     q = conf.recall_metrics[k]
-                    results[k + f"_recall{int(q)}"] = RecallMetric(q)
+                    results[k + f"_recall{int(q)}"] = tools.RecallMetric(q)
             results[k].update(v)
             if k in conf.median_metrics:
                 results[k + "_median"].update(v)
@@ -123,120 +197,15 @@ def do_evaluation(model, loader, device, conf, rank, pbar=True):
     return results, pr_metrics, figures
 
 
-def filter_parameters(params, regexp):
-    """Filter trainable parameters based on regular expressions."""
-
-    # Examples of regexp:
-    #     '.*(weight|bias)$'
-    #     'cnn\.(enc0|enc1).*bias'
-    def filter_fn(x):
-        n, p = x
-        match = re.search(regexp, n)
-        if not match:
-            p.requires_grad = False
-        return match
-
-    params = list(filter(filter_fn, params))
-    assert len(params) > 0, regexp
-    logger.info("Selected parameters:\n" + "\n".join(n for n, p in params))
-    return params
-
-
-def get_lr_scheduler(optimizer, conf):
-    """Get lr scheduler specified by conf.train.lr_schedule."""
-    if conf.type not in ["factor", "exp", None]:
-        if hasattr(conf.options, "schedulers"):
-            # Add option to chain multiple schedulers together
-            # This is useful for e.g. warmup, then cosine decay
-            schedulers = []
-            for scheduler_conf in conf.options.schedulers:
-                scheduler = get_lr_scheduler(optimizer, scheduler_conf)
-                schedulers.append(scheduler)
-
-            options = {k: v for k, v in conf.options.items() if k != "schedulers"}
-            return getattr(torch.optim.lr_scheduler, conf.type)(
-                optimizer, schedulers, **options
-            )
-
-        return getattr(torch.optim.lr_scheduler, conf.type)(optimizer, **conf.options)
-
-    # backward compatibility
-    def lr_fn(it):  # noqa: E306
-        if conf.type is None:
-            return 1
-        if conf.type == "factor":
-            return 1.0 if it < conf.start else conf.factor
-        if conf.type == "exp":
-            gam = 10 ** (-1 / conf.exp_div_10)
-            return 1.0 if it < conf.start else gam
-        else:
-            raise ValueError(conf.type)
-
-    return torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_fn)
-
-
-def pack_lr_parameters(params, base_lr, lr_scaling):
-    """Pack each group of parameters with the respective scaled learning rate."""
-    filters, scales = tuple(zip(*[(n, s) for s, names in lr_scaling for n in names]))
-    scale2params = defaultdict(list)
-    for n, p in params:
-        scale = 1
-        # TODO: use proper regexp rather than just this inclusion check
-        is_match = [f in n for f in filters]
-        if any(is_match):
-            scale = scales[is_match.index(True)]
-        scale2params[scale].append((n, p))
-    logger.info(
-        "Parameters with scaled learning rate:\n%s",
-        {s: [n for n, _ in ps] for s, ps in scale2params.items() if s != 1},
-    )
-    lr_params = [
-        {"lr": scale * base_lr, "params": [p for _, p in ps]}
-        for scale, ps in scale2params.items()
-    ]
-    return lr_params
-
-
-def write_dict_summaries(writer, name, items, step):
-    for k, v in items.items():
-        key = f"{name}/{k}"
-        if isinstance(v, dict):
-            writer.add_scalars(key, v, step)
-        elif isinstance(v, tuple):
-            writer.add_pr_curve(key, *v, step)
-        else:
-            writer.add_scalar(key, v, step)
-
-
-def write_image_summaries(writer, name, figures, step):
-    # Stacked grayscale is not supported, convert to RGB!
-    def _add_plot(tag, fig_or_image, step):
-        if isinstance(fig_or_image, (np.ndarray, torch.Tensor)):
-            if fig_or_image.ndim in (2, 3):
-                writer.add_image(tag, fig_or_image, step)
-            else:
-                assert fig_or_image.ndim == 4
-                writer.add_images(tag, fig_or_image, step)
-        else:
-            # Figure or list[Figure]
-            writer.add_figure(tag, fig_or_image, step, close=True)
-
-    if isinstance(figures, list):
-        for i, figs in enumerate(figures):
-            for k, fig in figs.items():
-                _add_plot(f"{name}/{i}_{k}", fig, step)
-    else:
-        for k, fig in figures.items():
-            _add_plot(f"{name}/{k}", fig, step)
-
-
 def training(rank, conf, output_dir, args):
     if args.restore:
         logger.info(f"Restoring from previous training of {args.experiment}")
         try:
-            init_cp = get_last_checkpoint(args.experiment, allow_interrupted=False)
+            init_cp = experiments.get_last_checkpoint(
+                args.experiment, allow_interrupted=False
+            )
         except AssertionError:
-            init_cp = get_best_checkpoint(args.experiment)
+            init_cp = experiments.get_best_checkpoint(args.experiment)
         logger.info(f"Restoring from checkpoint {init_cp.name}")
         init_cp = torch.load(
             str(init_cp), map_location="cpu", weights_only=not settings.ALLOW_PICKLE
@@ -246,7 +215,7 @@ def training(rank, conf, output_dir, args):
         epoch = init_cp["epoch"] + 1
 
         # get the best loss or eval metric from the previous best checkpoint
-        best_cp = get_best_checkpoint(args.experiment)
+        best_cp = experiments.get_best_checkpoint(args.experiment)
         best_cp = torch.load(
             str(best_cp), map_location="cpu", weights_only=not settings.ALLOW_PICKLE
         )
@@ -261,9 +230,9 @@ def training(rank, conf, output_dir, args):
             logger.info(f"Will fine-tune from weights of {conf.train.load_experiment}")
             # the user has to make sure that the weights are compatible
             try:
-                init_cp = get_last_checkpoint(conf.train.load_experiment)
+                init_cp = experiments.get_last_checkpoint(conf.train.load_experiment)
             except AssertionError:
-                init_cp = get_best_checkpoint(conf.train.load_experiment)
+                init_cp = experiments.get_best_checkpoint(conf.train.load_experiment)
             # init_cp = get_last_checkpoint(conf.train.load_experiment)
             init_cp = torch.load(
                 str(init_cp), map_location="cpu", weights_only=not settings.ALLOW_PICKLE
@@ -277,7 +246,7 @@ def training(rank, conf, output_dir, args):
             init_cp = None
 
     OmegaConf.set_struct(conf, True)  # prevent access to unknown entries
-    set_seed(conf.train.seed)
+    tools.set_seed(conf.train.seed)
     if rank == 0:
         writer = SummaryWriter(log_dir=str(output_dir))
 
@@ -307,14 +276,14 @@ def training(rank, conf, output_dir, args):
         device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"Using device {device}")
 
-    dataset = get_dataset(data_conf.name)(data_conf)
+    dataset = datasets.get_dataset(data_conf.name)(data_conf)
 
     # Optionally load a different validation dataset than the training one
     val_data_conf = conf.get("data_val", None)
     if val_data_conf is None:
         val_dataset = dataset
     else:
-        val_dataset = get_dataset(val_data_conf.name)(val_data_conf)
+        val_dataset = datasets.get_dataset(val_data_conf.name)(val_data_conf)
 
     # @TODO: add test data loader
 
@@ -341,7 +310,7 @@ def training(rank, conf, output_dir, args):
 
     stop = False
     signal.signal(signal.SIGINT, sigint_handler)
-    model = get_model(conf.model.name)(conf.model).to(device)
+    model = models.get_model(conf.model.name)(conf.model).to(device)
     if args.compile:
         model = torch.compile(model, mode=args.compile)
     if init_cp is not None:
@@ -368,10 +337,10 @@ def training(rank, conf, output_dir, args):
     }[conf.train.optimizer]
     params = [(n, p) for n, p in model.named_parameters() if p.requires_grad]
     if conf.train.opt_regexp:
-        params = filter_parameters(params, conf.train.opt_regexp)
+        params = tools.filter_parameters(params, conf.train.opt_regexp)
     all_params = [p for n, p in params]
 
-    lr_params = pack_lr_parameters(params, conf.train.lr, conf.train.lr_scaling)
+    lr_params = tools.pack_lr_parameters(params, conf.train.lr, conf.train.lr_scaling)
     optimizer = optimizer_fn(
         lr_params, lr=conf.train.lr, **conf.train.optimizer_options
     )
@@ -391,7 +360,9 @@ def training(rank, conf, output_dir, args):
 
     results = None  # fix bug with it saving
 
-    lr_scheduler = get_lr_scheduler(optimizer=optimizer, conf=conf.train.lr_schedule)
+    lr_scheduler = tools.get_lr_scheduler(
+        optimizer=optimizer, conf=conf.train.lr_schedule
+    )
     if args.restore:
         optimizer.load_state_dict(init_cp["optimizer"])
         if "lr_scheduler" in init_cp:
@@ -411,7 +382,7 @@ def training(rank, conf, output_dir, args):
             schedule=torch.profiler.schedule(
                 wait=5, warmup=1, active=args.profile, repeat=1, skip_first=10
             ),
-            on_trace_ready=tensorboard_trace_handler(
+            on_trace_ready=experiments.tensorboard_trace_handler(
                 str(output_dir), use_gzip=not args.store_raw_trace
             ),
             record_shapes=False,
@@ -419,7 +390,7 @@ def training(rank, conf, output_dir, args):
             with_stack=True,
         )
 
-    step_timer = StepTimer()
+    step_timer = tools.StepTimer()
     while epoch < conf.train.epochs and not stop:
         if rank == 0:
             logger.info(f"Starting epoch {epoch}")
@@ -432,7 +403,7 @@ def training(rank, conf, output_dir, args):
         ):
             for benchmark_name, eval_conf in conf.get("benchmarks", {}).items():
                 logger.info(f"Running eval on {benchmark_name}")
-                summaries, figures, _ = run_benchmark(
+                summaries, figures, _ = eval.run_benchmark(
                     benchmark_name,
                     eval_conf,
                     output_dir / str(epoch) / benchmark_name,
@@ -442,12 +413,16 @@ def training(rank, conf, output_dir, args):
                     f"{k} {v:.3E}" for k, v in summaries.items() if isinstance(v, float)
                 ]
                 logger.info(f'[{benchmark_name}] {{{", ".join(str_summaries)}}}')
-                write_dict_summaries(writer, f"test_{benchmark_name}", summaries, epoch)
-                write_image_summaries(writer, f"test_{benchmark_name}", figures, epoch)
+                tools.write_dict_summaries(
+                    writer, f"test_{benchmark_name}", summaries, epoch
+                )
+                tools.write_image_summaries(
+                    writer, f"test_{benchmark_name}", figures, epoch
+                )
                 del summaries, figures
 
         # set the seed
-        set_seed(conf.train.seed + epoch)
+        tools.set_seed(conf.train.seed + epoch)
 
         # update learning rate
         if conf.train.lr_schedule.on_epoch and epoch > 0:
@@ -475,7 +450,7 @@ def training(rank, conf, output_dir, args):
         if args.profile:
             prof.start()
 
-        train_loss_metrics = defaultdict(AverageMetric)
+        train_loss_metrics = defaultdict(tools.AverageMetric)
         for it, data in enumerate(train_loader):
             step_timer.measure("data")
             tot_it = (len(train_loader) * epoch + it) * (
@@ -494,7 +469,7 @@ def training(rank, conf, output_dir, args):
                 enabled=args.mixed_precision is not None,
                 dtype=mp_dtype,
             ):
-                data = batch_to_device(data, device, non_blocking=True)
+                data = misc.batch_to_device(data, device, non_blocking=True)
                 step_timer.measure("to_device")
                 pred = model(data)
                 step_timer.measure("forward")
@@ -587,7 +562,9 @@ def training(rank, conf, output_dir, args):
                         epoch, it, ", ".join(str_loss_metrics)
                     )
                 )
-                write_dict_summaries(writer, "training", loss_metrics, tot_n_samples)
+                tools.write_dict_summaries(
+                    writer, "training", loss_metrics, tot_n_samples
+                )
                 writer.add_scalar(
                     "training/lr", optimizer.param_groups[0]["lr"], tot_n_samples
                 )
@@ -627,13 +604,17 @@ def training(rank, conf, output_dir, args):
 
                 # Log memory stats
                 if torch.cuda.is_available():
-                    device_stats = collect_device_stats()
-                    write_dict_summaries(writer, "memory", device_stats, tot_n_samples)
+                    device_stats = tools.collect_device_stats()
+                    tools.write_dict_summaries(
+                        writer, "memory", device_stats, tot_n_samples
+                    )
 
             if conf.train.plot_every_iter is not None:
                 if it % conf.train.plot_every_iter == 0 and rank == 0:
                     figures = model.visualize(pred, data)
-                    write_image_summaries(writer, "training", figures, tot_n_samples)
+                    tools.write_image_summaries(
+                        writer, "training", figures, tot_n_samples
+                    )
 
             # Log gradients of the model. Useful for debugging.
             if conf.train.log_grad_every_iter is not None:
@@ -660,8 +641,8 @@ def training(rank, conf, output_dir, args):
                 or stop
                 or it == (len(train_loader) - 1)
             ):
-                with fork_rng(seed=conf.train.seed):
-                    results, pr_metrics, figures = do_evaluation(
+                with tools.fork_rng(seed=conf.train.seed):
+                    results, pr_metrics, figures = run_evaluation(
                         model,
                         val_loader,
                         device,
@@ -677,13 +658,15 @@ def training(rank, conf, output_dir, args):
                         if isinstance(v, float)
                     ]
                     logger.info(f'[Validation] {{{", ".join(str_results)}}}')
-                    write_dict_summaries(writer, "eval", results, tot_n_samples)
-                    write_dict_summaries(writer, "eval", pr_metrics, tot_n_samples)
-                    write_image_summaries(writer, "eval", figures, tot_n_samples)
+                    tools.write_dict_summaries(writer, "eval", results, tot_n_samples)
+                    tools.write_dict_summaries(
+                        writer, "eval", pr_metrics, tot_n_samples
+                    )
+                    tools.write_image_summaries(writer, "eval", figures, tot_n_samples)
                     # @TODO: optional always save checkpoint
                     if results[conf.train.best_key] < best_eval:
                         best_eval = results[conf.train.best_key]
-                        save_experiment(
+                        experiments.save_experiment(
                             model,
                             optimizer,
                             lr_scheduler,
@@ -701,9 +684,12 @@ def training(rank, conf, output_dir, args):
                 torch.cuda.empty_cache()  # should be cleared at the first iter
 
             # Handle checkpointing.
-            if (tot_it % conf.train.save_every_iter == 0 and tot_it > 0) and rank == 0:
+            if (
+                (tot_it % conf.train.save_every_iter == 0 and tot_it > 0)
+                or it == len(train_loader) - 1
+            ) and rank == 0:
                 if results is None:
-                    results, _, _ = do_evaluation(
+                    results, _, _ = run_evaluation(
                         model,
                         val_loader,
                         device,
@@ -712,7 +698,7 @@ def training(rank, conf, output_dir, args):
                         pbar=(rank == 0),
                     )
                     best_eval = results[conf.train.best_key]
-                best_eval = save_experiment(
+                best_eval = experiments.save_experiment(
                     model,
                     optimizer,
                     lr_scheduler,
@@ -730,22 +716,6 @@ def training(rank, conf, output_dir, args):
             # Reset the step timer for the next iteration
             step_timer.reset()
 
-        # Epoch checkpointing: REMOVE
-        if rank == 0:
-            best_eval = save_experiment(
-                model,
-                optimizer,
-                lr_scheduler,
-                conf,
-                results,
-                best_eval,
-                epoch,
-                tot_it,
-                output_dir=output_dir,
-                stop=stop,
-                distributed=args.distributed,
-            )
-
         results = None  # free memory
         epoch += 1
 
@@ -756,7 +726,7 @@ def training(rank, conf, output_dir, args):
 
 def main_worker(rank, conf, output_dir, args):
     if rank == 0:
-        with capture_outputs(
+        with stdout_capturing.capture_outputs(
             output_dir / "log.txt", cleanup_interval=args.cleanup_interval
         ):
             training(rank, conf, output_dir, args)
@@ -765,101 +735,11 @@ def main_worker(rank, conf, output_dir, args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("experiment", type=str)
-    default_config_names = list_configs(Path(__file__).parent / "configs")
-    parser.add_argument(
-        "--conf",
-        type=str,
-        help=f"Configuration path (.yaml) or one of: {default_config_names}",
-    )
-    parser.add_argument(
-        "--mixed_precision",
-        "--mp",
-        default=None,
-        type=str,
-        choices=["float16", "bfloat16"],
-    )
-    parser.add_argument(
-        "--compile",
-        default=None,
-        type=str,
-        choices=["default", "reduce-overhead", "max-autotune"],
-    )
-    parser.add_argument(
-        "--cleanup_interval",
-        default=120,  # Cleanup log files every 120 seconds.
-        type=int,
-        help="Interval in seconds to cleanup log files",
-    )
-    parser.add_argument(
-        "--overfit", action="store_true", help="Overfit on a single batch"
-    )
-    parser.add_argument(
-        "--restore", action="store_true", help="Restore from previous experiment"
-    )
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Overwrite existing experiment directory",
-    )
-    parser.add_argument(
-        "--clean",
-        action="store_true",
-        help="Delete the output directory if it exists",
-    )
-    parser.add_argument(
-        "--distributed", action="store_true", help="Run in distributed mode"
-    )
-    parser.add_argument(
-        "--profile",
-        type=int,
-        default=None,
-        help="Profile the training with PyTorch profiler (number of steps to profile)",
-    )
-    parser.add_argument(
-        "--store_raw_trace",
-        action="store_true",
-        help="Save raw trace files (json) instead of compressed ones (gzip)",
-    )
-    parser.add_argument(
-        "--record_memory",
-        type=int,
-        default=None,
-        help="Record memory usage during training (number of steps to record)",
-    )
-    parser.add_argument(
-        "--print_arch", "--pa", action="store_true", help="Print model architecture"
-    )
-    parser.add_argument(
-        "--detect_anomaly",
-        "--da",
-        action="store_true",
-        help="Detect anomalies in gradients",
-    )
-
-    parser.add_argument(
-        "--debug_sync",
-        type=int,
-        default=0,
-        help="Debug ",
-    )
-    parser.add_argument(
-        "--log_it",
-        "--log_it",
-        action="store_true",
-        help="Log tensorboard on iteration (default is num_samples)",
-    )
-    parser.add_argument(
-        "--no_eval_0", action="store_true", help="Disable evaluation on the first epoch"
-    )
-    parser.add_argument("--run_benchmarks", action="store_true", help="Run benchmarks")
-    parser.add_argument("--strict", action="store_true", help="Strict config merge")
-    parser.add_argument("dotlist", nargs="*")
-    args = parser.parse_intermixed_args()
-
+    # Load command line arguments
+    args = parse_args()
     logger.info(f"Starting experiment {args.experiment}")
     output_dir = Path(settings.TRAINING_PATH, args.experiment)
+    # Setup output directory
     if output_dir.exists() and not (args.restore or args.overwrite or args.clean):
         raise FileExistsError(
             f"Output directory {output_dir} already exists. "
@@ -871,10 +751,11 @@ if __name__ == "__main__":
     output_dir.mkdir(exist_ok=args.overwrite or args.clean, parents=True)
     logger.info(f"Output directory: {output_dir}")
 
+    # Compose config
     conf = OmegaConf.from_cli(args.dotlist)
     OmegaConf.save(conf, str(output_dir / "cli_config.yaml"))
     if args.conf:
-        conf_path, raw_conf = compose_config(args.conf)
+        conf_path, raw_conf = experiments.compose_config(args.conf)
         OmegaConf.set_struct(raw_conf, args.strict)
         conf = OmegaConf.merge(raw_conf, conf)
         # Copy a more readable config file to the output dir
@@ -894,6 +775,8 @@ if __name__ == "__main__":
     for module in conf.train.get("submodules", []) + [__module_name__]:
         mod_dir = Path(__import__(str(module)).__file__).parent
         shutil.copytree(mod_dir, output_dir / module, dirs_exist_ok=True)
+
+    # Start actual training
     if args.distributed:
         args.n_gpus = torch.cuda.device_count()
         args.lock_file = output_dir / "distributed_lock"

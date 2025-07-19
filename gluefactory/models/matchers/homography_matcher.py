@@ -1,7 +1,4 @@
-from ...geometry.gt_generation import (
-    gt_line_matches_from_homography,
-    gt_matches_from_homography,
-)
+from ...geometry import gt_generation
 from ..base_model import BaseModel
 
 
@@ -36,7 +33,7 @@ class HomographyMatcher(BaseModel):
     def _forward(self, data):
         result = {}
         if self.conf.use_points:
-            result = gt_matches_from_homography(
+            result = gt_generation.gt_matches_from_homography(
                 data["keypoints0"],
                 data["keypoints1"],
                 data["H_0to1"],
@@ -44,18 +41,20 @@ class HomographyMatcher(BaseModel):
                 neg_th=self.conf.th_negative,
             )
         if self.conf.use_lines:
-            line_assignment, line_m0, line_m1 = gt_line_matches_from_homography(
-                data["lines0"],
-                data["lines1"],
-                data["valid_lines0"],
-                data["valid_lines1"],
-                data["view0"]["image"].shape,
-                data["view1"]["image"].shape,
-                data["H_0to1"],
-                self.conf.n_line_sampled_pts,
-                self.conf.line_perp_dist_th,
-                self.conf.overlap_th,
-                self.conf.min_visibility_th,
+            line_assignment, line_m0, line_m1 = (
+                gt_generation.gt_line_matches_from_homography(
+                    data["lines0"],
+                    data["lines1"],
+                    data["valid_lines0"],
+                    data["valid_lines1"],
+                    data["view0"]["image"].shape,
+                    data["view1"]["image"].shape,
+                    data["H_0to1"],
+                    self.conf.n_line_sampled_pts,
+                    self.conf.line_perp_dist_th,
+                    self.conf.overlap_th,
+                    self.conf.min_visibility_th,
+                )
             )
             result["line_matches0"] = line_m0
             result["line_matches1"] = line_m1

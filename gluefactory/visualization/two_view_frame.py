@@ -3,8 +3,8 @@ import pprint
 import numpy as np
 
 from ..utils import misc
+from . import tools as vtools
 from . import viz2d
-from .tools import _COMMON, RadioHideTool, ToggleTool, __plot_dict__
 
 
 class FormatPrinter(pprint.PrettyPrinter):
@@ -24,7 +24,7 @@ class TwoViewFrame:
         "summary_visible": False,
     }
 
-    plot_dict = __plot_dict__
+    plot_dict = vtools.__plot_dict__
 
     childs = []
 
@@ -55,7 +55,7 @@ class TwoViewFrame:
         self.handle = None
         self.radios = self.fig.canvas.manager.toolmanager.add_tool(
             "switch plot",
-            RadioHideTool,
+            vtools.RadioHideTool,
             options=self.options,
             callback_fn=self.draw,
             active=conf.default,
@@ -65,7 +65,7 @@ class TwoViewFrame:
 
         self.toggle_summary = self.fig.canvas.manager.toolmanager.add_tool(
             "toggle summary",
-            ToggleTool,
+            vtools.ToggleTool,
             toggled=self.conf.summary_visible,
             callback_fn=self.set_summary_visible,
             keymap="t",
@@ -74,9 +74,9 @@ class TwoViewFrame:
 
         self.toggle_lines = self.fig.canvas.manager.toolmanager.add_tool(
             "show lines",
-            RadioHideTool,
+            vtools.RadioHideTool,
             options=["auto", "on", "off"],
-            active=_COMMON["DRAW_LINE_MODE"],
+            active=vtools._COMMON["DRAW_LINE_MODE"],
             callback_fn=self.toggle_lines,
             keymap="_",
             description="Toggle visibility of lines in the plot",
@@ -143,7 +143,7 @@ class TwoViewFrame:
 
     def toggle_lines(self, value):
         """toggle visibility of lines in the plot"""
-        _COMMON["DRAW_LINE_MODE"] = value
+        vtools._COMMON["DRAW_LINE_MODE"] = value
         return self.draw(self.conf.default)
 
     def clear(self):

@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from .tensor import batch_to_device
+from . import misc
 
 
 @torch.no_grad()
@@ -30,7 +30,7 @@ def export_predictions(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device).eval()
     for data_ in tqdm(loader):
-        data = batch_to_device(data_, device, non_blocking=True)
+        data = misc.batch_to_device(data_, device, non_blocking=True)
         pred = model(data)
         if callback_fn is not None:
             pred = {**callback_fn(pred, data), **pred}

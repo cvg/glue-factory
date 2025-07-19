@@ -16,8 +16,7 @@ import pkg_resources
 import torch
 from omegaconf import OmegaConf
 
-from .. import settings
-from ..models import get_model
+from .. import models, settings
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +134,7 @@ def load_experiment(
     loaded_conf = OmegaConf.create(ckpt["conf"])
     OmegaConf.set_struct(loaded_conf, False)
     conf = OmegaConf.merge(loaded_conf.model, OmegaConf.create(conf))
-    model = get_model(conf.name)(conf).eval()
+    model = models.get_model(conf.name)(conf).eval()
 
     state_dict = ckpt["model"]
     dict_params = set(state_dict.keys())

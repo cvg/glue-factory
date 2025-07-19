@@ -16,8 +16,7 @@ from torch.utils.data._utils.collate import (
     np_str_obj_array_pattern,
 )
 
-from ..utils.tensor import string_classes
-from ..utils.tools import set_num_threads, set_seed
+from ..utils import tools, types
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +37,10 @@ def worker_init_fn(i):
     info = get_worker_info()
     if hasattr(info.dataset, "conf"):
         conf = info.dataset.conf
-        set_seed(info.id + conf.seed)
-        set_num_threads(conf.num_threads)
+        tools.set_seed(info.id + conf.seed)
+        tools.set_num_threads(conf.num_threads)
     else:
-        set_num_threads(1)
+        tools.set_num_threads(1)
 
 
 def collate(batch):
@@ -76,7 +75,7 @@ def collate(batch):
         return torch.tensor(batch, dtype=torch.float64)
     elif isinstance(elem, int):
         return torch.tensor(batch)
-    elif isinstance(elem, string_classes):
+    elif isinstance(elem, types.STRING_CLASSES):
         return batch
     elif isinstance(elem, collections.abc.Mapping):
         return {key: collate([d[key] for d in batch]) for key in elem}

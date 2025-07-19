@@ -2,7 +2,7 @@ import deeplsd.models.deeplsd_inference as deeplsd_inference
 import numpy as np
 import torch
 
-from ...settings import DATA_PATH
+from ... import settings
 from ..base_model import BaseModel
 
 
@@ -28,7 +28,7 @@ class DeepLSD(BaseModel):
             assert (
                 self.conf.max_num_lines is not None
             ), "Missing max_num_lines parameter"
-        ckpt = DATA_PATH / "weights/deeplsd_md.tar"
+        ckpt = settings.DATA_PATH / "weights/deeplsd_md.tar"
         if not ckpt.is_file():
             self.download_model(ckpt)
         ckpt = torch.load(ckpt, map_location="cpu")
