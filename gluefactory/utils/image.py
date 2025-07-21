@@ -133,13 +133,24 @@ def load_image(path: Path, grayscale=False) -> torch.Tensor:
     return numpy_image_to_torch(image)
 
 
-def sample_rgb(image: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
-    return F.grid_sample(
-        image[None].to(coords.device),
-        coords[None],
-        mode="bilinear",
-        align_corners=False,
-    )[0]
+def grid_sample(
+    image: torch.Tensor, coords: torch.Tensor, interpolation: str = "bilinear"
+):
+    assert image.dim() == coords.dim()
+    is_batched = image.dim() == 4
+
+    if is_batched:
+        assert coords.dim() == 4
+        return F.grid_sample(
+            image.to(coords.device), coords, interpolation, align_corners=False
+        )
+    else:
+        return F.grid_sample(
+            image[None].to(coords.device),
+            coords[None],
+            mode=interpolation,
+            align_corners=False,
+        )[0]
 
 
 def get_pixel_grid(
@@ -180,3 +191,19 @@ def get_pixel_grid(
         # In case fmaps are at a different image resolution
         grid *= camera.size / grid.new_tensor([w, h])
     return grid
+
+
+def coords_to_image(coords):
+    return coords.transpose(-2, -1).transpose(-3, -2)
+
+
+def image_to_coords(image):
+    return image.transpose(-3, -2).transpose(-2, -1)
+
+
+def denormalize_coords(coords):
+    """Denormalize coordinates from [-1, 1] to [0, H-1] or [0, W-1]"""
+    coords = coords.clone()
+    coords[..., 0] = (coords[..., 0] + 1) / 2 * coords.shape[-1]
+    coords[..., 1] = (coords[..., 1] + 1) / 2 * coords.shape[-2]
+    return coords

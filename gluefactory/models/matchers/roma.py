@@ -24,7 +24,26 @@ except ImportError:
     )
 
 from ...utils import misc
+from ...utils.image import (
+    coords_to_image,
+    denormalize_coords,
+    get_pixel_grid,
+    grid_sample,
+    image_to_coords,
+)
 from .. import base_model
+
+
+def cycle_dist(
+    q_to_ref: torch.Tensor, ref_to_q: torch.Tensor, normalized: bool = False
+) -> torch.Tensor:
+    q_to_ref_to_q = image_to_coords(grid_sample(coords_to_image(ref_to_q), q_to_ref))
+
+    return torch.linalg.norm(
+        get_pixel_grid(fmap=q_to_ref, normalized=normalized)
+        - (q_to_ref_to_q if normalized else denormalize_coords(q_to_ref_to_q)),
+        dim=-1,
+    )
 
 
 def flow_to_warp(
@@ -91,6 +110,7 @@ class RoMA(base_model.BaseModel):
         "output_shape": None,  # like input image
         "sample": False,
         "mixed_precision": True,  # mixed precision
+        "add_cycle_error": False,
     }
 
     required_data_keys = ["view0", "view1"]
@@ -215,7 +235,11 @@ class RoMA(base_model.BaseModel):
         else:
             pred_qtos = self.estimate_warp(data0["image"], data1["image"])
             pred_stoq = self.estimate_warp(data1["image"], data0["image"])
+
         data = {**misc.to_view(pred_qtos, "0"), **misc.to_view(pred_stoq, "1")}
+        if self.conf.add_cycle_error:
+            data["cycle_error0"] = cycle_dist(data["warp0"], data["warp1"])
+            data["cycle_error1"] = cycle_dist(data["warp1"], data["warp0"])
         return data
 
     def estimate_warp_symmetric(
@@ -308,7 +332,7 @@ if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
 
-    from ...utils.image import ImagePreprocessor, get_pixel_grid, sample_rgb
+    from ...utils.image import ImagePreprocessor
     from ...utils.tensor import rbd
     from ...visualization import viz2d
 
@@ -328,7 +352,7 @@ if __name__ == "__main__":
     image0, image1 = data0["image"], data1["image"]
 
     device = "cuda"
-    dkm_model = RoMA({"symmetric": True}).eval().to(device)
+    dkm_model = RoMA({"symmetric": True, "add_cycle_error": True}).eval().to(device)
     data = {
         "view0": {"image": image0.to(device)[None]},
         "view1": {"image": image1.to(device)[None]},
@@ -340,10 +364,10 @@ if __name__ == "__main__":
     q_coords0 = get_pixel_grid(fmap=pred["warp0"], normalized=True)
     q_coords1 = get_pixel_grid(fmap=pred["warp1"], normalized=True)
 
-    image_0to0 = sample_rgb(image0, q_coords0)
-    image_1to1 = sample_rgb(image1, q_coords1)
-    image_1to0 = sample_rgb(image1, pred["warp0"])
-    image_0to1 = sample_rgb(image0, pred["warp1"])
+    image_0to0 = grid_sample(image0, q_coords0)
+    image_1to1 = grid_sample(image1, q_coords1)
+    image_1to0 = grid_sample(image1, pred["warp0"])
+    image_0to1 = grid_sample(image0, pred["warp1"])
 
     white0, white1 = torch.ones_like(certainty0).to(device), torch.ones_like(
         certainty1
