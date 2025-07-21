@@ -53,6 +53,7 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
     if default:
         conf = OmegaConf.merge(default, conf)
 
+    name = ""
     if args.tag:
         name = args.tag
     elif args.conf and checkpoint_name:
@@ -63,6 +64,9 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
         name = checkpoint_name
     if len(args.dotlist) > 0 and not args.tag:
         name = name + "_" + ":".join(args.dotlist)
+
+    if not name:
+        raise ValueError("No tag provided. Please provide a tag with --tag or --conf.")
     logger.info("Running benchmark: %s", benchmark)
     logger.info("Experiment tag: %s", name)
     logger.info("Config:")
@@ -74,7 +78,7 @@ def load_model(model_conf, checkpoint):
     if checkpoint:
         model = experiments.load_experiment(checkpoint, conf=model_conf).eval()
     else:
-        model = get_model("two_view_pipeline")(model_conf).eval()
+        model = get_model(model_conf.name)(model_conf).eval()
     if not model.is_initialized():
         raise ValueError(
             "The provided model has non-initialized parameters. "
