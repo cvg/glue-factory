@@ -6,7 +6,10 @@ import cv2
 import kornia
 import numpy as np
 import torch
+import torch.nn.functional as F
 from omegaconf import OmegaConf
+
+from ..geometry.wrappers import Camera
 
 
 class ImagePreprocessor:
@@ -128,3 +131,52 @@ def numpy_image_to_torch(image: np.ndarray) -> torch.Tensor:
 def load_image(path: Path, grayscale=False) -> torch.Tensor:
     image = read_image(path, grayscale=grayscale)
     return numpy_image_to_torch(image)
+
+
+def sample_rgb(image: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+    return F.grid_sample(
+        image[None].to(coords.device),
+        coords[None],
+        mode="bilinear",
+        align_corners=False,
+    )[0]
+
+
+def get_pixel_grid(
+    *,
+    fmap: torch.Tensor | None = None,  # B x H X W X D
+    camera: Camera | None = None,
+    size: Optional[tuple[int, int]] = None,
+    device: torch.device | None = None,
+    dtype=torch.float32,
+    normalized: bool = False,
+) -> torch.Tensor:
+    if fmap is None:
+        if camera is None:
+            if size is None:
+                raise ValueError("Specify fmap, size, or camera")
+            w, h = size
+        else:
+            w, h = camera.size.int()
+            device = camera.device
+            dtype = camera.dtype
+    else:
+        *_, h, w, _ = fmap.shape
+        device = fmap.device
+        dtype = fmap.dtype
+    grid = torch.stack(
+        torch.meshgrid(
+            torch.arange(w, dtype=dtype, device=device),
+            torch.arange(h, dtype=dtype, device=device),
+            indexing="xy",
+        ),
+        dim=-1,
+    )
+    grid += 0.5
+    if normalized:
+        grid *= 2 / grid.new_tensor([w, h])
+        grid -= 1
+    elif fmap is not None and camera is not None:
+        # In case fmaps are at a different image resolution
+        grid *= camera.size / grid.new_tensor([w, h])
+    return grid
