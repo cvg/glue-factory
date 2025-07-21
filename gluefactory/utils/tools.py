@@ -10,7 +10,7 @@ import os
 import random
 import re
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from contextlib import contextmanager
 
 import numpy as np
@@ -155,9 +155,12 @@ def cal_error_auc(errors, thresholds):
 
 class AUCMetric:
     def __init__(self, thresholds, elements=None):
-        self._elements = elements
+        if elements is None:
+            self._elements = []
+        else:
+            self._elements = elements
         self.thresholds = thresholds
-        if not isinstance(thresholds, list):
+        if not isinstance(thresholds, Sequence):
             self.thresholds = [thresholds]
 
     def update(self, tensor):
