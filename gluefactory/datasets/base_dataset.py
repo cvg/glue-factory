@@ -4,6 +4,7 @@ See mnist.py for an example of dataset.
 """
 
 import collections
+import dataclasses
 import logging
 from abc import ABCMeta, abstractmethod
 
@@ -91,6 +92,9 @@ def collate(batch):
         return [collate(samples) for samples in transposed]
     elif elem is None:
         return elem
+    elif dataclasses.is_dataclass(elem):
+        # do not convert dataclass until we move to tensordict
+        return batch
     else:
         # try to stack anyway in case the object implements stacking.
         return torch.stack(batch, 0)
@@ -126,6 +130,7 @@ class BaseDataset(metaclass=ABCMeta):
         "prefetch_factor": 2,
     }
     default_conf = {}
+    strict_conf = False
 
     def __init__(self, conf):
         """Perform some logic and call the _init method of the child model."""
@@ -133,7 +138,7 @@ class BaseDataset(metaclass=ABCMeta):
             OmegaConf.create(self.base_default_conf),
             OmegaConf.create(self.default_conf),
         )
-        OmegaConf.set_struct(default_conf, True)
+        OmegaConf.set_struct(default_conf, self.strict_conf)
         if isinstance(conf, dict):
             conf = OmegaConf.create(conf)
         self.conf = OmegaConf.merge(default_conf, conf)
