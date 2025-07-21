@@ -16,12 +16,13 @@ class ImageFolder(base_dataset.BaseDataset, torch.utils.data.Dataset):
     default_conf = {
         "glob": ["*.jpg", "*.png", "*.jpeg", "*.JPG", "*.PNG"],
         "images": "???",
+        "image_list": None,
         "root_folder": "/",
         "preprocessing": preprocess.ImagePreprocessor.default_conf,
     }
 
     def _init(self, conf):
-        self.root = conf.root_folder
+        self.root = Path(conf.root_folder)
         if isinstance(conf.images, str):
             if not Path(conf.images).is_dir():
                 with open(conf.images, "r") as f:
@@ -36,11 +37,11 @@ class ImageFolder(base_dataset.BaseDataset, torch.utils.data.Dataset):
                     raise ValueError(
                         f"Could not find any image in folder: {conf.images}."
                     )
-                self.images = [i.relative_to(conf.images) for i in self.images]
-                self.root = conf.images
+                self.images = [str(i.relative_to(conf.images)) for i in self.images]
+                self.root = Path(conf.images)
                 logging.info(f"Found {len(self.images)} images in folder.")
         elif isinstance(conf.images, omegaconf.listconfig.ListConfig):
-            self.images = conf.images.to_container()
+            self.images = omegaconf.OmegaConf.to_container(conf.images, resolve=True)
         else:
             raise ValueError(conf.images)
 
@@ -50,9 +51,10 @@ class ImageFolder(base_dataset.BaseDataset, torch.utils.data.Dataset):
         return self
 
     def __getitem__(self, idx):
-        path = self.images[idx]
+        image_name = self.images[idx]
+        path = self.root / image_name
         img = preprocess.load_image(path)
-        data = {"name": str(path), **self.preprocessor(img)}
+        data = {"name": image_name, **self.preprocessor(img)}
         return data
 
     def __len__(self):
