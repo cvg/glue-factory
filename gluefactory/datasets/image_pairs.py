@@ -9,6 +9,7 @@ import torch
 
 from .. import settings
 from ..geometry import reconstruction
+from ..models import cache_loader
 from ..utils import preprocess
 from .base_dataset import BaseDataset
 
@@ -50,6 +51,11 @@ class ImagePairs(BaseDataset, torch.utils.data.Dataset):
         "root": "???",
         "preprocessing": preprocess.ImagePreprocessor.default_conf,
         "extra_data": None,  # relative_pose, homography
+        "load_features": {
+            "do": False,
+            **cache_loader.CacheLoader.default_conf,
+            "collate": False,
+        },
     }
 
     def _init(self, conf):
@@ -62,13 +68,21 @@ class ImagePairs(BaseDataset, torch.utils.data.Dataset):
             self.items = [line.rstrip() for line in f]
         self.preprocessor = preprocess.ImagePreprocessor(conf.preprocessing)
 
+        if conf.load_features.do:
+            self.feature_loader = cache_loader.CacheLoader(conf.load_features)
+
     def get_dataset(self, split):
         return self
 
     def _read_view(self, name):
         path = settings.DATA_PATH / self.conf.root / name
         img = preprocess.load_image(path)
-        return self.preprocessor(img)
+        data = self.preprocessor(img)
+        data["name"] = name
+        if self.conf.load_features.do:
+            features = self.feature_loader({k: [v] for k, v in data.items()})
+            data = {"cache": features, **data}
+        return data
 
     def __getitem__(self, idx):
         line = self.items[idx]
