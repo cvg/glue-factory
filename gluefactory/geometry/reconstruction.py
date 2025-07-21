@@ -3,15 +3,30 @@ Convenience classes for an SE3 pose and a pinhole Camera with lens distortion.
 Based on PyTorch tensors: differentiable, batched, with GPU support.
 """
 
+import dataclasses
+import logging
 import math
-from typing import Dict, List, NamedTuple, Optional, Tuple, Union
+from pathlib import Path
+from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
+
+try:
+    import pycolmap
+except ImportError:
+    pycolmap = None
+    print(
+        "pycolmap not found, COLMAP support is disabled. "
+        "Install it with `pip install pycolmap`."
+    )
+
 import torch
 import torch.nn.functional as tnf
 
-from ..utils import tensor
+from ..utils import misc, tensor, tools
 from . import transforms as gtr
+
+logger = logging.getLogger(__name__)
 
 
 class Pose(tensor.TensorWrapper):
@@ -74,8 +89,11 @@ class Pose(tensor.TensorWrapper):
     @classmethod
     def from_pycolmap(cls, image):
         """Pose from a COLMAP Image."""
+        assert pycolmap is not None, "pycolmap is not installed."
+        w_t_c = image.cam_from_world()
         return cls.from_Rt(
-            torch.from_numpy(image.rotmat()), torch.from_numpy(image.tvec)
+            torch.from_numpy(w_t_c.rotation.matrix()),
+            torch.from_numpy(w_t_c.translation),
         )
 
     @property
@@ -174,7 +192,7 @@ class Pose(tensor.TensorWrapper):
 
     def angular_error(self, other: "Pose", agg="max") -> torch.Tensor:
         return {
-            "max": lambda x: x.max(-1),
+            "max": lambda x: x.max(-1).values,
             "mean": lambda x: x.mean(-1),
             "dr": lambda x: x[..., 0],
             "dt": lambda x: x[..., 1],
@@ -217,9 +235,10 @@ class Camera(tensor.TensorWrapper):
 
     @classmethod
     def from_pycolmap(cls, camera):
+        assert pycolmap is not None, "pycolmap is not installed."
         return cls.from_colmap(
             {
-                "model": camera.model_name,
+                "model": camera.model.name,
                 "width": camera.width,
                 "height": camera.height,
                 "params": camera.params,
@@ -391,3 +410,151 @@ class Camera(tensor.TensorWrapper):
 
     def __repr__(self):
         return f"Camera {self.shape} {self.dtype} {self.device}"
+
+
+@dataclasses.dataclass
+class Reconstruction:
+    w_t_c: Pose  # batched
+    cameras: Camera  # batched
+    camera_idx: torch.Tensor  # int
+    image_names: list[str]
+    registered: torch.Tensor  # bool
+
+    @classmethod
+    def from_colmap(cls, colmap_model: Path):
+        if isinstance(colmap_model, Path):
+            colmap_model = pycolmap.Reconstruction(colmap_model)
+        reg_image_ids = sorted(colmap_model.reg_image_ids())
+        reg_images = [
+            colmap_model.images[reg_image_id] for reg_image_id in reg_image_ids
+        ]
+        camera_ids, cameras = list(
+            zip(
+                *[
+                    (cam_id, Camera.from_pycolmap(cam))
+                    for cam_id, cam in colmap_model.cameras.items()
+                ]
+            )
+        )
+        cameras = torch.stack(cameras)
+        camera_idx = [camera_ids.index(img.camera_id) for img in reg_images]
+        c_t_w = torch.stack([Pose.from_pycolmap(img) for img in reg_images])
+        image_names = [img.name for img in reg_images]
+
+        return cls(
+            w_t_c=c_t_w.inv().float(),
+            cameras=cameras.float(),
+            camera_idx=torch.Tensor(camera_idx).long(),
+            image_names=image_names,
+            registered=torch.ones(len(reg_image_ids), dtype=bool),
+        )
+
+    def get_camera(self, image_id: int) -> Camera:
+        return self.cameras[self.camera_idx[image_id]]
+
+    def to(self, device: torch.device | str) -> "Reconstruction":
+        for attr in dataclasses.fields(self):
+            if attr.name == "registered":
+                continue
+            setattr(
+                self, attr.name, misc.batch_to_device(getattr(self, attr.name), device)
+            )
+        return self
+
+    def cuda(self) -> "Reconstruction":
+        """Move the reconstruction to the GPU."""
+        return self.to("cuda")
+
+    def cpu(self) -> "Reconstruction":
+        """Move the reconstruction to the CPU."""
+        return self.to("cpu")
+
+    def clone(self) -> "Reconstruction":
+        return Reconstruction(
+            self.w_t_c.clone(),
+            self.cameras.clone(),
+            self.camera_idx.clone(),
+            self.registered.clone(),
+            image_names=self.image_names.copy(),
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"Reconstruction: {self.num_images} images, "
+            f"{self.num_reg_images} registered, "
+            f"cameras {self.cameras.shape}, "
+            f"poses {self.w_t_c.shape}"
+            f" {self.w_t_c.dtype} {self.w_t_c.device}"
+        )
+
+    @property
+    def reg_image_ids(self) -> list[int]:
+        return torch.where(self.registered)[0].tolist()
+
+    @property
+    def image_ids(self) -> list[int]:
+        return torch.arange(self.num_images).tolist()
+
+    @property
+    def non_reg_image_ids(self) -> list[int]:
+        return torch.where(~self.registered)[0].tolist()
+
+    @property
+    def num_images(self) -> int:
+        return self.w_t_c.shape[0]
+
+    @property
+    def num_reg_images(self) -> int:
+        return self.registered.sum().item()
+
+    @property
+    def device(self):
+        return self.w_t_c.device
+
+    def compare_poses_to(
+        self,
+        gt: "Reconstruction",
+        thresholds: tuple[int, ...] = (1, 3, 5, 10, 20),  # degrees.
+        image_ids: Sequence[int] | None = None,  # Where to compare poses.
+        which: str = "max",  # dr, dt, mean
+    ) -> tuple[torch.Tensor, Sequence[float]]:
+        image_ids = image_ids if image_ids is not None else self.image_ids
+
+        # Get image ids in the ground truth reconstruction
+        gt_name_to_id = {n: i for i, n in enumerate(gt.image_names)}
+        gt_image_ids = [gt_name_to_id[self.image_names[i]] for i in image_ids]
+
+        # Get requested poses
+        w_t_c = self.w_t_c[image_ids]
+        w_tgt_c = gt.w_t_c[gt_image_ids]
+
+        # Compute relative poses
+        cj_t_ci = w_t_c[None].inv() @ w_t_c[:, None]
+        is_registered = self.registered[image_ids]
+        cj_tgt_ci = w_tgt_c[None].inv() @ w_tgt_c[:, None]
+
+        # Compute angular errors between all pairs of poses
+        errors = cj_t_ci.angular_error(cj_tgt_ci, agg=which)  # M x M
+
+        # Set invalid pairs to max error (180 degrees)
+        valid = is_registered[:, None] & is_registered[None, :]
+        errors = torch.where(valid, errors, 180.0)
+
+        # Remove diagonal elements (self-self)
+        errors_without_diag = errors[~torch.eye(errors.shape[0], dtype=bool)]
+        return (
+            errors,
+            tools.AUCMetric(thresholds, errors_without_diag.cpu().numpy()).compute(),
+        )
+
+    @classmethod
+    def empty_like(cls, ref_sfm):
+        w_t_c = torch.stack([Pose.identity(p.device, p.dtype) for p in ref_sfm.w_t_c])
+        registered = torch.zeros_like(ref_sfm.registered).bool()
+        return cls(
+            w_t_c=w_t_c,
+            image_names=ref_sfm.image_names,
+            cameras=ref_sfm.cameras.clone(),
+            camera_idx=ref_sfm.camera_idx.clone(),
+            registered=registered,
+        )
