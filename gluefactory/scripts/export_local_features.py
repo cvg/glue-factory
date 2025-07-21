@@ -6,7 +6,7 @@ import torch
 from omegaconf import OmegaConf
 
 from .. import datasets, models, settings
-from ..utils.export_predictions import export_predictions
+from ..utils.export import export_predictions
 
 resize = 1600
 

@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 from .. import datasets, settings
 from ..models.cache_loader import CacheLoader
-from ..utils.export_predictions import export_predictions
+from ..utils.export import export_predictions
 from . import eval_pipeline, io, utils
 
 
