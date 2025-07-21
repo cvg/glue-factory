@@ -111,6 +111,8 @@ class RoMA(base_model.BaseModel):
         "sample": False,
         "mixed_precision": True,  # mixed precision
         "add_cycle_error": False,
+        "sample_num_matches": 0,  # sample X sparse matches, <=0 means no sampling
+        "sample_mode": "threshold_balanced",
     }
 
     required_data_keys = ["view0", "view1"]
@@ -147,6 +149,26 @@ class RoMA(base_model.BaseModel):
             "rgb_std",
             torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(1, 3, 1, 1),
         )
+
+    def _forward(self, data):
+        data0, data1 = data["view0"], data["view1"]
+        if self._matcher.symmetric:
+            pred_qtos, pred_stoq = self.estimate_warp_symmetric(
+                data0["image"], data1["image"]
+            )
+        else:
+            pred_qtos = self.estimate_warp(data0["image"], data1["image"])
+            pred_stoq = self.estimate_warp(data1["image"], data0["image"])
+
+        data = {**misc.to_view(pred_qtos, "0"), **misc.to_view(pred_stoq, "1")}
+        if self.conf.add_cycle_error:
+            data["cycle_error0"] = cycle_dist(data["warp0"], data["warp1"])
+            data["cycle_error1"] = cycle_dist(data["warp1"], data["warp0"])
+
+        if self.conf.sample_num_matches > 0:
+            data.update(self.sample_matches(data))
+
+        return data
 
     def process_image(
         self,
@@ -225,22 +247,6 @@ class RoMA(base_model.BaseModel):
             return out
         else:
             return dc_qtos, dc_stoq
-
-    def _forward(self, data):
-        data0, data1 = data["view0"], data["view1"]
-        if self._matcher.symmetric:
-            pred_qtos, pred_stoq = self.estimate_warp_symmetric(
-                data0["image"], data1["image"]
-            )
-        else:
-            pred_qtos = self.estimate_warp(data0["image"], data1["image"])
-            pred_stoq = self.estimate_warp(data1["image"], data0["image"])
-
-        data = {**misc.to_view(pred_qtos, "0"), **misc.to_view(pred_stoq, "1")}
-        if self.conf.add_cycle_error:
-            data["cycle_error0"] = cycle_dist(data["warp0"], data["warp1"])
-            data["cycle_error1"] = cycle_dist(data["warp1"], data["warp0"])
-        return data
 
     def estimate_warp_symmetric(
         self, image0: torch.Tensor, image1: torch.Tensor
@@ -321,6 +327,47 @@ class RoMA(base_model.BaseModel):
 
         return flow_to_warp(query_to_support, certainty, low_res_certainty)
 
+    def sample_matches(self, pred: dict) -> dict:
+        """
+        Stack the coordinates of the warps for both views.
+        """
+        warp0, warp1 = pred["warp0"], pred["warp1"]
+
+        assert warp0.shape[0] == 1, "Batch size must be 1 for sampling matches."
+        certainty0, certainty1 = pred["certainty0"], pred["certainty1"]
+        coords0 = get_pixel_grid(fmap=warp0, normalized=True)
+        coords1 = get_pixel_grid(fmap=warp1, normalized=True)
+
+        matches0 = torch.cat([coords0, warp0], dim=-1)
+        matches1 = torch.cat([warp1, coords1], dim=-1)
+
+        matches = torch.cat([matches0.reshape(-1, 4), matches1.reshape(-1, 4)], dim=0)
+        scores = torch.cat([certainty0.reshape(-1), certainty1.reshape(-1)], dim=0)
+
+        m_kpts, scores = self._matcher.sample(
+            matches,
+            scores,
+            num=self.conf.sample_num_matches,
+        )  # N x 4, N
+
+        scores = scores.reshape(1, -1)
+        sparse_pred = {
+            "keypoints0": denormalize_coords(m_kpts[:, :2], warp0.shape[-3:-1]).reshape(
+                1, -1, 2
+            ),
+            "keypoints1": denormalize_coords(m_kpts[:, 2:], warp1.shape[-3:-1]).reshape(
+                1, -1, 2
+            ),
+            "matching_scores0": scores,
+            "matching_scores1": scores,
+            "keypoint_scores0": scores,
+            "keypoint_scores1": scores,
+            "matches0": torch.arange(0, scores.shape[-1]).to(scores.device)[None],
+            "matches1": torch.arange(0, scores.shape[-1]).to(scores.device)[None],
+        }
+
+        sparse_pred
+
     def loss(self, pred, data):
         raise NotImplementedError("Training is currently not supported.")
 
@@ -352,7 +399,7 @@ if __name__ == "__main__":
     image0, image1 = data0["image"], data1["image"]
 
     device = "cuda"
-    dkm_model = RoMA({"symmetric": True, "add_cycle_error": True}).eval().to(device)
+    dkm_model = RoMA({"symmetric": True, "sample_num_matches": 2048}).eval().to(device)
     data = {
         "view0": {"image": image0.to(device)[None]},
         "view1": {"image": image1.to(device)[None]},
@@ -387,3 +434,16 @@ if __name__ == "__main__":
     )
 
     plt.savefig("warp.png")
+
+    if "keypoints0" in pred:
+        kpts0 = pred["keypoints0"]
+        kpts1 = pred["keypoints1"]
+
+        viz2d.plot_images(
+            [image0, image1],
+            titles=["Image 0", "Image 1"],
+        )
+
+        viz2d.plot_matches(kpts0, kpts1)
+
+        plt.savefig("keypoints.png")

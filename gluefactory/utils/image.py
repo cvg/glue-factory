@@ -183,6 +183,9 @@ def get_pixel_grid(
         ),
         dim=-1,
     )
+    if fmap.ndim == 4:
+        b = fmap.shape[0]
+        grid = grid[None].expand(b, -1, -1, -1)
     grid += 0.5
     if normalized:
         grid *= 2 / grid.new_tensor([w, h])
@@ -201,9 +204,11 @@ def image_to_coords(image):
     return image.transpose(-3, -2).transpose(-2, -1)
 
 
-def denormalize_coords(coords):
+def denormalize_coords(coords, hw: tuple[int, int] | None = None) -> torch.Tensor:
     """Denormalize coordinates from [-1, 1] to [0, H-1] or [0, W-1]"""
     coords = coords.clone()
-    coords[..., 0] = (coords[..., 0] + 1) / 2 * coords.shape[-1]
-    coords[..., 1] = (coords[..., 1] + 1) / 2 * coords.shape[-2]
+    if hw is None:
+        hw = coords.shape[-3:-1]
+    coords[..., 0] = (coords[..., 0] + 1) / 2 * hw[1]
+    coords[..., 1] = (coords[..., 1] + 1) / 2 * hw[0]
     return coords
