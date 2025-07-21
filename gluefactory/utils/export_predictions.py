@@ -71,11 +71,30 @@ def export_predictions(
         try:
             name = data["name"][0]
             grp = hfile.create_group(name)
-            for k, v in pred.items():
-                grp.create_dataset(k, data=v)
+            dict_to_h5group(grp, pred)
         except RuntimeError:
             continue
 
         del pred
     hfile.close()
     return output_file
+
+
+def dict_to_h5group(h5grp, data):
+    """Write a nested dictionary to an h5 file."""
+    for k, v in data.items():
+        if isinstance(v, dict):
+            dict_to_h5group(h5grp.create_group(k), v)
+        elif isinstance(v, np.ndarray):
+            h5grp.create_dataset(k, data=v)
+        elif isinstance(v, torch.Tensor):
+            h5grp.create_dataset(k, data=v.cpu().numpy())
+        else:
+            h5grp.attrs[k] = v
+
+
+def dict_to_h5(file_path, data, modfe="w"):
+    """Write a nested dictionary to an h5 file."""
+    with h5py.File(file_path, modfe) as hfile:
+        dict_to_h5group(hfile, data)
+    return file_path

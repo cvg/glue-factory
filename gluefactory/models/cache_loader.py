@@ -47,8 +47,8 @@ def pad_line_features(pred, seq_l: int = None):
 def recursive_load(grp, pkeys):
     return {
         k: (
-            torch.from_numpy(grp[k].__array__())
-            if isinstance(grp[k], h5py.Dataset)
+            (torch.from_numpy(grp[k].__array__()) if k in grp else grp.attrs[k])
+            if k not in grp or isinstance(grp[k], h5py.Dataset)
             else recursive_load(grp[k], list(grp.keys()))
         )
         for k in pkeys
@@ -104,7 +104,9 @@ class CacheLoader(BaseModel):
             hfile = h5py.File(str(fpath), "r")
             grp = hfile[name]
             pkeys = (
-                self.conf.data_keys if self.conf.data_keys is not None else grp.keys()
+                self.conf.data_keys
+                if self.conf.data_keys is not None
+                else grp.keys() | grp.attrs.keys()
             )
             pred = recursive_load(grp, pkeys)
             if self.numeric_dtype is not None:
