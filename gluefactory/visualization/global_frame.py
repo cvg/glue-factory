@@ -32,7 +32,7 @@ class GlobalFrame:
     scatters = {}
 
     def __init__(
-        self, conf, results, loader, predictions, title=None, child_frame=None
+        self, conf, results, dataset, predictions, title=None, child_frame=None
     ):
         self.child_frame = child_frame
         if self.child_frame is not None:
@@ -41,7 +41,7 @@ class GlobalFrame:
 
         self.conf = OmegaConf.merge(self.default_conf, conf)
         self.results = results
-        self.loader = loader
+        self.dataset = dataset
         self.predictions = predictions
         self.metrics = set()
         for k, v in results.items():
@@ -200,7 +200,7 @@ class GlobalFrame:
         if self.child_frame is None:
             return
 
-        data = base_dataset.collate([self.loader.dataset[ind]])
+        data = base_dataset.collate([self.dataset[ind]])
 
         preds = {}
 
@@ -221,16 +221,16 @@ class GlobalFrame:
             summaries=summaries_i,
         )
 
-        frame.fig.canvas.mpl_connect(
-            "key_press_event",
-            functools.partial(
-                self.on_childframe_key_event, frame=frame, ind=ind, event=event
-            ),
-        )
+        if hasattr(frame, "fig"):
+            frame.fig.canvas.mpl_connect(
+                "key_press_event",
+                functools.partial(
+                    self.on_childframe_key_event, frame=frame, ind=ind, event=event
+                ),
+            )
         self.childs.append(frame)
-        # if plt.rcParams['backend'] == 'webagg':
-        #     self.fig.canvas.manager_class.refresh_all()
-        self.childs[-1].fig.show()
+        if hasattr(frame, "fig"):
+            self.childs[-1].show()
 
     def hover(self, event):
         if event.inaxes == self.axes:
@@ -272,19 +272,19 @@ class GlobalFrame:
 
     def on_childframe_key_event(self, key_event, frame, ind, event):
         if key_event.key == "delete":
-            plt.close(frame.fig)
+            frame.close()
             self.childs.remove(frame)
         elif key_event.key in ["left", "right", "shift+left", "shift+right"]:
             key = key_event.key
             if key.startswith("shift+"):
                 key = key.replace("shift+", "")
             else:
-                plt.close(frame.fig)
+                frame.close()
                 if frame in self.childs:
                     self.childs.remove(frame)
             new_ind = ind + 1 if key_event.key == "right" else ind - 1
             self.spawn_child(
                 self.names[0],
-                new_ind % len(self.loader),
+                new_ind % len(self.dataset),
                 event=event,
             )

@@ -32,7 +32,7 @@ if __name__ == "__main__":
         matplotlib.use(args.backend)
 
     bm = get_benchmark(args.benchmark)
-    loader = bm.get_dataloader()
+    dataset = bm.get_dataset()
 
     for name in args.dotlist:
         possible_paths = [
@@ -59,12 +59,14 @@ if __name__ == "__main__":
 
     plt.close("all")
 
+    from ..visualization.colmap_frame import COLMAPFrame
+
     frame = GlobalFrame(
         {"child": {"default": args.default_plot}, **vars(args)},
         results,
-        loader,
+        dataset,
         predictions,
-        child_frame=TwoViewFrame,
+        child_frame=COLMAPFrame,
     )
     frame.draw()
     plt.show()

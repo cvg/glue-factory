@@ -66,6 +66,11 @@ class EvalPipeline:
         pass
 
     @classmethod
+    def get_dataset(self, data_conf=None):
+        """Returns a dataset with samples for each eval datapoint"""
+        return self.get_dataloader(data_conf).dataset
+
+    @classmethod
     def get_dataloader(self, data_conf=None):
         """Returns a data loader with samples for each eval datapoint"""
         raise NotImplementedError

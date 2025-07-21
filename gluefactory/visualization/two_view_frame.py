@@ -1,5 +1,6 @@
 import pprint
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 from ..utils import misc
@@ -175,3 +176,10 @@ class TwoViewFrame:
         self.conf.summary_visible = visible
         [s.set_visible(visible) for s in self.summary_arts]
         self.fig.canvas.draw_idle()
+
+    def close(self):
+        plt.close(self.fig)
+
+    def show(self):
+        """Show the frame"""
+        self.fig.show()
