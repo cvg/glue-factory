@@ -22,6 +22,7 @@ class HlocPipeline(base.ReconstructionPipeline):
             "mapper_options": {},
             "camera_mode": "AUTO",
         },
+        "export_half": False,
     }
 
     @dataclasses.dataclass
@@ -67,7 +68,7 @@ class HlocPipeline(base.ReconstructionPipeline):
             image_loader,
             model.extractor,
             self.PathConfig(output_dir).feature_file,
-            as_half=False,
+            as_half=self.conf.export_half,
         )
         return self.PathConfig(output_dir).feature_file
 
@@ -81,7 +82,7 @@ class HlocPipeline(base.ReconstructionPipeline):
         hloc_output = self.PathConfig(output_dir)
         _ = self.extract_pairs(output_dir, data)
         pair_loader = data.pair_loader(
-            {},
+            {"num_workers": self.conf.data.get("num_workers", 8)},
             pairs_file=hloc_output.pairs_file,
             features_file=hloc_output.feature_file,
         )
@@ -90,7 +91,7 @@ class HlocPipeline(base.ReconstructionPipeline):
             pair_loader,
             model,
             hloc_output.matches_file,
-            as_half=False,
+            as_half=self.conf.export_half,
             keys=["matches0", "matches1", "matching_scores0", "matching_scores1"],
         )
         return hloc_output.matches_file
