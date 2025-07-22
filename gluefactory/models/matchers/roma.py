@@ -157,6 +157,9 @@ def match_keypoints_dense(
         img0.shape[-2:],
     )
 
+    # Pipe the keypoints again
+    mpred["keypoints0"] = data["keypoints0"]
+    mpred["keypoints1"] = data["keypoints1"]
     return mpred
 
 
