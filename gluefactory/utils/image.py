@@ -200,10 +200,12 @@ def get_pixel_grid(
 
 
 def coords_to_image(coords):
+    # ...HWC -> ...CHW
     return coords.transpose(-2, -1).transpose(-3, -2)
 
 
 def image_to_coords(image):
+    # ...CHW -> ...HWC
     return image.transpose(-3, -2).transpose(-2, -1)
 
 
