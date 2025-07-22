@@ -172,6 +172,8 @@ def plot_keypoints(kpts, colors="lime", ps=4, axes=None, a=1.0):
     if axes is None:
         axes = plt.gcf().axes
     for ax, k, c, alpha in zip(axes, kpts, colors, a):
+        if isinstance(k, torch.Tensor):
+            k = k.detach().cpu().numpy()
         ax.scatter(k[:, 0], k[:, 1], c=c, s=ps, linewidths=0, alpha=alpha)
 
 
