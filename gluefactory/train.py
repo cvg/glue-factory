@@ -154,6 +154,14 @@ def parse_args():
     return args
 
 
+def grad_norm(params):
+    return torch.nn.utils.get_total_norm([p.grad for p in params if p.grad is not None])
+
+
+def param_norm(params):
+    return torch.nn.utils.get_total_norm([p for p in params if p.requires_grad])
+
+
 @torch.no_grad()
 def run_evaluation(model, loader, device, conf, rank, pbar=True):
     model.eval()
@@ -481,7 +489,7 @@ def training(rank, conf, output_dir, args):
                 }
                 for k, v in loss_metrics.items():
                     if args.distributed:
-                        torch.distributed.all_reduce(v)
+                        torch.distributed.all_reduce(v.clone())
                         v /= args.n_gpus
                     train_loss_metrics[k].update(v)
                 step_timer.measure("loss_fn")
@@ -554,6 +562,10 @@ def training(rank, conf, output_dir, args):
                     logger.info("Stop tracking memory usage.")
 
             if (it % conf.train.log_every_iter == 0) and rank == 0:
+                writer.add_scalar(
+                    "l2/param_norm", param_norm(all_params), tot_n_samples
+                )
+                writer.add_scalar("l2/grad_norm", grad_norm(all_params), tot_n_samples)
                 loss_metrics = {k: v.compute() for k, v in train_loss_metrics.items()}
                 str_loss_metrics = [f"{k} {v:.3E}" for k, v in loss_metrics.items()]
                 # Write training losses
