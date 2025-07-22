@@ -30,6 +30,7 @@ from ...utils.image import (
     get_pixel_grid,
     grid_sample,
     image_to_coords,
+    normalize_coords,
 )
 from .. import base_model
 
@@ -113,8 +114,9 @@ class RoMA(base_model.BaseModel):
         "add_cycle_error": False,
         "sample_num_matches": 0,  # sample X sparse matches, <=0 means no sampling
         "sample_mode": "threshold_balanced",
+        "filter_threshold": 0.0,  # threshold for filtering matches
+        "max_norm_dist": 0.005,  # maximum distance for matching keypoints
     }
-
     required_data_keys = ["view0", "view1"]
 
     weight_urls = {
@@ -140,6 +142,7 @@ class RoMA(base_model.BaseModel):
             amp_dtype=torch.float16 if self.conf.mixed_precision else torch.float32,
         )
         self._matcher.symmetric = self.conf.symmetric
+        self._matcher.sample_thresh = self.conf.filter_threshold
 
         self.register_buffer(
             "rgb_mean",
@@ -160,15 +163,17 @@ class RoMA(base_model.BaseModel):
             pred_qtos = self.estimate_warp(data0["image"], data1["image"])
             pred_stoq = self.estimate_warp(data1["image"], data0["image"])
 
-        data = {**misc.to_view(pred_qtos, "0"), **misc.to_view(pred_stoq, "1")}
+        pred = {**misc.to_view(pred_qtos, "0"), **misc.to_view(pred_stoq, "1")}
         if self.conf.add_cycle_error:
-            data["cycle_error0"] = cycle_dist(data["warp0"], data["warp1"])
-            data["cycle_error1"] = cycle_dist(data["warp1"], data["warp0"])
+            pred["cycle_error0"] = cycle_dist(pred["warp0"], pred["warp1"])
+            pred["cycle_error1"] = cycle_dist(pred["warp1"], pred["warp0"])
 
         if self.conf.sample_num_matches > 0:
-            data.update(self.sample_matches(data))
-
-        return data
+            pred.update(self.sample_matches(pred))
+        elif "keypoints0" in data:
+            # Match existing keypoints
+            pred.update(self.match_keypoints(pred, data))
+        return pred
 
     def process_image(
         self,
@@ -366,7 +371,39 @@ class RoMA(base_model.BaseModel):
             "matches1": torch.arange(0, scores.shape[-1]).to(scores.device)[None],
         }
 
-        sparse_pred
+        return sparse_pred
+
+    def match_keypoints(self, pred: dict, data: dict) -> dict:
+        """Match existing keypoints from the data dictionary."""
+        # @TODO: Add mutual check
+        kpts0 = data["keypoints0"]
+        kpts1 = data["keypoints1"]
+        n_kpts0 = normalize_coords(kpts0, pred["warp0"].shape[-3:-1])
+        n_kpts1 = normalize_coords(kpts1, pred["warp1"].shape[-3:-1])
+
+        def find_matches(kpts_q, kpts_t, warp, cert):
+            kpts_q_to_t = grid_sample(warp.permute(0, 3, 1, 2), kpts_q[:, None])[
+                :, :, 0
+            ].permute(0, 2, 1)
+            scores = grid_sample(cert[:, None], kpts_q[:, None])[:, 0, 0]
+            dist = torch.cdist(kpts_q_to_t, kpts_t)
+            matches = torch.min(dist, dim=-1)
+            matches, d_scores = matches.indices, matches.values
+            valid = torch.isfinite(d_scores) & (d_scores < self.conf.max_norm_dist)
+            valid = valid & (scores > self.conf.filter_threshold)
+            return torch.where(valid, matches, -1), torch.where(valid, scores, 0)
+
+        mpred = {}
+        mpred["matches0"], mpred["matching_scores0"] = find_matches(
+            n_kpts0, n_kpts1, pred["warp0"], pred["certainty0"]
+        )
+        mpred["matches1"], mpred["matching_scores1"] = find_matches(
+            n_kpts1, n_kpts0, pred["warp1"], pred["certainty1"]
+        )
+        mpred["keypoints0"] = kpts0
+        mpred["keypoints1"] = kpts1
+
+        return mpred
 
     def loss(self, pred, data):
         raise NotImplementedError("Training is currently not supported.")
@@ -399,11 +436,21 @@ if __name__ == "__main__":
     image0, image1 = data0["image"], data1["image"]
 
     device = "cuda"
-    dkm_model = RoMA({"symmetric": True, "sample_num_matches": 2048}).eval().to(device)
+    dkm_model = RoMA({"symmetric": True, "sample_num_matches": 0}).eval().to(device)
     data = {
         "view0": {"image": image0.to(device)[None]},
         "view1": {"image": image1.to(device)[None]},
     }
+
+    from lightglue import SuperPoint
+
+    extractor = SuperPoint(max_num_keypoints=2048).eval().cuda()  # load the extractor
+
+    feats0 = extractor.extract(image0.to(device))
+    feats1 = extractor.extract(image1.to(device))
+
+    data.update({k + "0": v for k, v in feats0.items()})
+    data.update({k + "1": v for k, v in feats1.items()})
     pred = rbd(dkm_model(data))
     certainty0 = pred["certainty0"]
     certainty1 = pred["certainty1"]
@@ -444,6 +491,9 @@ if __name__ == "__main__":
             titles=["Image 0", "Image 1"],
         )
 
-        viz2d.plot_matches(kpts0, kpts1)
+        valid = pred["matches0"] > -1
+        kpts1 = kpts1[pred["matches0"]]
+        kpts0, kpts1 = kpts0[valid], kpts1[valid]
+        viz2d.plot_matches(kpts0, kpts1, a=0.2)
 
         plt.savefig("keypoints.png")

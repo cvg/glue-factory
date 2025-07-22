@@ -212,3 +212,13 @@ def denormalize_coords(coords, hw: tuple[int, int] | None = None) -> torch.Tenso
     coords[..., 0] = (coords[..., 0] + 1) / 2 * hw[1]
     coords[..., 1] = (coords[..., 1] + 1) / 2 * hw[0]
     return coords
+
+
+def normalize_coords(coords, hw: tuple[int, int] | None = None) -> torch.Tensor:
+    """Normalize coordinates from [0, H-1] or [0, W-1] to [-1, 1]"""
+    coords = coords.clone()
+    if hw is None:
+        hw = coords.shape[-3:-1]
+    coords[..., 0] = coords[..., 0] / hw[1] * 2 - 1
+    coords[..., 1] = coords[..., 1] / hw[0] * 2 - 1
+    return coords
