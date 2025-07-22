@@ -10,6 +10,8 @@ License: MIT
 Main differences to the original code:
 - Warps are by default the same size as the input images.
 - Unified API from gluefactory.
+- Upsampled resolution for image0 and image1 can differ.
+- Compute cycle distance as additional filter.
 """
 
 import logging
@@ -111,14 +113,14 @@ class RoMA(base_model.BaseModel):
         "weights": "outdoor",
         "upsample_preds": True,
         "symmetric": True,
-        "internal_shape": (560, 560),
-        "output_shape": None,  # like input image
+        "internal_hw": (560, 560),
+        "output_hw": None,  # like input image
         "sample": False,
         "mixed_precision": True,  # mixed precision
         "add_cycle_error": False,
         "sample_num_matches": 0,  # sample X sparse matches, <=0 means no sampling
         "sample_mode": "threshold_balanced",
-        "filter_threshold": 0.0,  # threshold for filtering matches
+        "filter_threshold": 0.05,  # threshold for filtering matches
         "max_kp_error": 2.0,  # maximum distance for matching keypoints (px)
     }
     required_data_keys = ["view0", "view1"]
@@ -138,7 +140,7 @@ class RoMA(base_model.BaseModel):
         )
 
         self._matcher = roma_model(
-            resolution=self.conf.internal_shape,
+            resolution=self.conf.internal_hw,
             upsample_preds=self.conf.upsample_preds,
             weights=weights,
             dinov2_weights=dinov2_weights,
@@ -167,19 +169,17 @@ class RoMA(base_model.BaseModel):
         else:
             pred_qtos = self.estimate_warp(data0["image"], data1["image"])
             pred_stoq = self.estimate_warp(data1["image"], data0["image"])
-
         pred = {**misc.to_view(pred_qtos, "0"), **misc.to_view(pred_stoq, "1")}
         if self.conf.add_cycle_error:
             pred["cycle_error0"] = cycle_dist(pred["warp0"], pred["warp1"])
             pred["cycle_error1"] = cycle_dist(pred["warp1"], pred["warp0"])
-
         if self.conf.sample_num_matches > 0:
             if "keypoints0" in data:
                 logger.warning(
                     "'sample_num_matches' is set, therefore keypoints will be ignored. "
                     "Using dense match sampling instead."
                 )
-            pred.update(self.sample_matches(pred, self.conf.sample_num_matches))
+            pred.update(self.sample_matches(pred, data, self.conf.sample_num_matches))
         elif "keypoints0" in data:
             # Match existing keypoints
             pred.update(
@@ -206,7 +206,7 @@ class RoMA(base_model.BaseModel):
         """
         if resize is not None:
             image = F.interpolate(
-                image, size=resize, mode="bilinear", align_corners=False
+                image, size=tuple(resize), mode="bilinear", align_corners=False
             )
         if normalize:
             image = (image - self.rgb_mean) / self.rgb_std
@@ -271,9 +271,9 @@ class RoMA(base_model.BaseModel):
         self, image0: torch.Tensor, image1: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         device = image0.device
-        internal_shape = tuple(self.conf.internal_shape)
-        query = self.process_image(image0, resize=internal_shape, normalize=True)
-        support = self.process_image(image1, resize=internal_shape, normalize=True)
+        internal_hw = self.conf.internal_hw
+        query = self.process_image(image0, resize=internal_hw, normalize=True)
+        support = self.process_image(image1, resize=internal_hw, normalize=True)
         batch = {"im_A": query, "im_B": support}
 
         finest_scale = 1
@@ -282,9 +282,9 @@ class RoMA(base_model.BaseModel):
         lr_certainty0, lr_certainty1 = dense_corresps[16]["certainty"].chunk(2)
 
         if self._matcher.upsample_preds:
-            size = self.conf.output_shape
-            query = self.process_image(image0, resize=size, normalize=True)
-            support = self.process_image(image1, resize=size, normalize=True)
+            output_hw = self.conf.output_hw
+            query = self.process_image(image0, resize=output_hw, normalize=True)
+            support = self.process_image(image1, resize=output_hw, normalize=True)
             query, support = query.to(device), support.to(device)
 
             dc_qtos, dc_stoq = self.upsample_flow_siamese(
@@ -314,9 +314,9 @@ class RoMA(base_model.BaseModel):
         self, query: torch.Tensor, support: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         device = query.device
-        internal_shape = tuple(self.conf.internal_shape)
-        query = self.process_image(query, resize=internal_shape, normalize=True)
-        support = self.process_image(support, resize=internal_shape, normalize=True)
+        internal_hw = self.conf.internal_hw
+        query = self.process_image(query, resize=internal_hw, normalize=True)
+        support = self.process_image(support, resize=internal_hw, normalize=True)
         batch = {"im_A": query, "im_B": support}
 
         finest_scale = 1
@@ -325,7 +325,7 @@ class RoMA(base_model.BaseModel):
         low_res_certainty = corresps[16]["certainty"]
 
         if self._matcher.upsample_preds:
-            size = self.conf.output_shape
+            size = self.conf.output_hw
             query = self.process_image(query, resize=size, normalize=True)
             support = self.process_image(support, resize=size, normalize=True)
             f_q_pyramid, f_s_pyramid = self._matcher.extract_backbone_features(
@@ -346,9 +346,10 @@ class RoMA(base_model.BaseModel):
 
         return flow_to_warp(query_to_support, certainty, low_res_certainty)
 
-    def sample_matches(self, pred: dict, num_matches: int) -> dict:
+    def sample_matches(self, pred: dict, data: dict, num_matches: int) -> dict:
         """Sample sparse matches from the predicted warps."""
         warp0, warp1 = pred["warp0"], pred["warp1"]
+        img0, img1 = data["view0"]["image"], data["view1"]["image"]
 
         assert warp0.shape[0] == 1, "Batch size must be 1 for sampling matches."
         certainty0, certainty1 = pred["certainty0"], pred["certainty1"]
@@ -369,10 +370,11 @@ class RoMA(base_model.BaseModel):
 
         scores = scores.reshape(1, -1)
         sparse_pred = {
-            "keypoints0": denormalize_coords(m_kpts[:, :2], warp0.shape[-3:-1]).reshape(
+            # In COLMAP coordinates, i.e. [0, 0] is the corner of the top-left pixel
+            "keypoints0": denormalize_coords(m_kpts[:, :2], img0.shape[-2:]).reshape(
                 1, -1, 2
             ),
-            "keypoints1": denormalize_coords(m_kpts[:, 2:], warp1.shape[-3:-1]).reshape(
+            "keypoints1": denormalize_coords(m_kpts[:, 2:], img1.shape[-2:]).reshape(
                 1, -1, 2
             ),
             "matching_scores0": scores,
@@ -390,17 +392,23 @@ class RoMA(base_model.BaseModel):
     ) -> dict:
         """Match existing keypoints from the data dictionary."""
         # @TODO: Add mutual check
-        kpts0 = data["keypoints0"]
-        kpts1 = data["keypoints1"]
+        kpts0 = data["keypoints0"]  # COLMAP coordinates
+        kpts1 = data["keypoints1"]  # COLMAP coordinates
 
-        def find_matches(kpts_q, kpts_t, warp, cert):
-            kpts_q = normalize_coords(kpts0, pred["warp0"].shape[-3:-1])
+        img0 = data["view0"]["image"]
+        img1 = data["view1"]["image"]
+
+        def find_matches(kpts_q, kpts_t, warp, cert, q_hw, t_hw):
+            # Normalize to [-1, 1] for grid sampling
+            kpts_q = normalize_coords(kpts0, q_hw)
             kpts_q_to_t = grid_sample(warp.permute(0, 3, 1, 2), kpts_q[:, None])[
                 :, :, 0
             ].permute(0, 2, 1)
             scores = grid_sample(cert[:, None], kpts_q[:, None])[:, 0, 0]
-            kpts_q_to_t = denormalize_coords(kpts_q_to_t, pred["warp1"].shape[-3:-1])
-            dist = torch.cdist(kpts_q_to_t, kpts_t)
+            # Corresponding coordinates in the other image (target), COLMAP coords.
+            kpts_q_to_t = denormalize_coords(kpts_q_to_t, t_hw)
+            # Output points are again in COLMAP coordinates
+            dist = torch.cdist(kpts_q_to_t, kpts_t)  # in pixels
             matches = torch.min(dist, dim=-1)
             matches, dist = matches.indices, matches.values
             valid = torch.isfinite(dist) & (dist < max_kp_error)
@@ -409,10 +417,20 @@ class RoMA(base_model.BaseModel):
 
         mpred = {}
         mpred["matches0"], mpred["matching_scores0"] = find_matches(
-            kpts0, kpts1, pred["warp0"], pred["certainty0"]
+            kpts0,
+            kpts1,
+            pred["warp0"],
+            pred["certainty0"],
+            img0.shape[-2:],
+            img1.shape[-2:],
         )
         mpred["matches1"], mpred["matching_scores1"] = find_matches(
-            kpts1, kpts0, pred["warp1"], pred["certainty1"]
+            kpts1,
+            kpts0,
+            pred["warp1"],
+            pred["certainty1"],
+            img1.shape[-2:],
+            img0.shape[-2:],
         )
         mpred["keypoints0"] = kpts0
         mpred["keypoints1"] = kpts1
@@ -425,6 +443,9 @@ class RoMA(base_model.BaseModel):
 
 if __name__ == "__main__":
     torch.set_grad_enabled(False)
+    import warnings
+
+    warnings.filterwarnings("ignore")
     import argparse
     from pathlib import Path
 
@@ -450,7 +471,11 @@ if __name__ == "__main__":
     image0, image1 = data0["image"], data1["image"]
 
     device = "cuda"
-    dkm_model = RoMA({"symmetric": True, "sample_num_matches": 0}).eval().to(device)
+    dkm_model = (
+        RoMA({"symmetric": True, "sample_num_matches": 0, "output_hw": (1344, 1344)})
+        .eval()
+        .to(device)
+    )
     data = {
         "view0": {"image": image0.to(device)[None]},
         "view1": {"image": image1.to(device)[None]},
