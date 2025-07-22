@@ -115,7 +115,7 @@ class RoMA(base_model.BaseModel):
         "sample_num_matches": 0,  # sample X sparse matches, <=0 means no sampling
         "sample_mode": "threshold_balanced",
         "filter_threshold": 0.0,  # threshold for filtering matches
-        "max_norm_dist": 0.005,  # maximum distance for matching keypoints
+        "max_kp_error": 2.0,  # maximum distance for matching keypoints (px)
     }
     required_data_keys = ["view0", "view1"]
 
@@ -378,27 +378,27 @@ class RoMA(base_model.BaseModel):
         # @TODO: Add mutual check
         kpts0 = data["keypoints0"]
         kpts1 = data["keypoints1"]
-        n_kpts0 = normalize_coords(kpts0, pred["warp0"].shape[-3:-1])
-        n_kpts1 = normalize_coords(kpts1, pred["warp1"].shape[-3:-1])
 
         def find_matches(kpts_q, kpts_t, warp, cert):
+            kpts_q = normalize_coords(kpts0, pred["warp0"].shape[-3:-1])
             kpts_q_to_t = grid_sample(warp.permute(0, 3, 1, 2), kpts_q[:, None])[
                 :, :, 0
             ].permute(0, 2, 1)
             scores = grid_sample(cert[:, None], kpts_q[:, None])[:, 0, 0]
+            kpts_q_to_t = denormalize_coords(kpts_q_to_t, pred["warp1"].shape[-3:-1])
             dist = torch.cdist(kpts_q_to_t, kpts_t)
             matches = torch.min(dist, dim=-1)
-            matches, d_scores = matches.indices, matches.values
-            valid = torch.isfinite(d_scores) & (d_scores < self.conf.max_norm_dist)
+            matches, dist = matches.indices, matches.values
+            valid = torch.isfinite(dist) & (dist < self.conf.max_kp_error)
             valid = valid & (scores > self.conf.filter_threshold)
             return torch.where(valid, matches, -1), torch.where(valid, scores, 0)
 
         mpred = {}
         mpred["matches0"], mpred["matching_scores0"] = find_matches(
-            n_kpts0, n_kpts1, pred["warp0"], pred["certainty0"]
+            kpts0, kpts1, pred["warp0"], pred["certainty0"]
         )
         mpred["matches1"], mpred["matching_scores1"] = find_matches(
-            n_kpts1, n_kpts0, pred["warp1"], pred["certainty1"]
+            kpts1, kpts0, pred["warp1"], pred["certainty1"]
         )
         mpred["keypoints0"] = kpts0
         mpred["keypoints1"] = kpts1
