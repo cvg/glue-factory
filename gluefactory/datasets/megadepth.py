@@ -201,7 +201,7 @@ class _PairDataset(torch.utils.data.Dataset):
             for scene in tqdm(
                 self.scenes,
                 desc="Sampling pairs",
-                enabled=self.conf.get("use_pbar", True),
+                disable=not self.conf.get("use_pbar", True),
             ):
                 path = self.info_dir / (scene + ".npz")
                 assert path.exists(), path
