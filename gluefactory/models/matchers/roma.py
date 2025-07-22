@@ -12,6 +12,8 @@ Main differences to the original code:
 - Unified API from gluefactory.
 """
 
+import logging
+
 import torch
 import torch.nn.functional as F
 
@@ -33,6 +35,8 @@ from ...utils.image import (
     normalize_coords,
 )
 from .. import base_model
+
+logger = logging.getLogger(__name__)
 
 
 def cycle_dist(
@@ -127,10 +131,10 @@ class RoMA(base_model.BaseModel):
 
     def _init(self, conf):
         weights = torch.hub.load_state_dict_from_url(
-            self.weight_urls[self.conf.weights], map_location=device
+            self.weight_urls[self.conf.weights], map_location="cpu"
         )
         dinov2_weights = torch.hub.load_state_dict_from_url(
-            self.weight_urls["dinov2_vitl14"], map_location=device
+            self.weight_urls["dinov2_vitl14"], map_location="cpu"
         )
 
         self._matcher = roma_model(
@@ -138,7 +142,6 @@ class RoMA(base_model.BaseModel):
             upsample_preds=self.conf.upsample_preds,
             weights=weights,
             dinov2_weights=dinov2_weights,
-            device=device,
             amp_dtype=torch.float16 if self.conf.mixed_precision else torch.float32,
         )
         self._matcher.symmetric = self.conf.symmetric
@@ -152,6 +155,8 @@ class RoMA(base_model.BaseModel):
             "rgb_std",
             torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(1, 3, 1, 1),
         )
+
+        self.set_initialized(True)
 
     def _forward(self, data):
         data0, data1 = data["view0"], data["view1"]
@@ -169,10 +174,19 @@ class RoMA(base_model.BaseModel):
             pred["cycle_error1"] = cycle_dist(pred["warp1"], pred["warp0"])
 
         if self.conf.sample_num_matches > 0:
-            pred.update(self.sample_matches(pred))
+            if "keypoints0" in data:
+                logger.warning(
+                    "'sample_num_matches' is set, therefore keypoints will be ignored. "
+                    "Using dense match sampling instead."
+                )
+            pred.update(self.sample_matches(pred, self.conf.sample_num_matches))
         elif "keypoints0" in data:
             # Match existing keypoints
-            pred.update(self.match_keypoints(pred, data))
+            pred.update(
+                self.match_keypoints(
+                    pred, data, self.conf.max_kp_error, self.conf.filter_threshold
+                )
+            )
         return pred
 
     def process_image(
@@ -332,10 +346,8 @@ class RoMA(base_model.BaseModel):
 
         return flow_to_warp(query_to_support, certainty, low_res_certainty)
 
-    def sample_matches(self, pred: dict) -> dict:
-        """
-        Stack the coordinates of the warps for both views.
-        """
+    def sample_matches(self, pred: dict, num_matches: int) -> dict:
+        """Sample sparse matches from the predicted warps."""
         warp0, warp1 = pred["warp0"], pred["warp1"]
 
         assert warp0.shape[0] == 1, "Batch size must be 1 for sampling matches."
@@ -352,7 +364,7 @@ class RoMA(base_model.BaseModel):
         m_kpts, scores = self._matcher.sample(
             matches,
             scores,
-            num=self.conf.sample_num_matches,
+            num=num_matches,
         )  # N x 4, N
 
         scores = scores.reshape(1, -1)
@@ -373,7 +385,9 @@ class RoMA(base_model.BaseModel):
 
         return sparse_pred
 
-    def match_keypoints(self, pred: dict, data: dict) -> dict:
+    def match_keypoints(
+        self, pred: dict, data: dict, max_kp_error: float, filter_threshold: float
+    ) -> dict:
         """Match existing keypoints from the data dictionary."""
         # @TODO: Add mutual check
         kpts0 = data["keypoints0"]
@@ -389,8 +403,8 @@ class RoMA(base_model.BaseModel):
             dist = torch.cdist(kpts_q_to_t, kpts_t)
             matches = torch.min(dist, dim=-1)
             matches, dist = matches.indices, matches.values
-            valid = torch.isfinite(dist) & (dist < self.conf.max_kp_error)
-            valid = valid & (scores > self.conf.filter_threshold)
+            valid = torch.isfinite(dist) & (dist < max_kp_error)
+            valid = valid & (scores > filter_threshold)
             return torch.where(valid, matches, -1), torch.where(valid, scores, 0)
 
         mpred = {}

@@ -1,0 +1,15 @@
+model:
+    extractor:
+        name: null # Set this for sparse matching
+    matcher:
+        name: roma
+        sample_num_matches: 10000
+
+benchmarks:
+    megadepth1500:
+        data:
+            preprocessing:
+                resize: 1024
+        eval:
+            estimator: opencv
+            ransac_th: -1
