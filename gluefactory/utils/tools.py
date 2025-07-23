@@ -26,14 +26,14 @@ class AverageMetric:
 
     def update(self, tensor):
         assert tensor.dim() == 1
-        self._sum += torch.nansum(tensor).item()
+        self._sum += torch.nansum(tensor)
         self._num_examples += len(tensor)
 
     def compute(self):
         if self._num_examples == 0:
             return np.nan
         else:
-            return self._sum / self._num_examples
+            return self._sum.item() / self._num_examples
 
 
 # same as AverageMetric, but tracks all elements
