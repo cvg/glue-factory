@@ -116,6 +116,9 @@ class ScanNet1500Pipeline(eval_pipeline.EvalPipeline):
             if "scene" in data.keys():
                 results_i["scenes"] = data["scene"][0]
 
+            if "overlap" in data.keys():
+                results_i["overlap"] = data["overlap"][0].item()
+
             for k, v in results_i.items():
                 results[k].append(v)
 
