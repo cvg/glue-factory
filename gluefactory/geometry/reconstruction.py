@@ -3,118 +3,45 @@ Convenience classes for an SE3 pose and a pinhole Camera with lens distortion.
 Based on PyTorch tensors: differentiable, batched, with GPU support.
 """
 
-import functools
-import inspect
+import dataclasses
+import logging
 import math
-from typing import Dict, List, NamedTuple, Optional, Tuple, Union
+from pathlib import Path
+from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
+
+try:
+    import pycolmap
+except ImportError:
+    pycolmap = None
+    print(
+        "pycolmap not found, COLMAP support is disabled. "
+        "Install it with `pip install pycolmap`."
+    )
+
 import torch
+import torch.nn.functional as tnf
 
-from .utils import (
-    J_distort_points,
-    distort_points,
-    skew_symmetric,
-    so3exp_map,
-    to_homogeneous,
-)
+from ..utils import misc, tensor, tools
+from . import transforms as gtr
+
+logger = logging.getLogger(__name__)
 
 
-def autocast(func):
-    """Cast the inputs of a TensorWrapper method to PyTorch tensors
-    if they are numpy arrays. Use the device and dtype of the wrapper.
-    """
-
-    @functools.wraps(func)
-    def wrap(self, *args):
-        device = torch.device("cpu")
-        dtype = None
-        if isinstance(self, TensorWrapper):
-            if self._data is not None:
-                device = self.device
-                dtype = self.dtype
-        elif not inspect.isclass(self) or not issubclass(self, TensorWrapper):
-            raise ValueError(self)
-
-        cast_args = []
-        for arg in args:
-            if isinstance(arg, np.ndarray):
-                arg = torch.from_numpy(arg)
-                arg = arg.to(device=device, dtype=dtype)
-            cast_args.append(arg)
-        return func(self, *cast_args)
-
-    return wrap
-
-
-class TensorWrapper:
-    _data = None
-
-    @autocast
-    def __init__(self, data: torch.Tensor):
-        self._data = data
-
-    @property
-    def shape(self):
-        return self._data.shape[:-1]
-
-    @property
-    def device(self):
-        return self._data.device
-
-    @property
-    def dtype(self):
-        return self._data.dtype
-
-    def __getitem__(self, index):
-        return self.__class__(self._data[index])
-
-    def __setitem__(self, index, item):
-        self._data[index] = item.data
-
-    def to(self, *args, **kwargs):
-        return self.__class__(self._data.to(*args, **kwargs))
-
-    def cpu(self):
-        return self.__class__(self._data.cpu())
-
-    def cuda(self):
-        return self.__class__(self._data.cuda())
-
-    def pin_memory(self):
-        return self.__class__(self._data.pin_memory())
-
-    def float(self):
-        return self.__class__(self._data.float())
-
-    def double(self):
-        return self.__class__(self._data.double())
-
-    def detach(self):
-        return self.__class__(self._data.detach())
-
-    @classmethod
-    def stack(cls, objects: List, dim=0, *, out=None):
-        data = torch.stack([obj._data for obj in objects], dim=dim, out=out)
-        return cls(data)
-
-    @classmethod
-    def __torch_function__(self, func, types, args=(), kwargs=None):
-        if kwargs is None:
-            kwargs = {}
-        if func is torch.stack:
-            return self.stack(*args, **kwargs)
-        else:
-            return NotImplemented
-
-
-class Pose(TensorWrapper):
+class Pose(tensor.TensorWrapper):
     def __init__(self, data: torch.Tensor):
         assert data.shape[-1] == 12
         super().__init__(data)
 
     @classmethod
-    @autocast
+    def identity(cls, device=None, dtype=None):
+        R = torch.eye(3, device=device, dtype=dtype)
+        t = torch.zeros(3, device=device, dtype=dtype)
+        return cls.from_Rt(R, t)
+
+    @classmethod
+    @tensor.autocast
     def from_Rt(cls, R: torch.Tensor, t: torch.Tensor):
         """Pose from a rotation matrix and translation vector.
         Accepts numpy arrays or PyTorch tensors.
@@ -130,7 +57,7 @@ class Pose(TensorWrapper):
         return cls(data)
 
     @classmethod
-    @autocast
+    @tensor.autocast
     def from_aa(cls, aa: torch.Tensor, t: torch.Tensor):
         """Pose from an axis-angle rotation vector and translation vector.
         Accepts numpy arrays or PyTorch tensors.
@@ -142,7 +69,7 @@ class Pose(TensorWrapper):
         assert aa.shape[-1] == 3
         assert t.shape[-1] == 3
         assert aa.shape[:-1] == t.shape[:-1]
-        return cls.from_Rt(so3exp_map(aa), t)
+        return cls.from_Rt(gtr.so3exp_map(aa), t)
 
     @classmethod
     def from_4x4mat(cls, T: torch.Tensor):
@@ -159,6 +86,16 @@ class Pose(TensorWrapper):
         """Pose from a COLMAP Image."""
         return cls.from_Rt(image.qvec2rotmat(), image.tvec)
 
+    @classmethod
+    def from_pycolmap(cls, image):
+        """Pose from a COLMAP Image."""
+        assert pycolmap is not None, "pycolmap is not installed."
+        w_t_c = image.cam_from_world()
+        return cls.from_Rt(
+            torch.from_numpy(w_t_c.rotation.matrix()),
+            torch.from_numpy(w_t_c.translation),
+        )
+
     @property
     def R(self) -> torch.Tensor:
         """Underlying rotation matrix with shape (..., 3, 3)."""
@@ -169,6 +106,11 @@ class Pose(TensorWrapper):
     def t(self) -> torch.Tensor:
         """Underlying translation vector with shape (..., 3)."""
         return self._data[..., -3:]
+
+    @property
+    def E(self) -> torch.Tensor:
+        """Convert poses to essential matrices."""
+        return gtr.skew_symmetric(self.t) @ self.R
 
     def inv(self) -> "Pose":
         """Invert an SE(3) pose."""
@@ -182,7 +124,7 @@ class Pose(TensorWrapper):
         t = self.t + (self.R @ other.t.unsqueeze(-1)).squeeze(-1)
         return self.__class__.from_Rt(R, t)
 
-    @autocast
+    @tensor.autocast
     def transform(self, p3d: torch.Tensor) -> torch.Tensor:
         """Transform a set of 3D points.
         Args:
@@ -206,20 +148,20 @@ class Pose(TensorWrapper):
         else:
             return self.transform(other)
 
-    @autocast
+    @tensor.autocast
     def J_transform(self, p3d_out: torch.Tensor):
         # [[1,0,0,0,-pz,py],
         #  [0,1,0,pz,0,-px],
         #  [0,0,1,-py,px,0]]
         J_t = torch.diag_embed(torch.ones_like(p3d_out))
-        J_rot = -skew_symmetric(p3d_out)
+        J_rot = -gtr.skew_symmetric(p3d_out)
         J = torch.cat([J_t, J_rot], dim=-1)
         return J  # N x 3 x 6
 
     def numpy(self) -> Tuple[np.ndarray]:
         return self.R.numpy(), self.t.numpy()
 
-    def magnitude(self) -> Tuple[torch.Tensor]:
+    def magnitude(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Magnitude of the SE(3) transformation.
         Returns:
             dr: rotation anngle in degrees.
@@ -231,11 +173,36 @@ class Pose(TensorWrapper):
         dt = torch.norm(self.t, dim=-1)
         return dr, dt
 
+    def norm(self) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.magnitude()
+
+    def angular_drdt(
+        self, other: "Pose", stack: bool = False
+    ) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
+        dr, _ = (self @ other.inv()).magnitude()
+        i_p_j = tnf.normalize(self.t, dim=-1)
+        i_p_j_gt = tnf.normalize(other.t, dim=-1)
+        dt = torch.einsum("...d,...d->...", i_p_j, i_p_j_gt)
+        dt = dt.clip(-1, 1).arccos().rad2deg()
+        dt = torch.minimum(dt, 180 - dt)
+        # dr = torch.minimum(dr, 180 - dr)
+        if stack:
+            return torch.stack([dr, dt], -1)
+        return dr, dt
+
+    def angular_error(self, other: "Pose", agg="max") -> torch.Tensor:
+        return {
+            "max": lambda x: x.max(-1).values,
+            "mean": lambda x: x.mean(-1),
+            "dr": lambda x: x[..., 0],
+            "dt": lambda x: x[..., 1],
+        }[agg](self.angular_drdt(other, stack=True))
+
     def __repr__(self):
         return f"Pose: {self.shape} {self.dtype} {self.device}"
 
 
-class Camera(TensorWrapper):
+class Camera(tensor.TensorWrapper):
     eps = 1e-4
 
     def __init__(self, data: torch.Tensor):
@@ -267,14 +234,26 @@ class Camera(TensorWrapper):
         return cls(data)
 
     @classmethod
-    @autocast
+    def from_pycolmap(cls, camera):
+        assert pycolmap is not None, "pycolmap is not installed."
+        return cls.from_colmap(
+            {
+                "model": camera.model.name,
+                "width": camera.width,
+                "height": camera.height,
+                "params": camera.params,
+            }
+        )
+
+    @classmethod
+    @tensor.autocast
     def from_calibration_matrix(cls, K: torch.Tensor):
         cx, cy = K[..., 0, 2], K[..., 1, 2]
         fx, fy = K[..., 0, 0], K[..., 1, 1]
         data = torch.stack([2 * cx, 2 * cy, fx, fy, cx, cy], -1)
         return cls(data)
 
-    @autocast
+    @tensor.autocast
     def calibration_matrix(self):
         K = torch.zeros(
             *self._data.shape[:-1],
@@ -291,6 +270,10 @@ class Camera(TensorWrapper):
         return K
 
     @property
+    def K(self):
+        return self.calibration_matrix()
+
+    @property
     def size(self) -> torch.Tensor:
         """Size (width height) of the images, with shape (..., 2)."""
         return self._data[..., :2]
@@ -299,6 +282,10 @@ class Camera(TensorWrapper):
     def f(self) -> torch.Tensor:
         """Focal lengths (fx, fy) with shape (..., 2)."""
         return self._data[..., 2:4]
+
+    def fov(self) -> torch.Tensor:
+        """Vertical field of view in radians."""
+        return gtr.focal2fov(self.f, self.size)
 
     @property
     def c(self) -> torch.Tensor:
@@ -310,7 +297,7 @@ class Camera(TensorWrapper):
         """Distortion parameters, with shape (..., {0, 2, 4})."""
         return self._data[..., 6:]
 
-    @autocast
+    @tensor.autocast
     def scale(self, scales: torch.Tensor):
         """Update the camera parameters after resizing an image."""
         s = scales
@@ -324,7 +311,7 @@ class Camera(TensorWrapper):
         data = torch.cat([size, self.f, self.c - left_top, self.dist], -1)
         return self.__class__(data)
 
-    @autocast
+    @tensor.autocast
     def in_image(self, p2d: torch.Tensor):
         """Check if 2D points are within the image boundaries."""
         assert p2d.shape[-1] == 2
@@ -333,7 +320,7 @@ class Camera(TensorWrapper):
         valid = torch.all((p2d >= 0) & (p2d <= (size - 1)), -1)
         return valid
 
-    @autocast
+    @tensor.autocast
     def project(self, p3d: torch.Tensor) -> Tuple[torch.Tensor]:
         """Project 3D points into the camera plane and check for visibility."""
         z = p3d[..., -1]
@@ -350,24 +337,24 @@ class Camera(TensorWrapper):
         J = J.reshape(p3d.shape[:-1] + (2, 3))
         return J  # N x 2 x 3
 
-    @autocast
+    @tensor.autocast
     def distort(self, pts: torch.Tensor) -> Tuple[torch.Tensor]:
         """Distort normalized 2D coordinates
         and check for validity of the distortion model.
         """
         assert pts.shape[-1] == 2
         # assert pts.shape[:-2] == self.shape  # allow broadcasting
-        return distort_points(pts, self.dist)
+        return gtr.distort_points(pts, self.dist)
 
     def J_distort(self, pts: torch.Tensor):
-        return J_distort_points(pts, self.dist)  # N x 2 x 2
+        return gtr.J_distort_points(pts, self.dist)  # N x 2 x 2
 
-    @autocast
+    @tensor.autocast
     def denormalize(self, p2d: torch.Tensor) -> torch.Tensor:
         """Convert normalized 2D coordinates into pixel coordinates."""
         return p2d * self.f.unsqueeze(-2) + self.c.unsqueeze(-2)
 
-    @autocast
+    @tensor.autocast
     def normalize(self, p2d: torch.Tensor) -> torch.Tensor:
         """Convert normalized 2D coordinates into pixel coordinates."""
         return (p2d - self.c.unsqueeze(-2)) / self.f.unsqueeze(-2)
@@ -375,7 +362,7 @@ class Camera(TensorWrapper):
     def J_denormalize(self):
         return torch.diag_embed(self.f).unsqueeze(-3)  # 1 x 2 x 2
 
-    @autocast
+    @tensor.autocast
     def cam2image(self, p3d: torch.Tensor) -> Tuple[torch.Tensor]:
         """Transform 3D points into 2D pixel coordinates."""
         p2d, visible = self.project(p3d)
@@ -389,13 +376,13 @@ class Camera(TensorWrapper):
         J = self.J_denormalize() @ self.J_distort(p2d_dist) @ self.J_project(p3d)
         return J, valid
 
-    @autocast
+    @tensor.autocast
     def image2cam(self, p2d: torch.Tensor) -> torch.Tensor:
         """Convert 2D pixel corrdinates to 3D points with z=1"""
         assert self._data.shape
         p2d = self.normalize(p2d)
         # iterative undistortion
-        return to_homogeneous(p2d)
+        return gtr.to_homogeneous(p2d)
 
     def to_cameradict(self, camera_model: Optional[str] = None) -> List[Dict]:
         data = self._data.clone()
@@ -423,3 +410,151 @@ class Camera(TensorWrapper):
 
     def __repr__(self):
         return f"Camera {self.shape} {self.dtype} {self.device}"
+
+
+@dataclasses.dataclass
+class Reconstruction:
+    w_t_c: Pose  # batched
+    cameras: Camera  # batched
+    camera_idx: torch.Tensor  # int
+    image_names: list[str]
+    registered: torch.Tensor  # bool
+
+    @classmethod
+    def from_colmap(cls, colmap_model: Path):
+        if isinstance(colmap_model, Path):
+            colmap_model = pycolmap.Reconstruction(colmap_model)
+        reg_image_ids = sorted(colmap_model.reg_image_ids())
+        reg_images = [
+            colmap_model.images[reg_image_id] for reg_image_id in reg_image_ids
+        ]
+        camera_ids, cameras = list(
+            zip(
+                *[
+                    (cam_id, Camera.from_pycolmap(cam))
+                    for cam_id, cam in colmap_model.cameras.items()
+                ]
+            )
+        )
+        cameras = torch.stack(cameras)
+        camera_idx = [camera_ids.index(img.camera_id) for img in reg_images]
+        c_t_w = torch.stack([Pose.from_pycolmap(img) for img in reg_images])
+        image_names = [img.name for img in reg_images]
+
+        return cls(
+            w_t_c=c_t_w.inv().float(),
+            cameras=cameras.float(),
+            camera_idx=torch.Tensor(camera_idx).long(),
+            image_names=image_names,
+            registered=torch.ones(len(reg_image_ids), dtype=bool),
+        )
+
+    def get_camera(self, image_id: int) -> Camera:
+        return self.cameras[self.camera_idx[image_id]]
+
+    def to(self, device: torch.device | str) -> "Reconstruction":
+        for attr in dataclasses.fields(self):
+            if attr.name == "registered":
+                continue
+            setattr(
+                self, attr.name, misc.batch_to_device(getattr(self, attr.name), device)
+            )
+        return self
+
+    def cuda(self) -> "Reconstruction":
+        """Move the reconstruction to the GPU."""
+        return self.to("cuda")
+
+    def cpu(self) -> "Reconstruction":
+        """Move the reconstruction to the CPU."""
+        return self.to("cpu")
+
+    def clone(self) -> "Reconstruction":
+        return Reconstruction(
+            self.w_t_c.clone(),
+            self.cameras.clone(),
+            self.camera_idx.clone(),
+            self.registered.clone(),
+            image_names=self.image_names.copy(),
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"Reconstruction: {self.num_images} images, "
+            f"{self.num_reg_images} registered, "
+            f"cameras {self.cameras.shape}, "
+            f"poses {self.w_t_c.shape}"
+            f" {self.w_t_c.dtype} {self.w_t_c.device}"
+        )
+
+    @property
+    def reg_image_ids(self) -> list[int]:
+        return torch.where(self.registered)[0].tolist()
+
+    @property
+    def image_ids(self) -> list[int]:
+        return torch.arange(self.num_images).tolist()
+
+    @property
+    def non_reg_image_ids(self) -> list[int]:
+        return torch.where(~self.registered)[0].tolist()
+
+    @property
+    def num_images(self) -> int:
+        return self.w_t_c.shape[0]
+
+    @property
+    def num_reg_images(self) -> int:
+        return self.registered.sum().item()
+
+    @property
+    def device(self):
+        return self.w_t_c.device
+
+    def compare_poses_to(
+        self,
+        gt: "Reconstruction",
+        thresholds: tuple[int, ...] = (1, 3, 5, 10, 20),  # degrees.
+        image_ids: Sequence[int] | None = None,  # Where to compare poses.
+        which: str = "max",  # dr, dt, mean
+    ) -> tuple[torch.Tensor, Sequence[float]]:
+        image_ids = image_ids if image_ids is not None else self.image_ids
+
+        # Get image ids in the ground truth reconstruction
+        gt_name_to_id = {n: i for i, n in enumerate(gt.image_names)}
+        gt_image_ids = [gt_name_to_id[self.image_names[i]] for i in image_ids]
+
+        # Get requested poses
+        w_t_c = self.w_t_c[image_ids]
+        w_tgt_c = gt.w_t_c[gt_image_ids]
+
+        # Compute relative poses
+        cj_t_ci = w_t_c[None].inv() @ w_t_c[:, None]
+        is_registered = self.registered[image_ids]
+        cj_tgt_ci = w_tgt_c[None].inv() @ w_tgt_c[:, None]
+
+        # Compute angular errors between all pairs of poses
+        errors = cj_t_ci.angular_error(cj_tgt_ci, agg=which)  # M x M
+
+        # Set invalid pairs to max error (180 degrees)
+        valid = is_registered[:, None] & is_registered[None, :]
+        errors = torch.where(valid, errors, 180.0)
+
+        # Remove diagonal elements (self-self)
+        errors_without_diag = errors[~torch.eye(errors.shape[0], dtype=bool)]
+        return (
+            errors,
+            tools.AUCMetric(thresholds, errors_without_diag.cpu().numpy()).compute(),
+        )
+
+    @classmethod
+    def empty_like(cls, ref_sfm):
+        w_t_c = torch.stack([Pose.identity(p.device, p.dtype) for p in ref_sfm.w_t_c])
+        registered = torch.zeros_like(ref_sfm.registered).bool()
+        return cls(
+            w_t_c=w_t_c,
+            image_names=ref_sfm.image_names,
+            cameras=ref_sfm.cameras.clone(),
+            camera_idx=ref_sfm.camera_idx.clone(),
+            registered=registered,
+        )

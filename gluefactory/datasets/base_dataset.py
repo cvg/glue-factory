@@ -4,6 +4,7 @@ See mnist.py for an example of dataset.
 """
 
 import collections
+import dataclasses
 import logging
 from abc import ABCMeta, abstractmethod
 
@@ -16,8 +17,7 @@ from torch.utils.data._utils.collate import (
     np_str_obj_array_pattern,
 )
 
-from ..utils.tensor import string_classes
-from ..utils.tools import set_num_threads, set_seed
+from ..utils import tools, types
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +38,10 @@ def worker_init_fn(i):
     info = get_worker_info()
     if hasattr(info.dataset, "conf"):
         conf = info.dataset.conf
-        set_seed(info.id + conf.seed)
-        set_num_threads(conf.num_threads)
+        tools.set_seed(info.id + conf.seed)
+        tools.set_num_threads(conf.num_threads)
     else:
-        set_num_threads(1)
+        tools.set_num_threads(1)
 
 
 def collate(batch):
@@ -76,7 +76,7 @@ def collate(batch):
         return torch.tensor(batch, dtype=torch.float64)
     elif isinstance(elem, int):
         return torch.tensor(batch)
-    elif isinstance(elem, string_classes):
+    elif isinstance(elem, types.STRING_CLASSES):
         return batch
     elif isinstance(elem, collections.abc.Mapping):
         return {key: collate([d[key] for d in batch]) for key in elem}
@@ -92,6 +92,9 @@ def collate(batch):
         return [collate(samples) for samples in transposed]
     elif elem is None:
         return elem
+    elif dataclasses.is_dataclass(elem):
+        # do not convert dataclass until we move to tensordict
+        return batch
     else:
         # try to stack anyway in case the object implements stacking.
         return torch.stack(batch, 0)
@@ -127,6 +130,7 @@ class BaseDataset(metaclass=ABCMeta):
         "prefetch_factor": 2,
     }
     default_conf = {}
+    strict_conf = False
 
     def __init__(self, conf):
         """Perform some logic and call the _init method of the child model."""
@@ -134,7 +138,7 @@ class BaseDataset(metaclass=ABCMeta):
             OmegaConf.create(self.base_default_conf),
             OmegaConf.create(self.default_conf),
         )
-        OmegaConf.set_struct(default_conf, True)
+        OmegaConf.set_struct(default_conf, self.strict_conf)
         if isinstance(conf, dict):
             conf = OmegaConf.create(conf)
         self.conf = OmegaConf.merge(default_conf, conf)

@@ -1,0 +1,4 @@
+name: extractors.superpoint_open
+max_num_keypoints: 2048
+detection_threshold: -1
+nms_radius: 3

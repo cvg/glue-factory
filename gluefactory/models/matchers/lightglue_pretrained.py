@@ -1,11 +1,11 @@
-from lightglue import LightGlue as LightGlue_
+import lightglue
 from omegaconf import OmegaConf
 
 from ..base_model import BaseModel
 
 
 class LightGlue(BaseModel):
-    default_conf = {"features": "superpoint", **LightGlue_.default_conf}
+    default_conf = {"features": "superpoint", **lightglue.LightGlue.default_conf}
     required_data_keys = [
         "view0",
         "keypoints0",
@@ -17,7 +17,7 @@ class LightGlue(BaseModel):
 
     def _init(self, conf):
         dconf = OmegaConf.to_container(conf)
-        self.net = LightGlue_(dconf.pop("features"), **dconf)
+        self.net = lightglue.LightGlue(dconf.pop("features"), **dconf)
         self.set_initialized()
 
     def _forward(self, data):

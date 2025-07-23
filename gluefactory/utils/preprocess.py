@@ -9,6 +9,14 @@ import torch
 from omegaconf import OmegaConf
 
 
+def get_divisible_wh(w, h, df=None):
+    if df is not None:
+        w_new, h_new = map(lambda x: int(x // df * df), [w, h])
+    else:
+        w_new, h_new = w, h
+    return w_new, h_new
+
+
 class ImagePreprocessor:
     default_conf = {
         "resize": None,  # target edge length, None for no resizing
@@ -31,7 +39,7 @@ class ImagePreprocessor:
         """Resize and preprocess an image, return image and resize scale"""
         h, w = img.shape[-2:]
         size = h, w
-        if self.conf.resize is not None:
+        if self.conf.resize is not None or self.conf.edge_divisible_by is not None:
             if interpolation is None:
                 interpolation = self.conf.interpolation
             size = self.get_new_image_size(h, w)
@@ -80,20 +88,24 @@ class ImagePreprocessor:
         if isinstance(self.conf.resize, collections.Iterable):
             assert len(self.conf.resize) == 2
             return tuple(self.conf.resize)
-        side_size = self.conf.resize
-        aspect_ratio = w / h
-        if side not in ("short", "long", "vert", "horz"):
-            raise ValueError(
-                f"side can be one of 'short', 'long', 'vert', and 'horz'. Got '{side}'"
-            )
-        if side == "vert":
-            size = side_size, int(side_size * aspect_ratio)
-        elif side == "horz":
-            size = int(side_size / aspect_ratio), side_size
-        elif (side == "short") ^ (aspect_ratio < 1.0):
-            size = side_size, int(side_size * aspect_ratio)
+        elif isinstance(self.conf.resize, int):
+            side_size = self.conf.resize
+            aspect_ratio = w / h
+            if side not in ("short", "long", "vert", "horz"):
+                raise ValueError(
+                    f"side can be one of 'short', 'long', 'vert', and 'horz'. Got '{side}'"  # noqa: E501
+                )
+            if side == "vert":
+                size = side_size, int(side_size * aspect_ratio)
+            elif side == "horz":
+                size = int(side_size / aspect_ratio), side_size
+            elif (side == "short") ^ (aspect_ratio < 1.0):
+                size = side_size, int(side_size * aspect_ratio)
+            else:
+                size = int(side_size / aspect_ratio), side_size
         else:
-            size = int(side_size / aspect_ratio), side_size
+            assert self.conf.resize is None
+            size = (h, w)
 
         if self.conf.edge_divisible_by is not None:
             df = self.conf.edge_divisible_by
@@ -128,3 +140,58 @@ def numpy_image_to_torch(image: np.ndarray) -> torch.Tensor:
 def load_image(path: Path, grayscale=False) -> torch.Tensor:
     image = read_image(path, grayscale=grayscale)
     return numpy_image_to_torch(image)
+
+
+def resize(image, size, fn=None, interp="linear", df=None):
+    """Resize an image to a fixed size, or according to max or min edge."""
+    h, w = image.shape[:2]
+    if isinstance(size, int):
+        scale = size / fn(h, w)
+        h_new, w_new = int(round(h * scale)), int(round(w * scale))
+        w_new, h_new = get_divisible_wh(w_new, h_new, df)
+        scale = (w_new / w, h_new / h)
+    elif isinstance(size, (tuple, list)):
+        h_new, w_new = size
+        scale = (w_new / w, h_new / h)
+    else:
+        raise ValueError(f"Incorrect new size: {size}")
+    mode = {
+        "linear": cv2.INTER_LINEAR,
+        "cubic": cv2.INTER_CUBIC,
+        "nearest": cv2.INTER_NEAREST,
+        "area": cv2.INTER_AREA,
+    }[interp]
+    return cv2.resize(image, (w_new, h_new), interpolation=mode), scale
+
+
+def crop(image, size, random=True, other=None, K=None, return_bbox=False):
+    """Random or deterministic crop of an image, adjust depth and intrinsics."""
+    h, w = image.shape[:2]
+    h_new, w_new = (size, size) if isinstance(size, int) else size
+    top = np.random.randint(0, h - h_new + 1) if random else 0
+    left = np.random.randint(0, w - w_new + 1) if random else 0
+    image = image[top : top + h_new, left : left + w_new]
+    ret = [image]
+    if other is not None:
+        ret += [other[top : top + h_new, left : left + w_new]]
+    if K is not None:
+        K[0, 2] -= left
+        K[1, 2] -= top
+        ret += [K]
+    if return_bbox:
+        ret += [(top, top + h_new, left, left + w_new)]
+    return ret
+
+
+def zero_pad(size, *images):
+    """zero pad images to size x size"""
+    ret = []
+    for image in images:
+        if image is None:
+            ret.append(None)
+            continue
+        h, w = image.shape[:2]
+        padded = np.zeros((size, size) + image.shape[2:], dtype=image.dtype)
+        padded[:h, :w] = image
+        ret.append(padded)
+    return ret

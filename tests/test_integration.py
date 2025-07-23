@@ -3,10 +3,10 @@ from collections import namedtuple
 from os.path import splitext
 
 import cv2
+import hydra
 import matplotlib.pyplot as plt
 import torch.cuda
 from kornia import image_to_tensor
-from omegaconf import OmegaConf
 from parameterized import parameterized
 from torch import Tensor
 
@@ -69,7 +69,6 @@ class TestIntegration(unittest.TestCase):
     @torch.no_grad()
     def test_real_homography(self, conf_file, estimator, exp_results):
         set_seed(0)
-        model_path = root / "gluefactory" / "configs" / conf_file
         img_path0 = root / "assets" / "boat1.png"
         img_path1 = root / "assets" / "boat2.png"
         h_gt = torch.tensor(
@@ -81,7 +80,9 @@ class TestIntegration(unittest.TestCase):
         )
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        gs = TwoViewPipeline(OmegaConf.load(model_path).model).to(device).eval()
+        with hydra.initialize(config_path="../gluefactory/configs", version_base=None):
+            conf = hydra.compose(config_name=conf_file)
+        gs = TwoViewPipeline(conf.model).to(device).eval()
 
         cv_img0, cv_img1 = cv2.imread(str(img_path0)), cv2.imread(str(img_path1))
         data = create_input_data(cv_img0, cv_img1, device)

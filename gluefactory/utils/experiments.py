@@ -9,14 +9,60 @@ import os
 import re
 import shutil
 from pathlib import Path
+from typing import Optional
 
+import hydra
+import pkg_resources
 import torch
 from omegaconf import OmegaConf
 
-from .. import settings
-from ..models import get_model
+from .. import models, settings
 
 logger = logging.getLogger(__name__)
+
+
+def list_configs(configs_path: Path) -> list[str]:
+    """List all available configs in a given directory."""
+    return list(sorted([x.stem for x in Path(configs_path).glob("*.yaml")]))
+
+
+def parse_config_path(
+    name_or_path: Optional[str], default_config_dir: str = "configs/"
+) -> Path:
+    default_configs = {}
+    for c in pkg_resources.resource_listdir("gluefactory", str(default_config_dir)):
+        if c.endswith(".yaml"):
+            default_configs[Path(c).stem] = Path(
+                pkg_resources.resource_filename("gluefactory", default_config_dir + c)
+            )
+    if name_or_path is None:
+        return None
+    if name_or_path in default_configs:
+        return default_configs[name_or_path]
+    path = Path(name_or_path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Cannot find the config file: {name_or_path}. "
+            f"Not in the default configs {list(default_configs.keys())} "
+            "and not an existing path."
+        )
+    return Path(path)
+
+
+def compose_config(
+    name_or_path: Optional[str],
+    default_config_dir: str = "configs/",
+    overrides: Optional[list[str]] = None,
+) -> tuple[Path, OmegaConf]:
+
+    conf_path = parse_config_path(name_or_path, default_config_dir)
+    logger.info(f"Hydra config directory: {conf_path.parent}.")
+
+    # pathlib does not support walk_up with python < 3.12, so use os.path.relpath
+    rel_conf_dir = Path(os.path.relpath(conf_path.parent, Path(__file__).parent))
+    hydra.initialize(version_base=None, config_path=str(rel_conf_dir))
+    custom_conf = hydra.compose(config_name=conf_path.stem, overrides=overrides)
+    return conf_path, custom_conf
 
 
 def list_checkpoints(dir_):
@@ -36,7 +82,11 @@ def list_checkpoints(dir_):
 
 def get_last_checkpoint(exper, allow_interrupted=True):
     """Get the last saved checkpoint for a given experiment name."""
-    ckpts = list_checkpoints(Path(settings.TRAINING_PATH, exper))
+    if Path(exper).exists():
+        experiment_dir = Path(exper)
+    else:
+        experiment_dir = Path(settings.TRAINING_PATH, exper)
+    ckpts = list_checkpoints(experiment_dir)
     if not allow_interrupted:
         ckpts = [(n, p) for (n, p) in ckpts if "_interrupted" not in p.name]
     assert len(ckpts) > 0
@@ -45,7 +95,11 @@ def get_last_checkpoint(exper, allow_interrupted=True):
 
 def get_best_checkpoint(exper):
     """Get the checkpoint with the best loss, for a given experiment name."""
-    p = Path(settings.TRAINING_PATH, exper, "checkpoint_best.tar")
+    if Path(exper).exists():
+        experiment_dir = Path(exper)
+    else:
+        experiment_dir = Path(settings.TRAINING_PATH, exper)
+    p = experiment_dir / "checkpoint_best.tar"
     return p
 
 
@@ -80,7 +134,7 @@ def load_experiment(
     loaded_conf = OmegaConf.create(ckpt["conf"])
     OmegaConf.set_struct(loaded_conf, False)
     conf = OmegaConf.merge(loaded_conf.model, OmegaConf.create(conf))
-    model = get_model(conf.name)(conf).eval()
+    model = models.get_model(conf.name)(conf).eval()
 
     state_dict = ckpt["model"]
     dict_params = set(state_dict.keys())
@@ -132,3 +186,57 @@ def save_experiment(
         shutil.copy(cp_path, str(output_dir / "checkpoint_best.tar"))
     delete_old_checkpoints(output_dir, conf.train.keep_last_checkpoints)
     return best_eval
+
+
+# Adaptation of torch.profiler.tensorboard_trace_handler
+def tensorboard_trace_handler(
+    dir_name: str, worker_name: Optional[str] = None, use_gzip: bool = False
+):
+    """
+    Outputs tracing files to directory of ``dir_name``, then that directory can be
+    directly delivered to tensorboard as logdir.
+    ``worker_name`` should be unique for each worker in distributed scenario,
+    it will be set to '[hostname]_[pid]' by default.
+    """
+    import os
+    import socket
+    import time
+
+    def file_replace(filepath, pattern, target):
+        # Read in the file
+        with open(filepath, "r") as file:
+            filedata = file.read()
+
+        # Replace the target string
+        filedata = filedata.replace(pattern, target)
+
+        # Write the file out again
+        with open(filepath, "w") as file:
+            file.write(filedata)
+
+    def handler_fn(prof) -> None:
+        nonlocal worker_name
+        if not os.path.isdir(dir_name):
+            try:
+                os.makedirs(dir_name, exist_ok=True)
+            except Exception as e:
+                raise RuntimeError("Can't create directory: " + dir_name) from e
+        if not worker_name:
+            worker_name = f"{socket.gethostname()}_{os.getpid()}"
+        # Use nanosecond here to avoid naming clash when exporting the trace
+        file_name = f"{worker_name}.{time.time_ns()}.pt.trace.json"
+        file_path = os.path.join(dir_name, file_name)
+        prof.export_chrome_trace(file_path)
+
+        # Fix problem with tb profile: https://github.com/pytorch/kineto/issues/688
+        file_replace(file_path, '"user_annotation', '"cpu_op')
+
+        if use_gzip:
+            import gzip
+
+            with open(file_path, "rb") as fin:
+                with gzip.open(file_path + ".gz", "wb") as fout:
+                    fout.writelines(fin)
+            os.remove(file_path)
+
+    return handler_fn

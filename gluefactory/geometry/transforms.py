@@ -153,15 +153,57 @@ def J_distort_points(pts, dist):
     return J
 
 
-def get_image_coords(img):
-    h, w = img.shape[-2:]
-    return (
-        torch.stack(
-            torch.meshgrid(
-                torch.arange(h, dtype=torch.float32, device=img.device),
-                torch.arange(w, dtype=torch.float32, device=img.device),
-                indexing="ij",
-            )[::-1],
-            dim=0,
-        ).permute(1, 2, 0)
-    )[None] + 0.5
+def rotate_intrinsics(K, image_shape, rot):
+    """image_shape is the shape of the image after rotation"""
+    assert rot <= 3
+    h, w = image_shape[:2][:: -1 if (rot % 2) else 1]
+    fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
+    rot = rot % 4
+    if rot == 1:
+        return np.array(
+            [[fy, 0.0, cy], [0.0, fx, w - cx], [0.0, 0.0, 1.0]], dtype=K.dtype
+        )
+    elif rot == 2:
+        return np.array(
+            [[fx, 0.0, w - cx], [0.0, fy, h - cy], [0.0, 0.0, 1.0]],
+            dtype=K.dtype,
+        )
+    else:  # if rot == 3:
+        return np.array(
+            [[fy, 0.0, h - cy], [0.0, fx, cx], [0.0, 0.0, 1.0]], dtype=K.dtype
+        )
+
+
+def rotate_pose_inplane(i_T_w, rot):
+    rotation_matrices = [
+        np.array(
+            [
+                [np.cos(r), -np.sin(r), 0.0, 0.0],
+                [np.sin(r), np.cos(r), 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        for r in [np.deg2rad(d) for d in (0, 270, 180, 90)]
+    ]
+    return np.dot(rotation_matrices[rot], i_T_w)
+
+
+def scale_intrinsics(K, scales):
+    """Scale intrinsics after resizing the corresponding image."""
+    scales = np.diag(np.concatenate([scales, [1.0]]))
+    return np.dot(scales.astype(K.dtype, copy=False), K)
+
+
+def focal2fov(focal: torch.Tensor, size: torch.Tensor) -> torch.Tensor:
+    """Compute (vertical/horizontal) field of view from focal length.
+
+    Args:
+        focal (torch.Tensor): Focal length in pixels.
+        size (torch.Tensor): Image height / width in pixels.
+
+    Returns:
+        torch.Tensor: Field of view in radians.
+    """
+    return 2 * torch.arctan(size / (2 * focal))

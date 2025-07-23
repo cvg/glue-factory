@@ -1,7 +1,7 @@
 import torch
 
-from ..utils.tensor import batch_to_device
-from .viz2d import cm_RdGn, plot_heatmaps, plot_image_grid, plot_keypoints, plot_matches
+from ..utils import misc
+from . import viz2d
 
 
 def make_match_figures(pred_, data_, n_pairs=2):
@@ -10,8 +10,8 @@ def make_match_figures(pred_, data_, n_pairs=2):
         pred_ = pred_["0to1"]
     images, kpts, matches, mcolors = [], [], [], []
     heatmaps = []
-    pred = batch_to_device(pred_, "cpu", non_blocking=False)
-    data = batch_to_device(data_, "cpu", non_blocking=False)
+    pred = misc.batch_to_device(pred_, "cpu", non_blocking=False)
+    data = misc.batch_to_device(data_, "cpu", non_blocking=False)
 
     view0, view1 = data["view0"], data["view1"]
 
@@ -43,14 +43,19 @@ def make_match_figures(pred_, data_, n_pairs=2):
         elif "depth" in view0.keys() and view0["depth"] is not None:
             heatmaps.append([view0["depth"][i], view1["depth"][i]])
 
-        mcolors.append(cm_RdGn(correct).tolist())
+        mcolors.append(viz2d.cm_RdGn(correct).tolist())
 
-    fig, axes = plot_image_grid(images, return_fig=True, set_lim=True)
+    fig, axes = viz2d.plot_image_grid(images, return_fig=True, set_lim=True)
     if len(heatmaps) > 0:
-        [plot_heatmaps(heatmaps[i], axes=axes[i], a=1.0) for i in range(n_pairs)]
-    [plot_keypoints(kpts[i], axes=axes[i], colors="royalblue") for i in range(n_pairs)]
+        [viz2d.plot_heatmaps(heatmaps[i], axes=axes[i], a=1.0) for i in range(n_pairs)]
     [
-        plot_matches(*matches[i], color=mcolors[i], axes=axes[i], a=0.5, lw=1.0, ps=0.0)
+        viz2d.plot_keypoints(kpts[i], axes=axes[i], colors="royalblue")
+        for i in range(n_pairs)
+    ]
+    [
+        viz2d.plot_matches(
+            *matches[i], color=mcolors[i], axes=axes[i], a=0.5, lw=1.0, ps=0.0
+        )
         for i in range(n_pairs)
     ]
 
