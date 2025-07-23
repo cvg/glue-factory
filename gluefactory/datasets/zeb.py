@@ -13,7 +13,7 @@ import torch
 import tqdm
 
 from ..settings import DATA_PATH
-from ..utils.image import ImagePreprocessor, load_image
+from ..utils.preprocess import ImagePreprocessor, load_image
 from ..visualization import viz2d
 from .base_dataset import BaseDataset
 from .image_pairs import parse_camera, parse_relative_pose
