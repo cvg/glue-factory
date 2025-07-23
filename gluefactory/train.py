@@ -165,6 +165,11 @@ def param_norm(params):
 @torch.no_grad()
 def run_evaluation(model, loader, device, conf, rank, pbar=True):
     model.eval()
+    model_ = (
+        model.module
+        if isinstance(model, torch.nn.parallel.DistributedDataParallel)
+        else model
+    )  # Get the original model
     results = {}
     pr_metrics = defaultdict(tools.PRMetric)
     figures = []
@@ -177,11 +182,11 @@ def run_evaluation(model, loader, device, conf, rank, pbar=True):
         data = misc.batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
             pred = model(data)
-            losses, metrics = model.loss(pred, data)
+            losses, metrics = model_.loss(pred, data)
             if i in plot_ids:
-                figures.append(model.visualize(pred, data))
+                figures.append(model_.visualize(pred, data))
             # add PR curves
-            for k, labels_preds in model.pr_metrics(pred, data).items():
+            for k, labels_preds in model_.pr_metrics(pred, data).items():
                 pr_metrics[k].update(*labels_preds)
             del pred, data
         numbers = {**metrics, **{"loss/" + k: v for k, v in losses.items()}}
@@ -319,13 +324,14 @@ def training(rank, conf, output_dir, args):
     stop = False
     signal.signal(signal.SIGINT, sigint_handler)
     model = models.get_model(conf.model.name)(conf.model).to(device)
-    if args.compile:
-        model = torch.compile(model, mode=args.compile)
     if init_cp is not None:
         model.load_state_dict(init_cp["model"], strict=False)
     if args.distributed:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device])
+        model_ = model.module  # get the original model
+    else:
+        model_ = model
     if rank == 0 and args.print_arch:
         logger.info(f"Model: \n{model}")
 
@@ -397,6 +403,10 @@ def training(rank, conf, output_dir, args):
             profile_memory=False,
             with_stack=True,
         )
+
+    if args.compile:
+        model = torch.compile(model, mode=args.compile, backend="inductor")
+        model_.loss = torch.compile(model_.loss, mode=args.compile, backend="inductor")
 
     step_timer = tools.StepTimer()
     while epoch < conf.train.epochs and not stop:
@@ -481,7 +491,7 @@ def training(rank, conf, output_dir, args):
                 step_timer.measure("to_device")
                 pred = model(data)
                 step_timer.measure("forward")
-                losses, metrics = model.loss(pred, data)
+                losses, metrics = model_.loss(pred, data)
                 loss = torch.mean(losses["total"])
                 loss_metrics = {
                     **metrics,
@@ -493,10 +503,10 @@ def training(rank, conf, output_dir, args):
                         v /= args.n_gpus
                     train_loss_metrics[k].update(v)
                 step_timer.measure("loss_fn")
-            if torch.isnan(loss).any():
-                logger.warning(f"Detected NAN, skipping iteration {it}")
-                del pred, data, loss, losses
-                continue
+            # if torch.isnan(loss).any():
+            #     logger.warning(f"Detected NAN, skipping iteration {it}")
+            #     del pred, data, loss, losses
+            #     continue
 
             do_backward = loss.requires_grad
             if args.distributed:
@@ -623,7 +633,7 @@ def training(rank, conf, output_dir, args):
 
             if conf.train.plot_every_iter is not None:
                 if it % conf.train.plot_every_iter == 0 and rank == 0:
-                    figures = model.visualize(pred, data)
+                    figures = model_.visualize(pred, data)
                     tools.write_image_summaries(
                         writer, "training", figures, tot_n_samples
                     )
