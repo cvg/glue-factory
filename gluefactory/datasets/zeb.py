@@ -19,6 +19,7 @@ from .base_dataset import BaseDataset
 from .image_pairs import parse_camera, parse_relative_pose
 
 logger = logging.getLogger(__name__)
+scene_lists_path = Path(__file__).parent / "zeb_scene_lists"
 
 
 def read_pair_data(pairs_file: Path) -> list[str]:
@@ -56,15 +57,15 @@ def parse_pairs(pairs_file: Path) -> tuple[Path, Path, str]:
 
 class ZEBPairs(BaseDataset, torch.utils.data.Dataset):
     default_conf = {
-        "root": "???",
+        "root": "zeb",
         "preprocessing": ImagePreprocessor.default_conf,
         "scene_list": None,  # ToDo: add scenes interface
         "exclude_scenes": None,  # scenes to exclude
         "shuffle": False,
         "seed": 42,
         "max_per_scene": None,  # maximum number of pairs per scene
-        "min_overlap": 0.0,  # minimum overlap for pairs
-        "max_overlap": 1.0,  # maximum overlap for pairs
+        "min_overlap": 0.3,  # minimum overlap for pairs
+        "max_overlap": 0.7,  # maximum overlap for pairs
         "check": False,  # check if pairs files are valid
     }
 
@@ -88,19 +89,43 @@ class ZEBPairs(BaseDataset, torch.utils.data.Dataset):
 
         self.items = []
         for i, scene in enumerate(sorted(self.scenes)):
-            pair_files = list((self.root / scene).glob("*.txt"))
+            # Get all pair files for the scene, relative to root
+            pair_files = sorted((self.root / scene).glob("*.txt"), key=lambda p: p.name)
+            pair_files = [pair_file.relative_to(self.root) for pair_file in pair_files]
             if conf.check:
                 for pair_file in tqdm.tqdm(
                     pair_files[:900], desc=f"Check pairs in {scene}"
                 ):
                     parse_pairs(pair_file)  # check if pairs file is valid (asserts)
             if conf.min_overlap > 0.0 or conf.max_overlap < 1.0:
-                overlaps = np.array(
-                    [
-                        min(*parse_overlap(read_pair_data(pair_file)[2:4]))
-                        for pair_file in pair_files
-                    ]
-                )
+                # Check if precomputed overlaps are available
+                precomputed_overlap_file = scene_lists_path / f"{scene}_overlaps.txt"
+                if precomputed_overlap_file.exists():
+                    overlaps = np.loadtxt(
+                        precomputed_overlap_file, usecols=1, dtype=float
+                    )
+                    logger.info(
+                        "Using precomputed overlaps from %s: %d pairs.",
+                        precomputed_overlap_file,
+                        len(overlaps),
+                    )
+                else:
+                    overlaps = np.array(
+                        [
+                            min(
+                                *parse_overlap(
+                                    read_pair_data(self.root / pair_file)[2:4]
+                                )
+                            )
+                            for pair_file in pair_files
+                        ]
+                    )
+                    precomputed_overlap_file.parent.mkdir(parents=True, exist_ok=True)
+                    np.savetxt(
+                        precomputed_overlap_file,
+                        np.column_stack((pair_files, overlaps)),  # type: ignore
+                        fmt="%s %f",
+                    )
                 valid = overlaps >= conf.min_overlap
                 valid &= overlaps <= conf.max_overlap
                 logger.info(
@@ -112,7 +137,11 @@ class ZEBPairs(BaseDataset, torch.utils.data.Dataset):
                     len(pair_files),
                 )
                 valid_idx = np.where(valid)[0]
-                pair_files = [pair_files[idx.item()] for idx in valid_idx]
+                pair_files = [str(pair_files[idx.item()]) for idx in valid_idx]
+
+            # Add the root to the pair files
+            pair_files = [self.root / Path(pair_file) for pair_file in pair_files]
+
             if conf.max_per_scene is not None and len(pair_files) > conf.max_per_scene:
                 pair_files = sorted(pair_files, key=lambda x: x.stem)
                 pair_files = np.random.RandomState(i).choice(
@@ -177,7 +206,7 @@ if __name__ == "__main__":
     images = []
 
     ds_iter = iter(loader)
-    for i in range(12):
+    for i in range(len(loader)):
         batch = next(ds_iter)
         images.append(
             [
@@ -190,3 +219,4 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     plt.savefig("zeb_pairs.png", dpi=300, bbox_inches="tight")
+    plt.show()
