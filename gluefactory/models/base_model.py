@@ -161,6 +161,6 @@ class BaseModel(nn.Module, metaclass=MetaModel):
     def set_initialized(self, to: bool = True):
         """Recursively set the initialization state."""
         self.are_weights_initialized = to
-        for _, w in self.named_parameters():
+        for _, w in self.named_children():
             if isinstance(w, BaseModel):
                 w.set_initialized(to)
