@@ -104,11 +104,6 @@ class ZEBPairs(BaseDataset, torch.utils.data.Dataset):
                     overlaps = np.loadtxt(
                         precomputed_overlap_file, usecols=1, dtype=float
                     )
-                    logger.info(
-                        "Using precomputed overlaps from %s: %d pairs.",
-                        precomputed_overlap_file,
-                        len(overlaps),
-                    )
                 else:
                     overlaps = np.array(
                         [
@@ -192,7 +187,7 @@ class ZEBPairs(BaseDataset, torch.utils.data.Dataset):
 if __name__ == "__main__":
     config = {
         "root": "zeb",
-        "scene_list": None,  # ["blendedmvs", "scenenet"]
+        "scene_list": None,
         "batch_size": 1,
         "num_workers": 0,
         "prefetch_factor": None,
