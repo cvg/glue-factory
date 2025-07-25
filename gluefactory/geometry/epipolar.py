@@ -96,8 +96,7 @@ def generalized_epi_dist(
     else:
         assert cam0._data.shape[-1] == 6
         assert cam1._data.shape[-1] == 6
-        K0, K1 = cam0.calibration_matrix(), cam1.calibration_matrix()
-        F = K1.inverse().transpose(-1, -2) @ T_to_E(T_0to1) @ K0.inverse()
+        F = T_to_F(cam0, cam1, T_0to1)
         if all:
             return sym_epipolar_distance_all(kpts0, kpts1, F)
         else:
