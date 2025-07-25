@@ -104,8 +104,8 @@ class MegaDepth1500Pipeline(eval_pipeline.EvalPipeline):
         cache_loader = CacheLoader({"path": str(pred_file), "collate": None}).eval()
         for i, data in enumerate(tqdm(loader)):
             pred = cache_loader(data)
-            # add custom evaluations here
-            results_i = utils.eval_matches_epipolar(data, pred)
+            # @TODO: consider outputting epipolar precision in pixels
+            results_i = utils.eval_matches_epipolar(data, pred, essential=True)
             if "depth" in data["view0"].keys():
                 results_i.update(utils.eval_matches_depth(data, pred))
             for th in test_thresholds:

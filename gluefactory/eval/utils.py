@@ -34,7 +34,7 @@ def eval_per_batch_item(data: dict, pred: dict, eval_f, *args, **kwargs):
     return {k: [r[k] for r in results] for k in results[0].keys()}
 
 
-def eval_matches_epipolar(data: dict, pred: dict, essential: bool = True) -> dict:
+def eval_matches_epipolar(data: dict, pred: dict, essential: bool = False) -> dict:
     check_keys_recursive(data, ["view0", "view1", "T_0to1"])
     check_keys_recursive(
         pred, ["keypoints0", "keypoints1", "matches0", "matching_scores0"]
