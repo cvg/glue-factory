@@ -34,7 +34,7 @@ def eval_per_batch_item(data: dict, pred: dict, eval_f, *args, **kwargs):
     return {k: [r[k] for r in results] for k in results[0].keys()}
 
 
-def eval_matches_epipolar(data: dict, pred: dict) -> dict:
+def eval_matches_epipolar(data: dict, pred: dict, essential: bool = True) -> dict:
     check_keys_recursive(data, ["view0", "view1", "T_0to1"])
     check_keys_recursive(
         pred, ["keypoints0", "keypoints1", "matches0", "matching_scores0"]
@@ -54,11 +54,16 @@ def eval_matches_epipolar(data: dict, pred: dict) -> dict:
         data["view1"]["camera"],
         data["T_0to1"],
         False,
-        essential=True,
+        essential=essential,
     )[0]
-    results["epi_prec@1e-4"] = (n_epi_err < 1e-4).float().mean().nan_to_num()
-    results["epi_prec@5e-4"] = (n_epi_err < 5e-4).float().mean().nan_to_num()
-    results["epi_prec@1e-3"] = (n_epi_err < 1e-3).float().mean().nan_to_num()
+    if essential:
+        results["epi_prec@1e-4"] = (n_epi_err < 1e-4).float().mean().nan_to_num()
+        results["epi_prec@5e-4"] = (n_epi_err < 5e-4).float().mean().nan_to_num()
+        results["epi_prec@1e-3"] = (n_epi_err < 1e-3).float().mean().nan_to_num()
+    else:
+        results["epi_prec@1px"] = (n_epi_err < 1).float().mean().nan_to_num()
+        results["epi_prec@3px"] = (n_epi_err < 3).float().mean().nan_to_num()
+        results["epi_prec@5px"] = (n_epi_err < 5).float().mean().nan_to_num()
 
     results["num_matches"] = pts0.shape[0]
     results["num_keypoints"] = (kp0.shape[0] + kp1.shape[0]) / 2.0
