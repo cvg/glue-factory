@@ -269,6 +269,10 @@ class StepTimer:
         )
         return fig
 
+    def num_steps(self):
+        """Return the number of steps measured."""
+        return list(self.stats.values())[0].count if self.stats else 0
+
 
 def collect_device_stats() -> dict[str, float]:
     """Collect device usage statistics."""
