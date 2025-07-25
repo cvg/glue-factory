@@ -103,6 +103,17 @@ def parse_args():
         help="Delete the output directory if it exists",
     )
     parser.add_argument(
+        "--ablate",
+        action="store_true",
+        help="Create an ablation folder (/XID) that increments on each run",
+    )
+    parser.add_argument(
+        "--compress_snapshot",
+        "--cs",
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
         "--distributed", action="store_true", help="Run in distributed mode"
     )
     parser.add_argument(
@@ -165,7 +176,7 @@ def param_norm(params):
 @torch.no_grad()
 def run_evaluation(model, loader, device, conf, rank, pbar=True):
     model.eval()
-    model_ = (
+    model = (
         model.module
         if isinstance(model, torch.nn.parallel.DistributedDataParallel)
         else model
@@ -182,11 +193,11 @@ def run_evaluation(model, loader, device, conf, rank, pbar=True):
         data = misc.batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
             pred = model(data)
-            losses, metrics = model_.loss(pred, data)
+            losses, metrics = model.loss(pred, data)
             if i in plot_ids:
-                figures.append(model_.visualize(pred, data))
+                figures.append(model.visualize(pred, data))
             # add PR curves
-            for k, labels_preds in model_.pr_metrics(pred, data).items():
+            for k, labels_preds in model.pr_metrics(pred, data).items():
                 pr_metrics[k].update(*labels_preds)
             del pred, data
         numbers = {**metrics, **{"loss/" + k: v for k, v in losses.items()}}
@@ -251,7 +262,7 @@ def training(rank, conf, output_dir, args):
                 str(init_cp), map_location="cpu", weights_only=not settings.ALLOW_PICKLE
             )
             # load the model config of the old setup, and overwrite with current config
-            if conf.train.get("load_model_config", False):
+            if conf.train.get("load_modelconfig", False):
                 conf.model = OmegaConf.merge(
                     OmegaConf.create(init_cp["conf"]).model, conf.model
                 )
@@ -326,12 +337,11 @@ def training(rank, conf, output_dir, args):
     model = models.get_model(conf.model.name)(conf.model).to(device)
     if init_cp is not None:
         model.load_state_dict(init_cp["model"], strict=False)
+    if args.compile:
+        # Compile before DDP
+        model = model.compile(mode=args.compile)
     if args.distributed:
-        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device])
-        model_ = model.module  # get the original model
-    else:
-        model_ = model
+        model = model.make_ddp(device_ids=[device])
     if rank == 0 and args.print_arch:
         logger.info(f"Model: \n{model}")
 
@@ -403,10 +413,6 @@ def training(rank, conf, output_dir, args):
             profile_memory=False,
             with_stack=True,
         )
-
-    if args.compile:
-        model = torch.compile(model, mode=args.compile, backend="inductor")
-        model_.loss = torch.compile(model_.loss, mode=args.compile, backend="inductor")
 
     step_timer = tools.StepTimer()
     while epoch < conf.train.epochs and not stop:
@@ -491,22 +497,24 @@ def training(rank, conf, output_dir, args):
                 step_timer.measure("to_device")
                 pred = model(data)
                 step_timer.measure("forward")
-                losses, metrics = model_.loss(pred, data)
+                losses, metrics = model.loss(pred, data)
                 loss = torch.mean(losses["total"])
                 loss_metrics = {
                     **metrics,
                     **{"loss/" + k: v for k, v in losses.items()},
                 }
                 for k, v in loss_metrics.items():
+                    val = v.detach()
                     if args.distributed:
-                        torch.distributed.all_reduce(v.clone())
-                        v /= args.n_gpus
-                    train_loss_metrics[k].update(v)
+                        torch.distributed.all_reduce(val)
+                        val = val / args.n_gpus
+                    train_loss_metrics[k].update(val)
                 step_timer.measure("loss_fn")
-            # if torch.isnan(loss).any():
-            #     logger.warning(f"Detected NAN, skipping iteration {it}")
-            #     del pred, data, loss, losses
-            #     continue
+
+            if torch.isnan(loss).any():
+                logger.warning(f"Detected NAN, skipping iteration {it}")
+                del pred, data, loss, losses
+                continue
 
             do_backward = loss.requires_grad
             if args.distributed:
@@ -596,31 +604,35 @@ def training(rank, conf, output_dir, args):
                 # Write Epoch
                 writer.add_scalar("training/epoch", epoch, tot_n_samples)
 
-                step_duration, section_times = step_timer.compute()
-                writer.add_scalar("step/total", step_duration, tot_n_samples)
-                writer.add_scalar("step/_per_sec", 1 / step_duration, tot_n_samples)
-                writer.add_scalar(
-                    "step/_samples_per_sec",
-                    1 / step_duration * train_loader.batch_size * args.n_gpus,
-                    tot_n_samples,
-                )
-                # Write section timings and fractions of step duration.
-                for section_name, duration in section_times.items():
-                    writer.add_scalar(f"step/{section_name}", duration, tot_n_samples)
+                if step_timer.num_steps() > 1:
+                    step_duration, section_times = step_timer.compute()
 
-                writer.add_scalar(
-                    "step/io_fraction",
-                    (section_times["data"] + section_times["to_device"])
-                    / step_duration,
-                    tot_n_samples,
-                )
+                    writer.add_scalar("step/total", step_duration, tot_n_samples)
+                    writer.add_scalar("step/_per_sec", 1 / step_duration, tot_n_samples)
+                    writer.add_scalar(
+                        "step/_samples_per_sec",
+                        1 / step_duration * train_loader.batch_size * args.n_gpus,
+                        tot_n_samples,
+                    )
+                    # Write section timings and fractions of step duration.
+                    for section_name, duration in section_times.items():
+                        writer.add_scalar(
+                            f"step/{section_name}", duration, tot_n_samples
+                        )
 
-                writer.add_figure(
-                    "step/sections",
-                    step_timer.plot(),
-                    tot_n_samples,
-                    close=True,
-                )
+                    writer.add_scalar(
+                        "step/io_fraction",
+                        (section_times["data"] + section_times["to_device"])
+                        / step_duration,
+                        tot_n_samples,
+                    )
+
+                    writer.add_figure(
+                        "step/sections",
+                        step_timer.plot(),
+                        tot_n_samples,
+                        close=True,
+                    )
                 # Reset the stats after logging
                 step_timer.stats.clear()
 
@@ -633,7 +645,7 @@ def training(rank, conf, output_dir, args):
 
             if conf.train.plot_every_iter is not None:
                 if it % conf.train.plot_every_iter == 0 and rank == 0:
-                    figures = model_.visualize(pred, data)
+                    figures = model.visualize(pred, data)
                     tools.write_image_summaries(
                         writer, "training", figures, tot_n_samples
                     )
@@ -761,6 +773,11 @@ if __name__ == "__main__":
     args = parse_args()
     logger.info(f"Starting experiment {args.experiment}")
     output_dir = Path(settings.TRAINING_PATH, args.experiment)
+    if args.ablate:
+        subdirs = [int(p.stem) for p in output_dir.glob("*/") if p.stem.isdigit()]
+        ablate_id = max(subdirs, default=-1) + 1
+        output_dir = output_dir / str(ablate_id)
+        logger.info(f"Creating ablation folder {output_dir}")
     # Setup output directory
     if output_dir.exists() and not (args.restore or args.overwrite or args.clean):
         raise FileExistsError(
@@ -796,7 +813,10 @@ if __name__ == "__main__":
     # copy gluefactory and submodule into output dir
     for module in conf.train.get("submodules", []) + [__module_name__]:
         mod_dir = Path(__import__(str(module)).__file__).parent
-        shutil.copytree(mod_dir, output_dir / module, dirs_exist_ok=True)
+        if args.compress_snapshot:
+            shutil.make_archive(output_dir / module, args.compress_snapshot, mod_dir)
+        else:
+            shutil.copytree(mod_dir, output_dir / module, dirs_exist_ok=True)
 
     # Start actual training
     if args.distributed:

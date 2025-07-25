@@ -6,6 +6,7 @@ from abc import ABCMeta, abstractmethod
 from copy import copy
 
 import omegaconf
+import torch
 from omegaconf import OmegaConf
 from torch import nn
 
@@ -57,6 +58,7 @@ class BaseModel(nn.Module, metaclass=MetaModel):
         "freeze_batch_normalization": False,  # use test-time statistics
         "timeit": False,  # time forward pass
         "visualize": True,  # visualize model predictions
+        "compile_loss": True,  # compile losses for faster inference
     }
     required_data_keys = []
     strict_conf = False
@@ -164,3 +166,20 @@ class BaseModel(nn.Module, metaclass=MetaModel):
         for _, w in self.named_children():
             if isinstance(w, BaseModel):
                 w.set_initialized(to)
+
+    def make_ddp(self, *args, **kwargs) -> nn.parallel.DistributedDataParallel:
+        """Make the model DDP compatible."""
+        model = nn.SyncBatchNorm.convert_sync_batchnorm(self)
+        model = nn.parallel.DistributedDataParallel(model, *args, **kwargs)
+        # Add key methods to the DDP model
+        model.loss = self.loss
+        model.visualize = self.visualize
+        model.pr_metrics = self.pr_metrics
+        return model
+
+    def compile(self, *args, **kwargs) -> "BaseModel":
+        """Compile the model for faster inference."""
+        model = torch.compile(self, *args, **kwargs)
+        if self.conf.compile_loss:
+            model.loss = self.loss
+        return model
