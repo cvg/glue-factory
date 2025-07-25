@@ -234,6 +234,14 @@ class _PairDataset(torch.utils.data.Dataset):
                     for pairs_bin, keep in zip(pairs_all, has_enough_samples):
                         if keep:
                             pairs.append(sample_n(pairs_bin, num_per_bin_2, seed))
+                    if len(pairs) == 0:
+                        logger.warning(
+                            "No pairs found for scene %s with overlap in [%.2f, %.2f].",
+                            scene,
+                            self.conf.min_overlap,
+                            self.conf.max_overlap,
+                        )
+                        continue
                     pairs = np.concatenate(pairs, 0)
                 else:
                     pairs = (mat > self.conf.min_overlap) & (
