@@ -4,7 +4,6 @@ A two-view sparse feature matching pipeline.
 This model contains sub-models for each step:
     feature extraction, feature matching, outlier filtering, pose estimation.
 Each step is optional, and the features or matches can be provided as input.
-Default: SuperPoint with nearest neighbor matching.
 
 Convention for the matches: m0[i] is the index of the keypoint in image 1
 that corresponds to the keypoint i in image 0. m0[i] = -1 if i is unmatched.
@@ -71,7 +70,7 @@ class TwoViewPipeline(BaseModel):
 
     def _forward(self, data):
         if self.conf.get("extract_parallel", False) and self.training:
-            bs = len(data["name"])
+            bs = data["view0"]["image"].shape[0]
             data_01 = misc.concat_tree([data["view0"], data["view1"]])
             pred_01 = self.extract_view(data_01)
             pred0 = misc.flat_map(pred_01, lambda _, v: v[:bs], unflatten=True)

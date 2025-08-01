@@ -199,7 +199,7 @@ class HeatmapPlot:
 
 class ImagePlot:
     plot_name = "images"
-    required_keys = ["view0", "view1"]
+    required_keys = []
 
     def __init__(self, fig, axes, data, preds):
         pass

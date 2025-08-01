@@ -59,14 +59,12 @@ if __name__ == "__main__":
 
     plt.close("all")
 
-    from ..visualization.colmap_frame import COLMAPFrame
-
     frame = GlobalFrame(
         {"child": {"default": args.default_plot}, **vars(args)},
         results,
         dataset,
         predictions,
-        child_frame=COLMAPFrame,
+        child_frame=TwoViewFrame,
     )
     frame.draw()
     plt.show()
