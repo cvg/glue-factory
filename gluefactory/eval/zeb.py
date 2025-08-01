@@ -1,4 +1,13 @@
+"""
+Zeroshot Evaluation Benchmark (ZEB) Pipeline.
+
+Source: https://github.com/xuelunshen/gim
+Paper: GIM: Learning Generalizable Image Matcher From Internet Videos
+Arxiv: https://arxiv.org/abs/2402.11095
+"""
+
 import logging
+import pprint
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -12,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 
 class ZeroshotEvaluationBenchmarkPipeline(ScanNet1500Pipeline):
+    """Pipeline for Zeroshot Evaluation Benchmark (ZEB)."""
+
     default_conf = {
         "data": {
             "name": "zeb",
@@ -50,7 +61,7 @@ class ZeroshotEvaluationBenchmarkPipeline(ScanNet1500Pipeline):
     ]
     optional_export_keys = []
 
-    def _init(self, conf):
+    def _init(self, conf):  # pylint: disable=redefined-outer-name
         if not (DATA_PATH / "zeb").exists():
             logger.info("Please manually download the ZEB dataset following GIM:")
             logger.info("%s", "https://github.com/xuelunshen/gim/tree/main")
@@ -86,6 +97,8 @@ if __name__ == "__main__":
         overwrite=args.overwrite,
         overwrite_eval=args.overwrite_eval,
     )
+
+    pprint.pprint(s)
 
     if args.plot:
         for name, fig in f.items():
