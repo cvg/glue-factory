@@ -18,7 +18,7 @@ from gluefactory.eval.utils import (
 )
 from gluefactory.models.two_view_pipeline import TwoViewPipeline
 from gluefactory.settings import root
-from gluefactory.utils.image import ImagePreprocessor
+from gluefactory.utils.preprocess import ImagePreprocessor
 from gluefactory.utils.tensor import map_tensor
 from gluefactory.utils.tools import set_seed
 from gluefactory.visualization.viz2d import (
