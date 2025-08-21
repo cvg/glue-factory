@@ -7,7 +7,7 @@ from ..base_estimator import BaseEstimator
 
 
 class PoseLibRelativePoseEstimator(BaseEstimator):
-    default_conf = {"ransac_th": 2.0, "options": {}}
+    default_conf = {"ransac_th": 2.0, "options": {}, "bundle_options": {}}
 
     required_data_keys = ["m_kpts0", "m_kpts1", "camera0", "camera1"]
 
@@ -27,6 +27,7 @@ class PoseLibRelativePoseEstimator(BaseEstimator):
                 "max_epipolar_error": self.conf.ransac_th,
                 **OmegaConf.to_container(self.conf.options),
             },
+            OmegaConf.to_container(self.conf.bundle_options),
         )
         success = M is not None
         if success:
