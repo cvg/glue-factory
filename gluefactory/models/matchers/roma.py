@@ -12,6 +12,7 @@ Main differences to the original code:
 - Unified API from gluefactory.
 - Upsampled resolution for image0 and image1 can differ.
 - Compute cycle distance as additional filter.
+- Interface to match keypoints via dense correspondences.
 """
 
 import logging
