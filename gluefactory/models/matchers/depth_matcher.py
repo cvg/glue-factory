@@ -30,7 +30,7 @@ class DepthMatcher(BaseModel):
         "min_visibility_th": 0.5,
     }
 
-    required_data_keys = ["view0", "view1", "T_0to1", "T_1to0"]
+    required_data_keys = ["view0", "view1", "T_0to1"]
 
     def _init(self, conf):
         # TODO (iago): Is this just boilerplate code?
