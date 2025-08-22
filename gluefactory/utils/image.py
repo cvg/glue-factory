@@ -199,12 +199,12 @@ def get_pixel_grid(
     return grid
 
 
-def coords_to_image(coords):
+def chw_from_hwc(coords):
     # ...HWC -> ...CHW
     return coords.transpose(-2, -1).transpose(-3, -2)
 
 
-def image_to_coords(image):
+def hwc_from_chw(image):
     # ...CHW -> ...HWC
     return image.transpose(-3, -2).transpose(-2, -1)
 
@@ -227,3 +227,16 @@ def normalize_coords(coords, hw: tuple[int, int] | None = None) -> torch.Tensor:
     coords[..., 0] = coords[..., 0] / (hw[1] - 1) * 2 - 1
     coords[..., 1] = coords[..., 1] / (hw[0] - 1) * 2 - 1
     return coords
+
+
+def cycle_dist(
+    q_to_ref: torch.Tensor, ref_to_q: torch.Tensor, normalized: bool = False
+) -> torch.Tensor:
+    """Compute cycle consistency error between two coordinate fields."""
+    q_to_ref_to_q = hwc_from_chw(grid_sample(chw_from_hwc(ref_to_q), q_to_ref))
+
+    return torch.linalg.norm(
+        get_pixel_grid(fmap=q_to_ref, normalized=normalized)
+        - (q_to_ref_to_q if normalized else denormalize_coords(q_to_ref_to_q)),
+        dim=-1,
+    )

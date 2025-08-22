@@ -30,28 +30,15 @@ except ImportError:
 
 from ...utils import misc
 from ...utils.image import (
-    coords_to_image,
+    cycle_dist,
     denormalize_coords,
     get_pixel_grid,
     grid_sample,
-    image_to_coords,
     normalize_coords,
 )
 from .. import base_model
 
 logger = logging.getLogger(__name__)
-
-
-def cycle_dist(
-    q_to_ref: torch.Tensor, ref_to_q: torch.Tensor, normalized: bool = False
-) -> torch.Tensor:
-    q_to_ref_to_q = image_to_coords(grid_sample(coords_to_image(ref_to_q), q_to_ref))
-
-    return torch.linalg.norm(
-        get_pixel_grid(fmap=q_to_ref, normalized=normalized)
-        - (q_to_ref_to_q if normalized else denormalize_coords(q_to_ref_to_q)),
-        dim=-1,
-    )
 
 
 def flow_to_warp(
