@@ -6,7 +6,10 @@ import cv2
 import kornia
 import numpy as np
 import torch
+import torch.nn.functional as F
 from omegaconf import OmegaConf
+
+from ..geometry.wrappers import Camera
 
 
 class ImagePreprocessor:
@@ -128,3 +131,112 @@ def numpy_image_to_torch(image: np.ndarray) -> torch.Tensor:
 def load_image(path: Path, grayscale=False) -> torch.Tensor:
     image = read_image(path, grayscale=grayscale)
     return numpy_image_to_torch(image)
+
+
+def grid_sample(
+    image: torch.Tensor,
+    coords: torch.Tensor,
+    interpolation: str = "bilinear",
+    align_corners: bool = False,
+):
+    assert image.dim() == coords.dim()
+    is_batched = image.dim() == 4
+
+    if is_batched:
+        assert coords.dim() == 4
+        return F.grid_sample(
+            image.to(coords.device), coords, interpolation, align_corners=False
+        )
+    else:
+        return F.grid_sample(
+            image[None].to(coords.device),
+            coords[None],
+            mode=interpolation,
+            align_corners=align_corners,
+        )[0]
+
+
+def get_pixel_grid(
+    *,
+    fmap: torch.Tensor | None = None,  # B x H X W X D
+    camera: Camera | None = None,
+    size: Optional[tuple[int, int]] = None,
+    device: torch.device | None = None,
+    dtype=torch.float32,
+    normalized: bool = False,
+) -> torch.Tensor:
+    if fmap is None:
+        if camera is None:
+            if size is None:
+                raise ValueError("Specify fmap, size, or camera")
+            w, h = size
+        else:
+            w, h = camera.size.int()
+            device = camera.device
+            dtype = camera.dtype
+    else:
+        *_, h, w, _ = fmap.shape
+        device = fmap.device
+        dtype = fmap.dtype
+    grid = torch.stack(
+        torch.meshgrid(
+            torch.arange(w, dtype=dtype, device=device),
+            torch.arange(h, dtype=dtype, device=device),
+            indexing="xy",
+        ),
+        dim=-1,
+    )
+    if fmap.ndim == 4:
+        b = fmap.shape[0]
+        grid = grid[None].expand(b, -1, -1, -1)
+    grid += 0.5
+    if normalized:
+        grid *= 2 / grid.new_tensor([w, h])
+        grid -= 1
+    elif fmap is not None and camera is not None:
+        # In case fmaps are at a different image resolution
+        grid *= camera.size / grid.new_tensor([w, h])
+    return grid
+
+
+def chw_from_hwc(coords):
+    # ...HWC -> ...CHW
+    return coords.transpose(-2, -1).transpose(-3, -2)
+
+
+def hwc_from_chw(image):
+    # ...CHW -> ...HWC
+    return image.transpose(-3, -2).transpose(-2, -1)
+
+
+def denormalize_coords(coords, hw: tuple[int, int] | None = None) -> torch.Tensor:
+    """Denormalize coordinates from [-1, 1] to [0, H] or [0, W] (COLMAP)"""
+    coords = coords.clone()
+    if hw is None:
+        hw = coords.shape[-3:-1]
+    coords[..., 0] = (coords[..., 0] + 1) / 2 * (hw[1] - 1)
+    coords[..., 1] = (coords[..., 1] + 1) / 2 * (hw[0] - 1)
+    return coords
+
+
+def normalize_coords(coords, hw: tuple[int, int] | None = None) -> torch.Tensor:
+    """Normalize coordinates from [0, H] or [0, W] (COLMAP) to [-1, 1]"""
+    coords = coords.clone()
+    if hw is None:
+        hw = coords.shape[-3:-1]
+    coords[..., 0] = coords[..., 0] / (hw[1] - 1) * 2 - 1
+    coords[..., 1] = coords[..., 1] / (hw[0] - 1) * 2 - 1
+    return coords
+
+
+def cycle_dist(
+    q_to_ref: torch.Tensor, ref_to_q: torch.Tensor, normalized: bool = False
+) -> torch.Tensor:
+    """Compute cycle consistency error between two coordinate fields."""
+    q_to_ref_to_q = hwc_from_chw(grid_sample(chw_from_hwc(ref_to_q), q_to_ref))
+
+    return torch.linalg.norm(
+        get_pixel_grid(fmap=q_to_ref, normalized=normalized)
+        - (q_to_ref_to_q if normalized else denormalize_coords(q_to_ref_to_q)),
+        dim=-1,
+    )
