@@ -1,0 +1,3 @@
+name: extractors.disk_kornia
+max_num_keypoints: 2048
+detection_threshold: 0.0

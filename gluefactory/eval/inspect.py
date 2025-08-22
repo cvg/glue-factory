@@ -1,16 +1,14 @@
 import argparse
 from collections import defaultdict
-from pathlib import Path
 from pprint import pprint
 
 import matplotlib
 import matplotlib.pyplot as plt
 
-from ..settings import EVAL_PATH
+from .. import settings
 from ..visualization.global_frame import GlobalFrame
 from ..visualization.two_view_frame import TwoViewFrame
-from . import get_benchmark
-from .eval_pipeline import load_eval
+from . import eval_pipeline, get_benchmark
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -25,8 +23,6 @@ if __name__ == "__main__":
     parser.add_argument("dotlist", nargs="*")
     args = parser.parse_intermixed_args()
 
-    output_dir = Path(EVAL_PATH, args.benchmark)
-
     results = {}
     summaries = defaultdict(dict)
 
@@ -36,12 +32,25 @@ if __name__ == "__main__":
         matplotlib.use(args.backend)
 
     bm = get_benchmark(args.benchmark)
-    loader = bm.get_dataloader()
+    dataset = bm.get_dataset()
 
     for name in args.dotlist:
-        experiment_dir = output_dir / name
+        possible_paths = [
+            settings.EVAL_PATH / args.benchmark / name,  # Preferred
+            settings.TRAINING_PATH / name / args.benchmark,
+        ]
+        experiment_dir = None
+        for path in possible_paths:
+            if path.exists():
+                experiment_dir = path
+                break
+        if experiment_dir is None:
+            raise FileNotFoundError(
+                f"Experiment directory for {name} not found. "
+                f" Checked: {possible_paths}"
+            )
         pred_file = experiment_dir / "predictions.h5"
-        s, results[name] = load_eval(experiment_dir)
+        s, results[name] = eval_pipeline.load_eval(experiment_dir)
         predictions[name] = pred_file
         for k, v in s.items():
             summaries[k][name] = v
@@ -53,7 +62,7 @@ if __name__ == "__main__":
     frame = GlobalFrame(
         {"child": {"default": args.default_plot}, **vars(args)},
         results,
-        loader,
+        dataset,
         predictions,
         child_frame=TwoViewFrame,
     )

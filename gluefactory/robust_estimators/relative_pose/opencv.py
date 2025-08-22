@@ -2,8 +2,8 @@ import cv2
 import numpy as np
 import torch
 
-from ...geometry.utils import from_homogeneous
-from ...geometry.wrappers import Pose
+from ...geometry import reconstruction
+from ...geometry import transforms as gtr
 from ..base_estimator import BaseEstimator
 
 
@@ -30,8 +30,8 @@ class OpenCVRelativePoseEstimator(BaseEstimator):
             f_mean = torch.cat([camera0.f, camera1.f]).mean().item()
             norm_thresh = self.conf.ransac_th / f_mean
 
-            pts0 = from_homogeneous(camera0.image2cam(kpts0)).cpu().detach().numpy()
-            pts1 = from_homogeneous(camera1.image2cam(kpts1)).cpu().detach().numpy()
+            pts0 = gtr.from_homogeneous(camera0.image2cam(kpts0)).cpu().detach().numpy()
+            pts1 = gtr.from_homogeneous(camera1.image2cam(kpts1)).cpu().detach().numpy()
 
             E, mask = cv2.findEssentialMat(
                 pts0,
@@ -51,13 +51,17 @@ class OpenCVRelativePoseEstimator(BaseEstimator):
                     if n > best_num_inliers:
                         best_num_inliers = n
                         inl = torch.tensor(mask.ravel() > 0)
-                        M = Pose.from_Rt(
+                        M = reconstruction.Pose.from_Rt(
                             torch.tensor(R).to(kpts0), torch.tensor(t[:, 0]).to(kpts0)
                         )
 
         estimation = {
             "success": M is not None,
-            "M_0to1": M if M is not None else Pose.from_4x4mat(torch.eye(4).to(kpts0)),
+            "M_0to1": (
+                M
+                if M is not None
+                else reconstruction.Pose.from_4x4mat(torch.eye(4).to(kpts0))
+            ),
             "inliers": inl.to(device=kpts0.device),
         }
 

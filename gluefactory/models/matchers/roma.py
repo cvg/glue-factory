@@ -29,13 +29,6 @@ except ImportError:
     )
 
 from ...utils import misc
-from ...utils.image import (
-    cycle_dist,
-    denormalize_coords,
-    get_pixel_grid,
-    grid_sample,
-    normalize_coords,
-)
 from .. import base_model
 
 logger = logging.getLogger(__name__)
@@ -108,13 +101,13 @@ def match_keypoints_dense(
 
     def find_matches(kpts_q, kpts_t, warp, cert, q_hw, t_hw):
         # Normalize to [-1, 1] for grid sampling
-        kpts_q = normalize_coords(kpts0, q_hw)
-        kpts_q_to_t = grid_sample(warp.permute(0, 3, 1, 2), kpts_q[:, None])[
+        kpts_q = misc.normalize_coords(kpts0, q_hw)
+        kpts_q_to_t = misc.grid_sample(warp.permute(0, 3, 1, 2), kpts_q[:, None])[
             :, :, 0
         ].permute(0, 2, 1)
-        scores = grid_sample(cert[:, None], kpts_q[:, None])[:, 0, 0]
+        scores = misc.grid_sample(cert[:, None], kpts_q[:, None])[:, 0, 0]
         # Corresponding coordinates in the other image (target), COLMAP coords.
-        kpts_q_to_t = denormalize_coords(kpts_q_to_t, t_hw)
+        kpts_q_to_t = misc.denormalize_coords(kpts_q_to_t, t_hw)
         # Output points are again in COLMAP coordinates
         dist = torch.cdist(kpts_q_to_t, kpts_t)  # in pixels
         matches = torch.min(dist, dim=-1)
@@ -219,8 +212,8 @@ class RoMa(base_model.BaseModel):
             pred_stoq = self.estimate_warp(data1["image"], data0["image"])
         pred = {**misc.to_view(pred_qtos, "0"), **misc.to_view(pred_stoq, "1")}
         if self.conf.add_cycle_error:
-            pred["cycle_error0"] = cycle_dist(pred["warp0"], pred["warp1"])
-            pred["cycle_error1"] = cycle_dist(pred["warp1"], pred["warp0"])
+            pred["cycle_error0"] = misc.cycle_dist(pred["warp0"], pred["warp1"])
+            pred["cycle_error1"] = misc.cycle_dist(pred["warp1"], pred["warp0"])
         if self.conf.sample_num_matches > 0:
             if "keypoints0" in data:
                 logger.warning(
@@ -405,8 +398,8 @@ class RoMa(base_model.BaseModel):
 
         assert warp0.shape[0] == 1, "Batch size must be 1 for sampling matches."
         certainty0, certainty1 = pred["certainty0"], pred["certainty1"]
-        coords0 = get_pixel_grid(fmap=warp0, normalized=True)
-        coords1 = get_pixel_grid(fmap=warp1, normalized=True)
+        coords0 = misc.get_pixel_grid(fmap=warp0, normalized=True)
+        coords1 = misc.get_pixel_grid(fmap=warp1, normalized=True)
 
         matches0 = torch.cat([coords0, warp0], dim=-1)
         matches1 = torch.cat([warp1, coords1], dim=-1)
@@ -423,12 +416,12 @@ class RoMa(base_model.BaseModel):
         scores = scores.reshape(1, -1)
         sparse_pred = {
             # In COLMAP coordinates, i.e. [0, 0] is the corner of the top-left pixel
-            "keypoints0": denormalize_coords(m_kpts[:, :2], img0.shape[-2:]).reshape(
-                1, -1, 2
-            ),
-            "keypoints1": denormalize_coords(m_kpts[:, 2:], img1.shape[-2:]).reshape(
-                1, -1, 2
-            ),
+            "keypoints0": misc.denormalize_coords(
+                m_kpts[:, :2], img0.shape[-2:]
+            ).reshape(1, -1, 2),
+            "keypoints1": misc.denormalize_coords(
+                m_kpts[:, 2:], img1.shape[-2:]
+            ).reshape(1, -1, 2),
             "matching_scores0": scores,
             "matching_scores1": scores,
             "keypoint_scores0": scores,
@@ -454,8 +447,7 @@ if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
 
-    from ...utils.image import ImagePreprocessor
-    from ...utils.tensor import rbd
+    from ...utils.preprocess import ImagePreprocessor
     from ...visualization import viz2d
 
     parser = argparse.ArgumentParser()
@@ -490,17 +482,17 @@ if __name__ == "__main__":
     data.update({k + "0": v for k, v in feats0.items()})
     data.update({k + "1": v for k, v in feats1.items()})
 
-    pred = rbd(dkm_model(data))
+    pred = misc.rbd(dkm_model(data))
     certainty0 = pred["certainty0"]
     certainty1 = pred["certainty1"]
 
-    q_coords0 = get_pixel_grid(fmap=pred["warp0"], normalized=True)
-    q_coords1 = get_pixel_grid(fmap=pred["warp1"], normalized=True)
+    q_coords0 = misc.get_pixel_grid(fmap=pred["warp0"], normalized=True)
+    q_coords1 = misc.get_pixel_grid(fmap=pred["warp1"], normalized=True)
 
-    image_0to0 = grid_sample(image0, q_coords0)
-    image_1to1 = grid_sample(image1, q_coords1)
-    image_1to0 = grid_sample(image1, pred["warp0"])
-    image_0to1 = grid_sample(image0, pred["warp1"])
+    image_0to0 = misc.grid_sample(image0, q_coords0)
+    image_1to1 = misc.grid_sample(image1, q_coords1)
+    image_1to0 = misc.grid_sample(image1, pred["warp0"])
+    image_0to1 = misc.grid_sample(image0, pred["warp1"])
 
     white0, white1 = torch.ones_like(certainty0).to(device), torch.ones_like(
         certainty1

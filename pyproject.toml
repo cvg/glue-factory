@@ -26,6 +26,7 @@ dependencies = [
     "scipy",
     "h5py",
     "omegaconf",
+    "hydra-core",
     "tensorboard",
     "albumentations",
     "kornia",
