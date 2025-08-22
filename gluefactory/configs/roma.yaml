@@ -1,0 +1,29 @@
+model:
+    extractor:
+        name: null # Set this for sparse matching
+    matcher:
+        name: roma
+        weights: outdoor
+        sample_num_matches: 10000
+        internal_hw: [560, 560]
+benchmarks:
+    megadepth1500:
+        data:
+            preprocessing:
+                resize: 1024
+        model:
+            matcher:
+                internal_hw: [630, 630]  # > 644 yields MAGMA warning, official: 672
+                output_hw: [1344, 1344]
+                sample_num_matches: 5000
+        eval:
+            estimator: opencv
+            ransac_th: 0.5  # Use 1 for poselib
+    scannet1500:
+        model:
+            matcher:
+                weights: indoor
+                sample_num_matches: 5000
+        eval:
+            estimator: opencv
+            ransac_th: 0.5
