@@ -163,9 +163,9 @@ def match_keypoints_dense(
     return mpred
 
 
-class RoMA(base_model.BaseModel):
+class RoMa(base_model.BaseModel):
     """
-    RoMA model for matching images.
+    RoMa model for matching images.
     """
 
     default_conf = {
@@ -456,6 +456,7 @@ class RoMA(base_model.BaseModel):
 
 
 if __name__ == "__main__":
+    """Inference example with RoMA matcher."""
     torch.set_grad_enabled(False)
     import warnings
 
@@ -485,21 +486,22 @@ if __name__ == "__main__":
     image0, image1 = data0["image"], data1["image"]
 
     device = "cuda"
-    dkm_model = RoMA({"symmetric": True, "sample_num_matches": 0}).eval().to(device)
+    dkm_model = RoMa({"symmetric": True, "sample_num_matches": 0}).eval().to(device)
     data = {
         "view0": {"image": image0.to(device)[None]},
         "view1": {"image": image1.to(device)[None]},
     }
 
+    # Example to match SuperPoint keypoints with RoMa (use LG interface)
     from lightglue import SuperPoint
 
     extractor = SuperPoint(max_num_keypoints=2048).eval().cuda()  # load the extractor
-
     feats0 = extractor.extract(image0.to(device))
     feats1 = extractor.extract(image1.to(device))
 
     data.update({k + "0": v for k, v in feats0.items()})
     data.update({k + "1": v for k, v in feats1.items()})
+
     pred = rbd(dkm_model(data))
     certainty0 = pred["certainty0"]
     certainty1 = pred["certainty1"]
@@ -517,19 +519,16 @@ if __name__ == "__main__":
     ).to(device)
     visible_0to0 = certainty0 * image_0to0 + (1 - certainty0) * white0
     visible_1to1 = certainty1 * image_1to1 + (1 - certainty1) * white1
-    viz2d.plot_images(
-        [visible_0to0, visible_1to1], titles=["visible area in image", None]
-    )
+    viz2d.plot_images([visible_0to0, visible_1to1])
 
-    plt.savefig("warp_init.png")
+    plt.savefig("roma_covisible.png")
     visible_1to0 = certainty0 * image_1to0 + (1 - certainty0) * white0
     visible_0to1 = certainty1 * image_0to1 + (1 - certainty1) * white1
     viz2d.plot_images(
         [visible_1to0, visible_0to1],
-        titles=["projected onto other image", None],
     )
 
-    plt.savefig("warp.png")
+    plt.savefig("roma_warp.png")
 
     if "keypoints0" in pred:
         kpts0 = pred["keypoints0"]
@@ -537,7 +536,6 @@ if __name__ == "__main__":
 
         viz2d.plot_images(
             [image0, image1],
-            titles=["Image 0", "Image 1"],
         )
 
         valid = pred["matches0"] > -1
@@ -545,4 +543,4 @@ if __name__ == "__main__":
         kpts0, kpts1 = kpts0[valid], kpts1[valid]
         viz2d.plot_matches(kpts0, kpts1, a=0.2)
 
-        plt.savefig("keypoints.png")
+        plt.savefig("roma_matches.png")
