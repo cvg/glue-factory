@@ -1,8 +1,6 @@
 import numpy as np
 import torch
-from joblib import Parallel, delayed
 from pytlsd import lsd, batched_lsd
-from tqdm import tqdm
 from ..base_model import BaseModel
 
 
@@ -106,28 +104,6 @@ class LSD(BaseModel):
             lines, line_scores, valid_lines = zip(
                 *(self.filter_lines(seg) for seg in segs)
             )
-            #lines, line_scores, valid_lines = zip(
-            #    *Parallel(n_jobs=self.conf.n_jobs)(
-            #        delayed(self.filter_lines)(seg) for seg in segs
-            #    )
-            #)
-        
-        """ if b_size == 1:
-            lines, line_scores, valid_lines = self.detect_lines(image[0])
-            lines = [lines]
-            line_scores = [line_scores]
-            valid_lines = [valid_lines]
-        else:
-            lsd_lines, lsd_line_scores, lsd_valid_lines = zip(
-                *Parallel(n_jobs=self.conf.n_jobs)(
-                    delayed(self.detect_lines)(img) for img in image
-                )
-            )
-
-            for i in tqdm(range(len(lsd_lines))):
-                assert np.array_equal(lines[i], lsd_lines[i])
-                assert np.array_equal(line_scores[i], lsd_line_scores[i])
-                assert np.array_equal(valid_lines[i], lsd_valid_lines[i]) """
 
         # Batch if possible
         if b_size == 1 or self.conf.force_num_lines:
