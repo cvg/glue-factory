@@ -13,6 +13,7 @@ from ..utils.export_predictions import export_predictions
 
 resize = 1024
 n_kpts = 2048
+n_lines=250
 configs = {
     "sp": {
         "name": f"r{resize}_SP-k{n_kpts}-nms3",
@@ -93,6 +94,33 @@ configs = {
             "name": "extractors.aliked",
             "max_num_keypoints": n_kpts,
         },
+    },
+    "sp_lsd_wireframe": {
+        "name": f"r{resize}_SP-k{n_kpts}-nms3_LSD_l{n_lines}",
+        "keys": ["keypoints", "keypoint_scores", "descriptors", "valid_lines", "lines", "orig_lines", "lines_junc_idx", "line_scores"],
+        "gray": True,
+        "conf": {
+            "name": "gluefactory.models.lines.wireframe",
+            "trainable": False,
+            "point_extractor": {
+                "name": "gluefactory_nonfree.superpoint",
+                "max_num_keypoints": 1500,
+                "force_num_keypoints": True,
+                "trainable": False,
+            },
+            "line_extractor": {
+                "name": "gluefactory.models.lines.lsd",
+                "max_num_lines": n_lines,
+                "force_num_lines": True,
+                "min_length": 15,
+                "trainable": False,
+            },
+            "wireframe_params": {
+                "merge_points": True,
+                "merge_line_endpoints": True,
+                "nms_radius": 4,
+            },
+            },
     },
 }
 
