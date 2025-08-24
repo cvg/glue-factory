@@ -285,7 +285,7 @@ class _PairDataset(torch.utils.data.Dataset):
             )
             with h5py.File(str(depth_path), "r") as f:
                 depth_map = f["/depth"].__array__().astype(np.float32, copy=False)
-                depth_map = torch.Tensor(depth_map)[None]
+                depth_map = torch.as_tensor(depth_map)[None]
             assert depth_map.shape[-2:] == img.shape[-2:]
         else:
             depth_map = None
@@ -489,13 +489,19 @@ def visualize(args):
         "num_workers": 0,
         "prefetch_factor": None,
         "val_num_per_scene": None,
+        # "depth_subpath": "depth_processed/",
     }
     from ..visualization import viz2d
 
     conf = OmegaConf.merge(conf, OmegaConf.from_cli(args.dotlist))
     dataset = MegaDepth(conf)
     loader = dataset.get_data_loader(args.split)
-    logger.info("The dataset has elements.", len(loader))
+    # logger.info("The dataset has %d elements.", len(loader))
+
+    # train_iter = iter(loader)
+    # for _ in tqdm(range(100), smoothing=0.0):
+    #     data = next(train_iter)
+    # exit()
 
     with tools.fork_rng(seed=dataset.conf.seed):
         images, depths = [], []
@@ -514,6 +520,7 @@ def visualize(args):
     for i in range(len(images)):
         viz2d.plot_heatmaps(depths[i], axes=axes[i])
     plt.show()
+    plt.savefig("megadepth.png")
 
 
 if __name__ == "__main__":
