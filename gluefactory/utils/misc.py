@@ -236,6 +236,18 @@ def pad_and_stack(
     return y
 
 
+def set_slice(
+    src: torch.Tensor, val: float | torch.Tensor, dim: int = 0, start: int = 0
+) -> torch.Tensor:
+    """Set a slice to a constant value. Useful for border removal in padded images."""
+    # Avoids graph breaks, equivalent to: src[..., start:] = val
+    n = src.shape[dim]
+    indices_in_dim = torch.arange(n, device=src.device)
+    # Fix broadcast dimensions
+    indices_in_dim = indices_in_dim.view(n, *[1] * (src.dim() - 1)).transpose(0, dim)
+    return torch.where(indices_in_dim < start, src, val)
+
+
 def extract_patches(
     tensor: torch.Tensor,
     required_corners: torch.Tensor,

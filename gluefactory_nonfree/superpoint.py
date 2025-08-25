@@ -251,11 +251,16 @@ class SuperPoint(BaseModel):
             if self.conf.remove_borders:
                 scores[:, : self.conf.remove_borders] = -1
                 scores[:, :, : self.conf.remove_borders] = -1
+
                 if "image_size" in data:
                     for i in range(scores.shape[0]):
                         w, h = data["image_size"][i]
-                        scores[i, int(h.item()) - self.conf.remove_borders :] = -1
-                        scores[i, :, int(w.item()) - self.conf.remove_borders :] = -1
+                        scores[i] = misc.set_slice(
+                            scores[i], -1, dim=-2, start=h - self.conf.remove_borders
+                        )
+                        scores[i] = misc.set_slice(
+                            scores[i], -1, dim=-1, start=w - self.conf.remove_borders
+                        )
                 else:
                     scores[:, -self.conf.remove_borders :] = -1
                     scores[:, :, -self.conf.remove_borders :] = -1
@@ -316,9 +321,7 @@ class SuperPoint(BaseModel):
                     mode="random_c",
                     bounds=(
                         0,
-                        data.get("image_size", torch.tensor(image.shape[-2:]))
-                        .min()
-                        .item(),
+                        data.get("image_size", torch.tensor(image.shape[-2:])).min(),
                     ),
                 )
                 scores = misc.pad_and_stack(scores, max_kps, -1, mode="zeros")
