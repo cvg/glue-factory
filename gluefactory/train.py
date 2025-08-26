@@ -111,7 +111,7 @@ def parse_args():
         "--compress_snapshot",
         "--cs",
         type=str,
-        default=None,
+        default="zip",
     )
     parser.add_argument(
         "--distributed", action="store_true", help="Run in distributed mode"
@@ -337,6 +337,14 @@ def training(rank, conf, output_dir, args):
     model = models.get_model(conf.model.name)(conf.model).to(device)
     if init_cp is not None:
         model.load_state_dict(init_cp["model"], strict=False)
+    else:
+        # Run dummy forward --> required for lazy init under DDP
+        logger.info("Running dummy forward pass to initialize lazy modules.")
+        dummy_batch = next(iter(train_loader))
+        dummy_batch = misc.batch_to_device(dummy_batch, device)
+        dummy_pred = model(dummy_batch)
+        del dummy_batch, dummy_pred
+
     if args.compile:
         # Compile before DDP
         model = model.compile(mode=args.compile)
