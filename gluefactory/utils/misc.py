@@ -1,6 +1,6 @@
 import math
 from collections.abc import MutableMapping
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 import numpy as np
 import torch
@@ -17,6 +17,8 @@ def map_tensor(input_, func):
         return {k: map_tensor(sample, func) for k, sample in input_.items()}
     elif isinstance(input_, Sequence):
         return [map_tensor(sample, func) for sample in input_]
+    elif isinstance(input_, np.ndarray):
+        return func(torch.from_numpy(input_))
     elif input_ is None:
         return None
     else:
@@ -91,28 +93,54 @@ def unstack_twoviews(data, B, indices=["0to1", "0to2", "1to2"]):
     return out
 
 
-def concat_tree(
-    trees: list[types.Tree],
+def iterelements(data: dict, pattern="view") -> Iterable[Any]:
+    i = 0
+    while True:
+        view = data.get(f"{pattern}{i}", None)
+        if view is None:
+            break
+        yield view
+        i += 1
+
+
+def pack_elements(data, pattern="view"):
+    return pack_tree(iterelements(data, pattern=pattern))
+
+
+def pack_tree(
+    trees: Iterable[types.Tree],
     check: bool = False,
+    fn: Callable[[Sequence[Any]], Any] = lambda x: x,
 ) -> types.Tree:
-    """Concatenate a list of trees into a single batch"""
+    """Concatenate a list of trees into a list per entry"""
     if not trees:
         return {}
-    keys = set(trees[0].keys())
+
+    trees = list(trees)
+    flat_map(trees[0], lambda k, v: print(k, v.shape))
+    flat_trees = [flatten_dict(batch) for batch in trees]
+    flat_map(flat_trees[0], lambda k, v: isinstance(v, list), unflatten=False)
+    keys = set(flat_trees[0].keys())
     if check:
         for batch in trees[1:]:
             if keys != set(batch.keys()):
                 raise ValueError("All trees must have the same keys.")
+    joined_tree = {k: fn([batch[k] for batch in flat_trees]) for k in keys}
+    return unflatten_dict(joined_tree)
 
-    def combine_recursive(val_list: Sequence[Any]) -> Any:
+
+def concat_tree(trees: Iterable[types.Tree], check: bool = False) -> types.Tree:
+    """Concatenate a list of trees into a single batch"""
+
+    def combine(val_list: Sequence[Any]) -> Any:
         if isinstance(val_list[0], torch.Tensor):
             return torch.cat(val_list)
-        elif isinstance(val_list[0], Mapping):
-            return concat_tree(val_list, check)
         elif isinstance(val_list[0], Sequence):
             return sum(val_list, start=[])
+        else:
+            raise TypeError(f"Cannot combine values of type {type(val_list[0])}")
 
-    return {k: combine_recursive([batch[k] for batch in trees]) for k in keys}
+    return pack_tree(trees, check=check, fn=combine)
 
 
 def flatten_dict(
