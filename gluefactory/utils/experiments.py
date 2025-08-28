@@ -117,7 +117,7 @@ def delete_old_checkpoints(dir_, num_keep):
 
 
 def load_experiment(
-    exper, conf={}, get_last=False, ckpt=None, weights_only=settings.ALLOW_PICKLE
+    exper, conf={}, get_last=False, ckpt=None, weights_only=not settings.ALLOW_PICKLE
 ):
     """Load and return the model of a given experiment."""
     exper = Path(exper)
