@@ -17,10 +17,6 @@ train:
         type: exp
         on_epoch: true
         exp_div_10: 10
-    pr_metrics:
-        matching:
-            labels: matching_scores0
-            predictions: matching_scores0
 benchmarks:
     hpatches:
         eval:
