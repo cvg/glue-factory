@@ -142,6 +142,35 @@ def concat_tree(trees: Iterable[types.Tree], check: bool = False) -> types.Tree:
     return pack_tree(trees, check=check, fn=combine)
 
 
+def compare_tree(
+    tree_i: types.Tree,
+    tree_j: types.Tree,
+    compare_fn: Callable[[Any, Any], bool | None] | None = None,
+) -> types.Tree:
+    if compare_fn is None:
+
+        def compare_fn(el1, el2):
+            if isinstance(el1, torch.Tensor):
+                if el1.dtype in [torch.float16, torch.float32, torch.float64]:
+                    return torch.all(torch.abs(el1 - el2) < 1e-2).item()
+                return torch.all(el1 == el2).item()
+            if isinstance(el1, np.ndarray):
+                if np.issubdtype(el1.dtype, np.floating):
+                    return np.all(np.abs(el1 - el2) < 1e-2)
+                return np.array_equal(el1, el2)
+            elif isinstance(el1, (int, float, str, bool)):
+                return el1 == el2
+            elif isinstance(el1, Iterable):
+                return all(compare_fn(e1, e2) for e1, e2 in zip(el1, el2))
+            else:
+                return None
+
+    is_equal = pack_tree([tree_i, tree_j], fn=lambda x: compare_fn(x[0], x[1]))
+    flat_is_equal = flatten_dict(is_equal)
+    flat_is_equal = {k: v for k, v in flat_is_equal.items() if v is not None}
+    return flat_is_equal
+
+
 def flatten_dict(
     dictionary: Mapping[str, Any],
     parent_keys: tuple[str, ...] = (),
