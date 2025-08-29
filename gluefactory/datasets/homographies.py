@@ -103,9 +103,10 @@ class HomographyDataset(base_dataset.BaseDataset):
             if not image_list.exists():
                 raise FileNotFoundError(f"Cannot find image list {image_list}.")
             images = image_list.read_text().rstrip("\n").split("\n")
-            for image in images:
-                if self.conf.check_file_exists and not (image_dir / image).exists():
-                    raise FileNotFoundError(image_dir / image)
+            if self.conf.check_file_exists:
+                for image in images:
+                    if not (image_dir / image).exists():
+                        raise FileNotFoundError(image_dir / image)
             logger.info("Found %d images in list file.", len(images))
         elif isinstance(conf.image_list, omegaconf.listconfig.ListConfig):
             images = conf.image_list.to_container()
