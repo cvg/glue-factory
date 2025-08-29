@@ -61,17 +61,14 @@ class ImagePreprocessor:
             "original_image_size": np.array([w, h]),
         }
         if self.conf.square_pad:
-            sl = max(img.shape[-2:])
-            data["image"] = torch.zeros(
-                *img.shape[:-2], sl, sl, device=img.device, dtype=img.dtype
+            padding_data = square_pad(
+                img,
+                return_mask=self.conf.add_padding_mask,
             )
-            data["image"][:, : img.shape[-2], : img.shape[-1]] = img
-            if self.conf.add_padding_mask:
-                data["padding_mask"] = torch.zeros(
-                    *img.shape[:-3], 1, sl, sl, device=img.device, dtype=torch.bool
-                )
-                data["padding_mask"][:, : img.shape[-2], : img.shape[-1]] = True
-
+            data["image"] = padding_data["image"]
+            data["corners_hw"] = padding_data["corners_hw"].numpy()
+            if "valid" in padding_data:
+                data["padding_mask"] = padding_data["valid"]
         else:
             data["image"] = img
         return data
@@ -111,6 +108,46 @@ class ImagePreprocessor:
             df = self.conf.edge_divisible_by
             size = list(map(lambda x: int(x // df * df), size))
         return size
+
+
+def square_pad(
+    image: torch.Tensor,
+    center: bool = False,
+    return_mask: bool = False,
+    fill_value: float = 0.0,
+) -> dict[str, torch.Tensor]:
+    """zero pad images to size x size"""
+    h, w = image.shape[-2:]
+    ox, oy = 0, 0
+    l = max(h, w)
+    padded = torch.zeros(
+        *image.shape[:-2], l, l, device=image.device, dtype=image.dtype
+    )
+    if center:
+        ox, oy = (l - w) // 2, (l - h) // 2
+        padded[..., oy : oy + h, ox : ox + w] = image
+        corners_hw = [[oy, ox], [oy + h, ox + w]]
+    else:
+        ox, oy = 0, 0
+        padded[..., :h, :w] = image
+
+    pad_t_img = torch.eye(3, device=image.device)
+    pad_t_img[:2, 2] = torch.tensor([ox, oy], device=image.device)
+    ret = {
+        "image": padded,
+        "corners_hw": torch.as_tensor(
+            [[oy, ox], [oy + h, ox + w]], dtype=int, device=image.device
+        ),
+        "transform": pad_t_img,
+    }
+    if return_mask:
+        valid = torch.full_like(padded, dtype=torch.bool, fill_value=fill_value)
+        if center:
+            valid[..., oy : oy + h, ox : ox + w] = True
+        else:
+            valid[..., :h, :w] = True
+        ret["valid"] = valid
+    return ret
 
 
 def read_image(path: Path, grayscale: bool = False) -> np.ndarray:
