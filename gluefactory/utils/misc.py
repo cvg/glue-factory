@@ -117,7 +117,6 @@ def pack_tree(
         return {}
 
     trees = list(trees)
-    flat_map(trees[0], lambda k, v: print(k, v.shape))
     flat_trees = [flatten_dict(batch) for batch in trees]
     flat_map(flat_trees[0], lambda k, v: isinstance(v, list), unflatten=False)
     keys = set(flat_trees[0].keys())
@@ -446,3 +445,79 @@ def cycle_dist(
         - (q_to_ref_to_q if normalized else denormalize_coords(q_to_ref_to_q)),
         dim=-1,
     )
+
+
+def interpolate_matches(
+    kpts_q: torch.Tensor,  # B x N X 2
+    kpts_t: torch.Tensor,  # B x M X 2
+    warp: torch.Tensor,  # B x H x W x 2
+    cert: torch.Tensor,  # B x H x W x 1
+    q_hw: tuple[int, int] | None = None,  # To normalize in range ([-1, 1])
+    t_hw: tuple[int, int] | None = None,
+    mutual_check: bool = True,
+    max_kp_error: float = 3.0,  # pixels
+    filter_threshold: float = 0.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    # Normalize to [-1, 1] for grid sampling
+    kpts_q = normalize_coords(kpts_q, q_hw)
+    kpts_q_to_t = grid_sample(warp.permute(0, 3, 1, 2), kpts_q[:, None])[
+        :, :, 0
+    ].permute(0, 2, 1)
+    scores = grid_sample(cert[:, None], kpts_q[:, None])[:, 0, 0]
+    # Corresponding coordinates in the other image (target), COLMAP coords.
+    kpts_q_to_t = denormalize_coords(kpts_q_to_t, t_hw)
+    # Output points are again in COLMAP coordinates
+    dist = torch.cdist(kpts_q_to_t, kpts_t)  # in pixels
+    matches = torch.min(dist, dim=-1)
+    matches, match_dist = matches.indices, matches.values
+    valid = torch.isfinite(match_dist) & (match_dist < max_kp_error)
+    if mutual_check:
+        indicesq = torch.arange(matches.shape[-1], device=kpts_q.device)[None]
+        mutual = indicesq == torch.min(dist, dim=-2).indices.gather(1, matches)
+        valid = valid & mutual
+    valid = valid & (scores > filter_threshold)
+    return torch.where(valid, matches, -1), torch.where(valid, scores, 0)
+
+
+def match_keypoints_dense(
+    pred: dict,  # Containts warp and certainty tensors
+    data: dict,  # Contains keypoints and images
+    max_kp_error: float,
+    filter_threshold: float,
+    mutual_check: bool = True,
+) -> dict:
+    """Match keypoints using dense correspondences."""
+    kpts0 = data["keypoints0"]  # COLMAP coordinates
+    kpts1 = data["keypoints1"]  # COLMAP coordinates
+
+    img0 = data["view0"]["image"]
+    img1 = data["view1"]["image"]
+
+    mpred = {}
+    mpred["matches0"], mpred["matching_scores0"] = interpolate_matches(
+        kpts0,
+        kpts1,
+        pred["warp0"],
+        pred["certainty0"],
+        img0.shape[-2:],
+        img1.shape[-2:],
+        max_kp_error=max_kp_error,
+        mutual_check=mutual_check,
+        filter_threshold=filter_threshold,
+    )
+    mpred["matches1"], mpred["matching_scores1"] = interpolate_matches(
+        kpts1,
+        kpts0,
+        pred["warp1"],
+        pred["certainty1"],
+        img1.shape[-2:],
+        img0.shape[-2:],
+        max_kp_error=max_kp_error,
+        mutual_check=mutual_check,
+        filter_threshold=filter_threshold,
+    )
+
+    # Pipe the keypoints again
+    mpred["keypoints0"] = data["keypoints0"]
+    mpred["keypoints1"] = data["keypoints1"]
+    return mpred

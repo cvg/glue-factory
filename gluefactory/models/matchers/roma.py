@@ -85,65 +85,6 @@ def flow_to_warp(
     return pred
 
 
-def match_keypoints_dense(
-    pred: dict,  # Containts warp and certainty tensors
-    data: dict,  # Contains keypoints and images
-    max_kp_error: float,
-    filter_threshold: float,
-    mutual_check: bool = True,
-) -> dict:
-    """Match keypoints using dense correspondences."""
-    kpts0 = data["keypoints0"]  # COLMAP coordinates
-    kpts1 = data["keypoints1"]  # COLMAP coordinates
-
-    img0 = data["view0"]["image"]
-    img1 = data["view1"]["image"]
-
-    def find_matches(kpts_q, kpts_t, warp, cert, q_hw, t_hw):
-        # Normalize to [-1, 1] for grid sampling
-        kpts_q = misc.normalize_coords(kpts0, q_hw)
-        kpts_q_to_t = misc.grid_sample(warp.permute(0, 3, 1, 2), kpts_q[:, None])[
-            :, :, 0
-        ].permute(0, 2, 1)
-        scores = misc.grid_sample(cert[:, None], kpts_q[:, None])[:, 0, 0]
-        # Corresponding coordinates in the other image (target), COLMAP coords.
-        kpts_q_to_t = misc.denormalize_coords(kpts_q_to_t, t_hw)
-        # Output points are again in COLMAP coordinates
-        dist = torch.cdist(kpts_q_to_t, kpts_t)  # in pixels
-        matches = torch.min(dist, dim=-1)
-        matches, match_dist = matches.indices, matches.values
-        valid = torch.isfinite(match_dist) & (match_dist < max_kp_error)
-        if mutual_check:
-            indicesq = torch.arange(matches.shape[-1], device=kpts_q.device)[None]
-            mutual = indicesq == torch.min(dist, dim=-2).indices.gather(1, matches)
-            valid = valid & mutual
-        valid = valid & (scores > filter_threshold)
-        return torch.where(valid, matches, -1), torch.where(valid, scores, 0)
-
-    mpred = {}
-    mpred["matches0"], mpred["matching_scores0"] = find_matches(
-        kpts0,
-        kpts1,
-        pred["warp0"],
-        pred["certainty0"],
-        img0.shape[-2:],
-        img1.shape[-2:],
-    )
-    mpred["matches1"], mpred["matching_scores1"] = find_matches(
-        kpts1,
-        kpts0,
-        pred["warp1"],
-        pred["certainty1"],
-        img1.shape[-2:],
-        img0.shape[-2:],
-    )
-
-    # Pipe the keypoints again
-    mpred["keypoints0"] = data["keypoints0"]
-    mpred["keypoints1"] = data["keypoints1"]
-    return mpred
-
-
 class RoMa(base_model.BaseModel):
     """
     RoMa model for matching images.
@@ -224,7 +165,7 @@ class RoMa(base_model.BaseModel):
         elif "keypoints0" in data:
             # Match existing keypoints
             pred.update(
-                match_keypoints_dense(
+                misc.match_keypoints_dense(
                     pred,
                     data,
                     self.conf.max_kp_error,
