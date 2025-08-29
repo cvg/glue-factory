@@ -153,7 +153,9 @@ class BaseAugmentation(object):
             order = [i for i, _ in enumerate(transforms)]
             np.random.shuffle(order)
             transforms = [transforms[i] for i in order]
-        transformed = self.compose(transforms, p=self.conf.p)(**data)
+        # Set a seed dependent on np to propagate seeding
+        seed = np.random.randint(2**32 - 1)
+        transformed = self.compose(transforms, p=self.conf.p, seed=seed)(**data)
         if self.conf.verbose:
             print(replay_str(transformed["replay"]["transforms"]))
         transformed = self.postprocess(**transformed)
