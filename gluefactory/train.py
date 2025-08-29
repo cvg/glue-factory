@@ -199,7 +199,7 @@ def run_evaluation(model, loader, device, conf, rank, pbar=True):
             # add PR curves
             for k, labels_preds in model.pr_metrics(pred, data).items():
                 pr_metrics[k].update(*labels_preds)
-            del pred, data
+        del pred, data
         numbers = {**metrics, **{"loss/" + k: v for k, v in losses.items()}}
         for k, v in numbers.items():
             if k not in results:
@@ -341,9 +341,10 @@ def training(rank, conf, output_dir, args):
         # Run dummy forward --> required for lazy init under DDP
         logger.info("Running dummy forward pass to initialize lazy modules.")
         dummy_batch = next(iter(train_loader))
-        dummy_batch = misc.batch_to_device(dummy_batch, device)
-        dummy_pred = model(dummy_batch)
-        del dummy_batch, dummy_pred
+        dummy_batch = misc.batch_to_device(dummy_batch, device, non_blocking=False)
+        with torch.no_grad():
+            model(dummy_batch)
+        del dummy_batch
 
     if args.compile:
         # Compile before DDP
@@ -676,13 +677,9 @@ def training(rank, conf, output_dir, args):
 
             # Run validation
             if (
-                (
-                    it % conf.train.eval_every_iter == 0
-                    and (it > 0 or epoch == -int(args.no_eval_0))
-                )
-                or stop
-                or it == (len(train_loader) - 1)
-            ):
+                it % conf.train.eval_every_iter == 0
+                and (it > 0 or epoch == -int(args.no_eval_0))
+            ) or stop:
                 with tools.fork_rng(seed=conf.train.seed):
                     results, pr_metrics, figures = run_evaluation(
                         model,
