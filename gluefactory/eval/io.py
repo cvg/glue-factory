@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from pprint import pprint
 
+from matplotlib import pyplot as plt
 from omegaconf import OmegaConf
 
 from .. import settings
@@ -97,3 +98,42 @@ def get_eval_parser():
     parser.add_argument("--plot", action="store_true")
     parser.add_argument("dotlist", nargs="*")
     return parser
+
+
+def run_cli(eval_cls, name: str, parser: argparse.ArgumentParser | None = None):
+    """Run the evaluation pipeline from the command line."""
+    dataset_name = Path(__file__).stem
+    parser = parser if parser is not None else get_eval_parser()
+    args = parser.parse_intermixed_args()
+
+    default_conf = OmegaConf.create(eval_cls.default_conf)
+
+    # mingle paths
+    output_dir = Path(settings.EVAL_PATH, dataset_name)
+    output_dir.mkdir(exist_ok=True, parents=True)
+
+    name, conf = parse_eval_args(
+        dataset_name,
+        args,
+        "configs/",
+        default_conf,
+    )
+
+    experiment_dir = output_dir / name
+    experiment_dir.mkdir(exist_ok=True, parents=True)
+
+    pipeline = eval_cls(conf)
+    s, f, r = pipeline.run(
+        experiment_dir,
+        overwrite=args.overwrite,
+        overwrite_eval=args.overwrite_eval,
+    )
+
+    pprint(s)
+
+    if args.plot:
+        for name, fig in f.items():
+            fig.canvas.manager.set_window_title(name)
+        plt.show()
+
+    return s, f, r
