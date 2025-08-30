@@ -105,7 +105,9 @@ class PosedImageDataset(base_dataset.BaseDataset, torch.utils.data.Dataset):
             scene_view_path = self.root / conf.views.format(scene=scene)
             with open(str(scene_view_path), "r") as f:
                 self.views[scene] = {
-                    line.rstrip().split(" ")[0]: line.rstrip().split(" ")[1:]
+                    line.rstrip().split(" ")[0]: parse_pose_camera(
+                        line.rstrip().split(" ")[1:]
+                    )
                     for line in f
                 }
 
@@ -144,7 +146,7 @@ class PosedImageDataset(base_dataset.BaseDataset, torch.utils.data.Dataset):
         return self
 
     def _read_view(self, scene, name):
-        pose, camera = parse_pose_camera(self.views[scene][name])
+        pose, camera = self.views[scene][name]
         img = preprocess.load_image(self.get_image_path(scene, name))
         data = self.preprocessor(img)
         data["T_w2cam"] = pose
