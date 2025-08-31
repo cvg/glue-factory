@@ -242,6 +242,10 @@ class StepTimer:
         """Reset the timer for a specific name."""
         self.start = time.time()
 
+    def hard_reset(self):
+        self.stats = collections.defaultdict(RunningStats)
+        self.start = time.time()
+
     def measure(self, name: str):
         """Measure the time taken for a specific operation."""
         elapsed = time.time() - self.start
