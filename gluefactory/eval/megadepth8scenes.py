@@ -1,18 +1,14 @@
 """Evaluation on the Megadepth-8-Scenes split, proposed by Edstedt et al, CVPR 2023 (DKM)."""
 
 import logging
-import pprint
 import zipfile
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import torch
-from omegaconf import OmegaConf
 
 from gluefactory import settings
 
-from ..settings import DATA_PATH, EVAL_PATH
-from .io import get_eval_parser, parse_eval_args
+from . import io
 from .megadepth1500 import MegaDepth1500Pipeline
 
 logger = logging.getLogger(__name__)
@@ -56,38 +52,4 @@ class Megadepth8ScenesPipeline(MegaDepth1500Pipeline):
 
 
 if __name__ == "__main__":
-    # from .. import logger  # overwrite the logger
-
-    dataset_name = Path(__file__).stem
-    parser = get_eval_parser()
-    args = parser.parse_intermixed_args()
-
-    default_conf = OmegaConf.create(Megadepth8ScenesPipeline.default_conf)
-
-    # mingle paths
-    output_dir = Path(EVAL_PATH, dataset_name)
-    output_dir.mkdir(exist_ok=True, parents=True)
-
-    name, conf = parse_eval_args(
-        dataset_name,
-        args,
-        "configs/",
-        default_conf,
-    )
-
-    experiment_dir = output_dir / name
-    experiment_dir.mkdir(exist_ok=True, parents=True)
-
-    pipeline = Megadepth8ScenesPipeline(conf)
-    s, f, r = pipeline.run(
-        experiment_dir,
-        overwrite=args.overwrite,
-        overwrite_eval=args.overwrite_eval,
-    )
-
-    pprint.pprint(s)
-
-    if args.plot:
-        for name, fig in f.items():
-            fig.canvas.manager.set_window_title(name)
-        plt.show()
+    io.run_cli(Megadepth8ScenesPipeline, name=Path(__file__).stem)

@@ -1,9 +1,7 @@
 import shutil
 from collections import defaultdict
 from pathlib import Path
-from pprint import pprint
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pycolmap
 from omegaconf import OmegaConf
@@ -201,7 +199,7 @@ class ETH3DReconstructionPipeline(eval_pipeline.EvalPipeline):
             scene = data["name"]
             results[scene] = self.eval_scene(
                 scene,
-                experiment_dir,
+                pred_file.parent,
                 pred,
                 data["reconstruction"],
             )
@@ -241,41 +239,8 @@ class ETH3DReconstructionPipeline(eval_pipeline.EvalPipeline):
 
 
 if __name__ == "__main__":
-    # from .. import logger  # overwrite the logger
-
-    dataset_name = Path(__file__).stem
     parser = io.get_eval_parser()
     parser.add_argument(
         "--scenes", nargs="+", type=str, default=ETH3DReconstructionPipeline.scenes
     )
-    args = parser.parse_intermixed_args()
-
-    default_conf = OmegaConf.create(ETH3DReconstructionPipeline.default_conf)
-
-    # mingle paths
-    output_dir = Path(settings.EVAL_PATH, dataset_name)
-    output_dir.mkdir(exist_ok=True, parents=True)
-
-    name, conf = io.parse_eval_args(
-        dataset_name,
-        args,
-        "configs/",
-        default_conf,
-    )
-
-    experiment_dir = output_dir / name
-    experiment_dir.mkdir(exist_ok=True, parents=True)
-    ETH3DReconstructionPipeline.scenes = args.scenes
-    pipeline = ETH3DReconstructionPipeline(conf)
-    s, f, r = pipeline.run(
-        experiment_dir,
-        overwrite=args.overwrite,
-        overwrite_eval=args.overwrite_eval,
-    )
-
-    pprint(s)
-
-    if args.plot:
-        for name, fig in f.items():
-            fig.canvas.manager.set_window_title(name)
-        plt.show()
+    io.run_cli(ETH3DReconstructionPipeline, Path(__file__).stem, parser)

@@ -1,15 +1,14 @@
+"""HPatches Evaluation Pipeline."""
+
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
-from pprint import pprint
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from omegaconf import OmegaConf
 from tqdm import tqdm
 
-from .. import datasets, settings
+from .. import datasets
 from ..models.cache_loader import CacheLoader
 from ..utils import misc, tools
 from ..utils.export import export_predictions
@@ -161,34 +160,4 @@ class HPatchesPipeline(eval_pipeline.EvalPipeline):
 
 
 if __name__ == "__main__":
-    dataset_name = Path(__file__).stem
-    parser = io.get_eval_parser()
-    args = parser.parse_intermixed_args()
-
-    default_conf = OmegaConf.create(HPatchesPipeline.default_conf)
-
-    # mingle paths
-    output_dir = Path(settings.EVAL_PATH, dataset_name)
-    output_dir.mkdir(exist_ok=True, parents=True)
-
-    name, conf = io.parse_eval_args(
-        dataset_name,
-        args,
-        "configs/",
-        default_conf,
-    )
-
-    experiment_dir = output_dir / name
-    experiment_dir.mkdir(exist_ok=True)
-
-    pipeline = HPatchesPipeline(conf)
-    s, f, r = pipeline.run(
-        experiment_dir, overwrite=args.overwrite, overwrite_eval=args.overwrite_eval
-    )
-
-    # print results
-    pprint(s)
-    if args.plot:
-        for name, fig in f.items():
-            fig.canvas.manager.set_window_title(name)
-        plt.show()
+    io.run_cli(HPatchesPipeline, name=Path(__file__).stem)

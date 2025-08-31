@@ -3,12 +3,9 @@ import zipfile
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
-from pprint import pprint
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from .. import datasets, settings
@@ -34,6 +31,7 @@ class MegaDepth1500Pipeline(eval_pipeline.EvalPipeline):
             "preprocessing": {
                 "side": "long",
             },
+            "num_workers": 14,
         },
         "model": {
             "ground_truth": {
@@ -155,38 +153,4 @@ class MegaDepth1500Pipeline(eval_pipeline.EvalPipeline):
 
 
 if __name__ == "__main__":
-    from .. import logger  # overwrite the logger
-
-    dataset_name = Path(__file__).stem
-    parser = io.get_eval_parser()
-    args = parser.parse_intermixed_args()
-
-    default_conf = OmegaConf.create(MegaDepth1500Pipeline.default_conf)
-
-    # mingle paths
-    output_dir = Path(settings.EVAL_PATH, dataset_name)
-    output_dir.mkdir(exist_ok=True, parents=True)
-
-    name, conf = io.parse_eval_args(
-        dataset_name,
-        args,
-        "configs/",
-        default_conf,
-    )
-
-    experiment_dir = output_dir / name
-    experiment_dir.mkdir(exist_ok=True, parents=True)
-
-    pipeline = MegaDepth1500Pipeline(conf)
-    s, f, r = pipeline.run(
-        experiment_dir,
-        overwrite=args.overwrite,
-        overwrite_eval=args.overwrite_eval,
-    )
-
-    pprint(s)
-
-    if args.plot:
-        for name, fig in f.items():
-            fig.canvas.manager.set_window_title(name)
-        plt.show()
+    io.run_cli(MegaDepth1500Pipeline, name=Path(__file__).stem)

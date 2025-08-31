@@ -7,14 +7,10 @@ Arxiv: https://arxiv.org/abs/2402.11095
 """
 
 import logging
-import pprint
 from pathlib import Path
 
-import matplotlib.pyplot as plt
-from omegaconf import OmegaConf
-
-from ..settings import DATA_PATH, EVAL_PATH
-from .io import get_eval_parser, parse_eval_args
+from ..settings import DATA_PATH
+from . import io
 from .scannet1500 import ScanNet1500Pipeline
 
 logger = logging.getLogger(__name__)
@@ -69,38 +65,4 @@ class ZeroshotEvaluationBenchmarkPipeline(ScanNet1500Pipeline):
 
 
 if __name__ == "__main__":
-    from .. import logger  # overwrite the logger
-
-    dataset_name = Path(__file__).stem
-    parser = get_eval_parser()
-    args = parser.parse_intermixed_args()
-
-    default_conf = OmegaConf.create(ZeroshotEvaluationBenchmarkPipeline.default_conf)
-
-    # mingle paths
-    output_dir = Path(EVAL_PATH, dataset_name)
-    output_dir.mkdir(exist_ok=True, parents=True)
-
-    name, conf = parse_eval_args(
-        dataset_name,
-        args,
-        "configs/",
-        default_conf,
-    )
-
-    experiment_dir = output_dir / name
-    experiment_dir.mkdir(exist_ok=True, parents=True)
-
-    pipeline = ZeroshotEvaluationBenchmarkPipeline(conf)
-    s, f, r = pipeline.run(
-        experiment_dir,
-        overwrite=args.overwrite,
-        overwrite_eval=args.overwrite_eval,
-    )
-
-    pprint.pprint(s)
-
-    if args.plot:
-        for name, fig in f.items():
-            fig.canvas.manager.set_window_title(name)
-        plt.show()
+    io.run_cli(ZeroshotEvaluationBenchmarkPipeline, name=Path(__file__).stem)
