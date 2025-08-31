@@ -149,18 +149,18 @@ def load_experiment(
 
 # @TODO: also copy the respective module scripts (i.e. the code)
 def save_experiment(
-    model,
-    optimizer,
-    lr_scheduler,
-    conf,
-    results,
-    best_eval,
-    epoch,
-    iter_i,
-    output_dir,
-    stop=False,
-    distributed=False,
-    cp_name=None,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    lr_scheduler: torch.optim.lr_scheduler._LRScheduler,
+    conf: OmegaConf,
+    results: dict[str, float],
+    epoch: int,
+    iter_i: int,
+    output_dir: Path,
+    stop: bool = False,
+    distributed: bool = False,
+    cp_name: Optional[str] = None,
+    best_eval: float | None = None,  # This activates auto early stopping
 ):
     """Save the current model to a checkpoint
     and return the best result so far."""
@@ -180,9 +180,11 @@ def save_experiment(
     logger.info(f"Saving checkpoint {cp_name}")
     cp_path = str(output_dir / cp_name)
     torch.save(checkpoint, cp_path)
-    if cp_name != "checkpoint_best.tar" and results[conf.train.best_key] < best_eval:
+    if best_eval is not None and results[conf.train.best_key] < best_eval:
         best_eval = results[conf.train.best_key]
         logger.info(f"New best val: {conf.train.best_key}={best_eval}")
+        shutil.copy(cp_path, str(output_dir / "checkpoint_best.tar"))
+    elif best_eval is None and cp_name != "checkpoint_best.tar":
         shutil.copy(cp_path, str(output_dir / "checkpoint_best.tar"))
     delete_old_checkpoints(output_dir, conf.train.keep_last_checkpoints)
     return best_eval

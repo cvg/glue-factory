@@ -37,6 +37,8 @@ default_train_conf = {
     },
     "lr_scaling": [(100, ["dampingnet.const"])],
     "eval_every_iter": 1000,  # interval for evaluation on the validation set
+    "eval_every_epoch": None,  # interval for evaluation on the validation set
+    "benchmark_every_epoch": 1,  # interval for evaluation on the test benchmarks
     "save_every_iter": 5000,  # interval for saving the current checkpoint
     "log_every_iter": 200,  # interval for logging the loss to the console
     "log_grad_every_iter": None,  # interval for logging gradient hists
@@ -53,6 +55,14 @@ default_train_conf = {
     "num_eval_plots": 4,  # Number of plots to show during evaluation (0=skip)
     "plot_every_iter": None,  # plot figures every X iterations
     "submodules": [],
+    "mixed_precision": None,
+    "num_devices": 0,  # 0 means sequential.
+    "compile": None,  # Compilation mode for the model. [None, default, reduce-overhead]
+    "profile": None,  # Profile the training with PyTorch profiler (number of steps to profile)
+    "record_memory": None,  # Record memory usage during training (number of steps to record)
+    "log_it": False,  # Log tensorboard on iteration (default is num_samples)
+    "detect_anomaly": False,  # Enable anomaly detection
+    "run_benchmarks": (),
 }
 default_train_conf = OmegaConf.create(default_train_conf)
 
@@ -704,14 +714,12 @@ def training(rank, conf, output_dir, args):
                     tools.write_image_summaries(writer, "eval", figures, tot_n_samples)
                     # @TODO: optional always save checkpoint
                     if results[conf.train.best_key] < best_eval:
-                        best_eval = results[conf.train.best_key]
                         experiments.save_experiment(
                             model,
                             optimizer,
                             lr_scheduler,
                             conf,
                             results,
-                            best_eval,
                             epoch,
                             tot_it,
                             output_dir,
@@ -727,28 +735,18 @@ def training(rank, conf, output_dir, args):
                 (tot_it % conf.train.save_every_iter == 0 and tot_it > 0)
                 or it == len(train_loader) - 1
             ) and rank == 0:
-                if results is None:
-                    results, _, _ = run_evaluation(
-                        model,
-                        val_loader,
-                        device,
-                        conf.train,
-                        rank,
-                        pbar=(rank == 0),
-                    )
-                    best_eval = results[conf.train.best_key]
-                best_eval = experiments.save_experiment(
+                experiments.save_experiment(
                     model,
                     optimizer,
                     lr_scheduler,
                     conf,
                     results,
-                    best_eval,
                     epoch,
                     tot_it,
                     output_dir,
                     stop,
                     args.distributed,
+                    best_eval=best_eval,
                 )
             if stop:
                 break
