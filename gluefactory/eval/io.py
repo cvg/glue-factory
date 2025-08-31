@@ -102,18 +102,17 @@ def get_eval_parser():
 
 def run_cli(eval_cls, name: str, parser: argparse.ArgumentParser | None = None):
     """Run the evaluation pipeline from the command line."""
-    dataset_name = Path(__file__).stem
     parser = parser if parser is not None else get_eval_parser()
     args = parser.parse_intermixed_args()
 
     default_conf = OmegaConf.create(eval_cls.default_conf)
 
     # mingle paths
-    output_dir = Path(settings.EVAL_PATH, dataset_name)
+    output_dir = Path(settings.EVAL_PATH, name)
     output_dir.mkdir(exist_ok=True, parents=True)
 
     name, conf = parse_eval_args(
-        dataset_name,
+        name,
         args,
         "configs/",
         default_conf,
