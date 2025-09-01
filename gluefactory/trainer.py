@@ -565,7 +565,7 @@ class Trainer:
                         self.scaler.update()
                     self.step_timer.measure("step")
                     if not self.conf.lr_schedule.on_epoch:
-                        self.lr_scheduler.step()
+                        self.learning_rate_step()
                 else:
                     self.warn("Skip iteration due to detach.")
         return pred, loss_metrics
@@ -600,9 +600,6 @@ class Trainer:
                     f"Reached max iters {max_iters}, stopping epoch {self.epoch}."
                 )
                 break
-            if self.conf.lr_schedule.on_epoch and self.epoch > 0:
-                self.learning_rate_step(verbose=True)
-
             data = next(train_iter)
             self.step_timer.measure("data")
             self.tot_n_samples += dataloader.batch_size * self.num_gpus
@@ -728,6 +725,9 @@ class Trainer:
             # Re-seed epoch
             tools.set_seed(self.conf.seed + self.epoch)
             self.info(f"Setting up data loader")
+
+            if self.conf.lr_schedule.on_epoch and self.epoch > 0:
+                self.learning_rate_step(verbose=True)
 
             # Create data loader
             train_loader = dataset.get_data_loader(
