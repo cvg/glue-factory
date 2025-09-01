@@ -1,9 +1,18 @@
+import collections
 import json
 import logging
+from typing import Any, Callable, Iterable, Sequence
 
 import h5py
 import numpy as np
 from omegaconf import OmegaConf
+from tqdm import tqdm
+
+from .. import datasets
+from ..models.cache_loader import CacheLoader
+from ..utils import export
+from ..visualization import viz2d
+from . import io, utils
 
 logger = logging.getLogger(__name__)
 
@@ -120,3 +129,133 @@ class EvalPipeline:
                     overwrite or overwrite_eval
                 ), "eval configs changed, add --overwrite_eval to rerun evaluation"
         OmegaConf.save(self.conf, experiment_dir / "conf.yaml")
+
+
+# ----------------------------------------------------------------------------
+# Common specializations (Relative Pose, Homography, SfM, ...)
+# ----------------------------------------------------------------------------
+
+
+class RelativePosePipeline(EvalPipeline):
+    default_conf = {
+        "data": {
+            "name": "???",
+        },
+        "model": {
+            "ground_truth": {
+                "name": None,  # remove gt matches
+            }
+        },
+        "eval": {
+            "estimator": "poselib",
+            "ransac_th": -1.0,  # -1 runs a bunch of thresholds and selects the best
+        },
+    }
+
+    export_keys = [
+        "keypoints0",
+        "keypoints1",
+        "keypoint_scores0",
+        "keypoint_scores1",
+        "matches0",
+        "matches1",
+        "matching_scores0",
+        "matching_scores1",
+    ]
+    optional_export_keys = []
+
+    # Add custom evals here (dataset specific)
+    eval_hooks: Sequence[Callable[[Any, Any], dict[str, float]]] = ()
+
+    def _init(self, conf):
+        raise NotImplementedError("Add download instructions here")
+
+    @classmethod
+    def get_dataloader(self, data_conf=None):
+        """Returns a data loader with samples for each eval datapoint"""
+        data_conf = data_conf if data_conf else self.default_conf["data"]
+        dataset = datasets.get_dataset(data_conf["name"])(data_conf)
+        return dataset.get_data_loader("test")
+
+    def get_predictions(self, experiment_dir, model=None, overwrite=False):
+        """Export a prediction file for each eval datapoint"""
+        pred_file = experiment_dir / "predictions.h5"
+        if not pred_file.exists() or overwrite:
+            if model is None:
+                model = io.load_model(self.conf.model, self.conf.checkpoint)
+            export.export_predictions(
+                self.get_dataloader(self.conf.data),
+                model,
+                pred_file,
+                keys=self.export_keys,
+                optional_keys=self.optional_export_keys,
+            )
+        return pred_file
+
+    def run_eval(self, loader, pred_file):
+        """Run the eval on cached predictions"""
+        conf = self.conf.eval
+        results = collections.defaultdict(list)
+        test_thresholds = (
+            ([conf.ransac_th] if conf.ransac_th > 0 else [0.5, 1.0, 1.5, 2.0, 2.5, 3.0])
+            if not isinstance(conf.ransac_th, Iterable)
+            else conf.ransac_th
+        )
+        pose_results = collections.defaultdict(lambda: collections.defaultdict(list))
+        cache_loader = CacheLoader({"path": str(pred_file), "collate": None}).eval()
+        for i, data in enumerate(tqdm(loader)):
+            pred = cache_loader(data)
+            # add custom evaluations here
+            results_i = utils.eval_matches_epipolar(data, pred)
+            if "depth" in data["view0"].keys():
+                results_i.update(utils.eval_matches_depth(data, pred))
+            for th in test_thresholds:
+                pose_results_i = utils.eval_relative_pose_robust(
+                    data,
+                    pred,
+                    {"estimator": conf.estimator, "ransac_th": th},
+                )
+                [pose_results[th][k].append(v) for k, v in pose_results_i.items()]
+
+            for eval_hook in self.eval_hooks:
+                results_i.update(eval_hook(data, pred))
+
+            # we also store the names for later reference
+            results_i["names"] = data["name"][0]
+            if "scene" in data.keys():
+                results_i["scenes"] = data["scene"][0]
+
+            if "overlap" in data.keys():
+                results_i["overlap"] = data["overlap"][0].item()
+
+            for k, v in results_i.items():
+                results[k].append(v)
+
+        # summarize results as a dict[str, float]
+        # you can also add your custom evaluations here
+        summaries = {}
+        for k, v in results.items():
+            arr = np.array(v)
+            if not np.issubdtype(np.array(v).dtype, np.number):
+                continue
+            summaries[f"m{k}"] = round(np.mean(arr), 3)
+
+        best_pose_results, best_th = utils.eval_poses(
+            pose_results, auc_ths=[5, 10, 20], key="rel_pose_error"
+        )
+        results = {**results, **pose_results[best_th]}
+        summaries = {
+            **summaries,
+            **best_pose_results,
+        }
+
+        figures = {
+            "pose_recall": viz2d.plot_cumulative(
+                {self.conf.eval.estimator: results["rel_pose_error"]},
+                [0, 30],
+                unit="°",
+                title="Pose ",
+            )
+        }
+
+        return summaries, figures, results

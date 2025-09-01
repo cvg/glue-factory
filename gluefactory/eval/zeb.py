@@ -11,12 +11,12 @@ from pathlib import Path
 
 from ..settings import DATA_PATH
 from . import io
-from .scannet1500 import ScanNet1500Pipeline
+from .eval_pipeline import RelativePosePipeline
 
 logger = logging.getLogger(__name__)
 
 
-class ZeroshotEvaluationBenchmarkPipeline(ScanNet1500Pipeline):
+class ZeroshotEvaluationBenchmarkPipeline(RelativePosePipeline):
     """Pipeline for Zeroshot Evaluation Benchmark (ZEB)."""
 
     default_conf = {
@@ -44,18 +44,6 @@ class ZeroshotEvaluationBenchmarkPipeline(ScanNet1500Pipeline):
             "ransac_th": 1.0,  # -1 runs a bunch of thresholds and selects the best
         },
     }
-
-    export_keys = [
-        "keypoints0",
-        "keypoints1",
-        "keypoint_scores0",
-        "keypoint_scores1",
-        "matches0",
-        "matches1",
-        "matching_scores0",
-        "matching_scores1",
-    ]
-    optional_export_keys = []
 
     def _init(self, conf):  # pylint: disable=redefined-outer-name
         if not (DATA_PATH / "zeb").exists():

@@ -10,12 +10,12 @@ import torch
 from gluefactory import settings
 
 from . import io
-from .megadepth1500 import MegaDepth1500Pipeline
+from .eval_pipeline import RelativePosePipeline
 
 logger = logging.getLogger(__name__)
 
 
-class Megadepth8ScenesPipeline(MegaDepth1500Pipeline):
+class Megadepth8ScenesPipeline(RelativePosePipeline):
     default_conf = {
         "data": {
             "name": "posed_images",

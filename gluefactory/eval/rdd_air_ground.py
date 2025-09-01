@@ -22,12 +22,12 @@ from pathlib import Path
 
 from ..settings import DATA_PATH
 from . import io
-from .scannet1500 import ScanNet1500Pipeline
+from .eval_pipeline import RelativePosePipeline
 
 logger = logging.getLogger(__name__)
 
 
-class RDDAirGroundBenchmark(ScanNet1500Pipeline):
+class RDDAirGroundBenchmark(RelativePosePipeline):
     """Pipeline for Air-Ground Benchmark (proposed in RDD)."""
 
     default_conf = {

@@ -1,23 +1,16 @@
 import logging
 import zipfile
-from collections import defaultdict
-from collections.abc import Iterable
 from pathlib import Path
 
-import numpy as np
 import torch
-from tqdm import tqdm
 
-from .. import datasets, settings
-from ..models.cache_loader import CacheLoader
-from ..utils.export import export_predictions
-from ..visualization import viz2d
-from . import eval_pipeline, io, utils
+from .. import settings
+from . import eval_pipeline, io
 
 logger = logging.getLogger(__name__)
 
 
-class MegaDepth1500Pipeline(eval_pipeline.EvalPipeline):
+class MegaDepth1500Pipeline(eval_pipeline.RelativePosePipeline):
     default_conf = {
         "data": {
             "name": "posed_images",
@@ -44,18 +37,6 @@ class MegaDepth1500Pipeline(eval_pipeline.EvalPipeline):
         },
     }
 
-    export_keys = [
-        "keypoints0",
-        "keypoints1",
-        "keypoint_scores0",
-        "keypoint_scores1",
-        "matches0",
-        "matches1",
-        "matching_scores0",
-        "matching_scores1",
-    ]
-    optional_export_keys = []
-
     def _init(self, conf):
         if not (settings.DATA_PATH / "megadepth1500").exists():
             logger.info("Downloading the MegaDepth-1500 dataset.")
@@ -66,90 +47,6 @@ class MegaDepth1500Pipeline(eval_pipeline.EvalPipeline):
             with zipfile.ZipFile(zip_path) as fid:
                 fid.extractall(settings.DATA_PATH)
             zip_path.unlink()
-
-    @classmethod
-    def get_dataloader(self, data_conf=None):
-        """Returns a data loader with samples for each eval datapoint"""
-        data_conf = data_conf if data_conf else self.default_conf["data"]
-        dataset = datasets.get_dataset(data_conf["name"])(data_conf)
-        return dataset.get_data_loader("test")
-
-    def get_predictions(self, experiment_dir, model=None, overwrite=False):
-        """Export a prediction file for each eval datapoint"""
-        pred_file = experiment_dir / "predictions.h5"
-        if not pred_file.exists() or overwrite:
-            if model is None:
-                model = io.load_model(self.conf.model, self.conf.checkpoint)
-            export_predictions(
-                self.get_dataloader(self.conf.data),
-                model,
-                pred_file,
-                keys=self.export_keys,
-                optional_keys=self.optional_export_keys,
-            )
-        return pred_file
-
-    def run_eval(self, loader, pred_file):
-        """Run the eval on cached predictions"""
-        conf = self.conf.eval
-        results = defaultdict(list)
-        test_thresholds = (
-            ([conf.ransac_th] if conf.ransac_th > 0 else [0.5, 1.0, 1.5, 2.0, 2.5, 3.0])
-            if not isinstance(conf.ransac_th, Iterable)
-            else conf.ransac_th
-        )
-        pose_results = defaultdict(lambda: defaultdict(list))
-        cache_loader = CacheLoader({"path": str(pred_file), "collate": None}).eval()
-        for i, data in enumerate(tqdm(loader)):
-            pred = cache_loader(data)
-            # @TODO: consider outputting epipolar precision in pixels
-            results_i = utils.eval_matches_epipolar(data, pred, essential=True)
-            if "depth" in data["view0"].keys():
-                results_i.update(utils.eval_matches_depth(data, pred))
-            for th in test_thresholds:
-                pose_results_i = utils.eval_relative_pose_robust(
-                    data,
-                    pred,
-                    {"estimator": conf.estimator, "ransac_th": th},
-                )
-                [pose_results[th][k].append(v) for k, v in pose_results_i.items()]
-
-            # we also store the names for later reference
-            results_i["names"] = data["name"][0]
-            if "scene" in data.keys():
-                results_i["scenes"] = data["scene"][0]
-
-            for k, v in results_i.items():
-                results[k].append(v)
-
-        # summarize results as a dict[str, float]
-        # you can also add your custom evaluations here
-        summaries = {}
-        for k, v in results.items():
-            arr = np.array(v)
-            if not np.issubdtype(np.array(v).dtype, np.number):
-                continue
-            summaries[f"m{k}"] = round(np.mean(arr), 3)
-
-        best_pose_results, best_th = utils.eval_poses(
-            pose_results, auc_ths=[5, 10, 20], key="rel_pose_error"
-        )
-        results = {**results, **pose_results[best_th]}
-        summaries = {
-            **summaries,
-            **best_pose_results,
-        }
-
-        figures = {
-            "pose_recall": viz2d.plot_cumulative(
-                {self.conf.eval.estimator: results["rel_pose_error"]},
-                [0, 30],
-                unit="°",
-                title="Pose ",
-            )
-        }
-
-        return summaries, figures, results
 
 
 if __name__ == "__main__":
