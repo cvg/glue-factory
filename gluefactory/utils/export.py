@@ -23,10 +23,11 @@ def export_predictions(
     keys="*",
     callback_fn=None,
     optional_keys=[],
+    mode: str = "w",
 ):
     assert keys == "*" or isinstance(keys, (tuple, list))
     Path(output_file).parent.mkdir(exist_ok=True, parents=True)
-    hfile = h5py.File(str(output_file), "w")
+    hfile = h5py.File(str(output_file), mode)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device).eval()
     for data_ in tqdm(loader):
