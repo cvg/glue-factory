@@ -199,7 +199,6 @@ class PosedImageDataset(base_dataset.BaseDataset, torch.utils.data.Dataset):
         return data
 
     def __len__(self):
-        return 10
         return len(self.items)
 
 
