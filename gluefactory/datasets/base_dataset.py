@@ -197,7 +197,7 @@ class BaseDataset(metaclass=ABCMeta):
             sampler = None
             if shuffle is None:
                 shuffle = split == "train" and self.conf.shuffle_training
-        return DataLoader(
+        loader = DataLoader(
             dataset,
             batch_size=batch_size,
             shuffle=shuffle,
@@ -209,6 +209,10 @@ class BaseDataset(metaclass=ABCMeta):
             prefetch_factor=self.conf.prefetch_factor,
             drop_last=drop_last,
         )
+
+        if distributed:
+            sampler.set_epoch(epoch)
+        return loader
 
     def get_overfit_loader(self, split):
         """Return an overfit data loader.
