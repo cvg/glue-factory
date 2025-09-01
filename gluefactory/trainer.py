@@ -8,7 +8,6 @@ from typing import Any, Sequence, TypeAlias
 import torch
 import torch.distributed as dist
 from omegaconf import DictConfig, OmegaConf
-from pyexpat import model
 from torch.utils.tensorboard import SummaryWriter
 
 from gluefactory import datasets, models
@@ -16,7 +15,7 @@ from gluefactory.models import BaseModel
 from gluefactory.train import default_train_conf, grad_norm, param_norm, run_evaluation
 from gluefactory.utils import experiments, misc, stdout_capturing, tools, types
 
-from . import __module_name__, eval, logger
+from . import __module_name__, eval, logger, settings
 
 Args: TypeAlias = DictConfig
 Batch: TypeAlias = Any
@@ -26,6 +25,12 @@ Writer: TypeAlias = SummaryWriter | None
 
 
 class Trainer:
+    """
+    Trainer class for managing the training process.
+
+    Maintains model, params and training state (optim, step, ...)
+    """
+
     default_conf = default_train_conf
 
     def __init__(
@@ -36,30 +41,17 @@ class Trainer:
         lr_scheduler: torch.optim.lr_scheduler.LambdaLR,
         device: torch.device | str | None = None,
     ):
+        # Initialize conf, model, optimizer and LR
         self.conf = OmegaConf.merge(self.default_conf, conf)
         self.model = model
-        self.all_params = self.model.parameters()
-        self.model_conf = self.model.conf
-        self.distributed = conf.num_devices > 0
-        self.num_gpus = conf.num_devices or 1
-
+        self.optimizer = optimizer
+        self.lr_scheduler = lr_scheduler
+        # Initialize rank and device
         if self.distributed:
             assert dist.is_initialized(), "Torch Distributed not initialized"
         self.rank = dist.get_rank() if self.distributed else 0
 
-        self.dtype = {
-            "float16": torch.float16,
-            "bfloat16": torch.bfloat16,
-            None: torch.float32,  # we disable it anyway
-        }[conf.mixed_precision]
-        self.device = device
-
-        self.optimizer = optimizer
-        self.lr_scheduler = lr_scheduler
-        self.use_mp = self.setup_dtype_scaler(conf.mixed_precision)
-
-        self.step_timer = tools.StepTimer()
-
+        # Initialize device
         self.device = device
         if self.device is None:
             self.device = (
@@ -68,6 +60,35 @@ class Trainer:
                 else "cuda" if torch.cuda.is_available() else "cpu"
             )
 
+        # Initialize model params and conf
+        self.all_params = self.model.parameters()
+        self.model_conf = self.model.conf
+
+        # Setup distributed
+        self.distributed = conf.num_devices > 0
+        self.num_gpus = conf.num_devices or 1
+
+        # Setup scaler and dtype
+        self.use_mp = self.setup_dtype_scaler(conf.mixed_precision)
+
+        # Initialize step timer
+        self.step_timer = tools.StepTimer()
+
+        # Initialize rank and device
+        if self.distributed:
+            assert dist.is_initialized(), "Torch Distributed not initialized"
+        self.rank = dist.get_rank() if self.distributed else 0
+
+        # Initialize device
+        self.device = device
+        if self.device is None:
+            self.device = (
+                self.rank
+                if self.distributed
+                else "cuda" if torch.cuda.is_available() else "cpu"
+            )
+
+        # Setup counters
         self.epoch = 0
         self.tot_n_samples = 0
         self.tot_it = 0
@@ -83,6 +104,10 @@ class Trainer:
 
         # Setup torch global variables
         self.setup_torch()
+
+    # ------------------------------------------------------------------------
+    # Utility Initializers
+    # ------------------------------------------------------------------------
 
     @classmethod
     def init(
@@ -106,6 +131,78 @@ class Trainer:
             **kwargs,
         )
 
+    # ------------------------------------------------------------------------
+    # Setup helper functions (public)
+    # ------------------------------------------------------------------------
+
+    def register_benchmark(
+        self, benchmark_name: str, benchmark_conf: str, every_epoch: int | None = None
+    ):
+        every_epoch = every_epoch or self.conf.benchmark_every_epoch
+        self.benchmarks[benchmark_name] = (benchmark_conf, every_epoch)
+
+    def load_checkpoint(
+        self,
+        checkpoint: Any,
+        strict: bool = False,
+        load_state: bool = False,
+        load_modelconfig: bool = False,
+    ):
+        self.model.load_state_dict(checkpoint["model"], strict=strict)
+        if load_modelconfig:
+            self.conf.model = OmegaConf.merge(
+                OmegaConf.create(checkpoint["conf"]).model, self.conf.model
+            )
+        if load_state:
+            self.optimizer.load_state_dict(checkpoint["optimizer"])
+            if "lr_scheduler" in checkpoint:
+                self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+            self.epoch = checkpoint["epoch"] + 1
+
+    def maybe_load_checkpoint(self):
+        if self.conf.load_experiment:
+            init_cp = experiments.get_last_checkpoint(self.conf.load_experiment)
+            init_cp = torch.load(
+                str(init_cp), map_location="cpu", weights_only=not settings.ALLOW_PICKLE
+            )
+            self.load_checkpoint(
+                init_cp,
+                load_state=self.conf.train.get("load_state", False),
+                load_modelconfig=self.conf.train.get("load_modelconfig", False),
+            )
+
+    def save_checkpoint(
+        self,
+        output_dir: Path,
+        conf: DictConfig,  # This is the full conf!
+        results: dict | None = None,
+        iter_i: int = 0,
+        **kwargs,
+    ) -> int | None:
+        return experiments.save_experiment(
+            self.model,
+            self.optimizer,
+            self.lr_scheduler,
+            conf,
+            results,
+            iter_i=iter_i,
+            epoch=self.epoch,
+            output_dir=output_dir,
+            **kwargs,
+        )
+
+    # ------------------------------------------------------------------------
+    # Setup helper functions (internal)
+    # ------------------------------------------------------------------------
+
+    def log(self, pattern: str, *args, **kwargs):
+        if self.rank == 0:
+            logger.info(pattern, *args, **kwargs)
+
+    def warn(self, pattern: str, *args, **kwargs):
+        if self.rank == 0:
+            logger.warning(pattern, *args, **kwargs)
+
     def setup_sigint_handler(self):
         def sigint_handler(signal, frame):
             logger.info("Caught keyboard interrupt signal, will terminate")
@@ -128,12 +225,6 @@ class Trainer:
             self.model = self.model.compile(mode=self.conf.compile)
         if self.distributed:
             self.model = self.model.make_ddp(device_ids=[self.device])
-
-    def register_benchmark(
-        self, benchmark_name: str, benchmark_conf: str, every_epoch: int | None = None
-    ):
-        every_epoch = every_epoch or self.conf.benchmark_every_epoch
-        self.benchmarks[benchmark_name] = (benchmark_conf, every_epoch)
 
     def construct_profiler(
         self, output_dir: Path, store_raw_trace: bool = False
@@ -190,39 +281,103 @@ class Trainer:
 
         return use_mp
 
-    def reload_checkpoint(
-        self, checkpoint: Any, strict: bool = False, load_state: bool = False
-    ):
-        self.model.load_state_dict(checkpoint["model"], strict=strict)
-        if self.conf.get("load_modelconfig", False):
-            self.conf.model = OmegaConf.merge(
-                OmegaConf.create(checkpoint["conf"]).model, self.conf.model
-            )
-        if load_state:
-            self.optimizer.load_state_dict(checkpoint["optimizer"])
-            if "lr_scheduler" in checkpoint:
-                self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
-            self.epoch = checkpoint["epoch"] + 1
+    def get_writer(self, output_dir: Path):
+        if self.rank == 0:
+            writer = SummaryWriter(log_dir=str(output_dir))
+        else:
+            writer = None
+        return writer
 
-    def save_checkpoint(
-        self,
-        output_dir: Path,
-        conf: DictConfig,
-        results: dict | None = None,
-        iter_i: int = 0,
-        **kwargs,
-    ) -> int | None:
-        return experiments.save_experiment(
-            self.model,
-            self.optimizer,
-            self.lr_scheduler,
-            conf,
-            results,
-            iter_i=iter_i,
-            epoch=self.epoch,
-            output_dir=output_dir,
-            **kwargs,
+    # ------------------------------------------------------------------------
+    # Logging functions
+    # ------------------------------------------------------------------------
+
+    @property
+    def current_it(self):
+        """Get the current iteration identifier."""
+        return self.tot_it if self.conf.log_it else self.tot_n_samples
+
+    def log_train(self, writer: Writer, it: int, train_loss_metrics: LossMetrics):
+        tot_n_samples = self.current_it
+        writer.add_scalar("l2/param_norm", param_norm(self.all_params), tot_n_samples)
+        writer.add_scalar("l2/grad_norm", grad_norm(self.all_params), tot_n_samples)
+        loss_metrics = {k: v.compute() for k, v in train_loss_metrics.items()}
+        str_loss_metrics = [f"{k} {v:.3E}" for k, v in loss_metrics.items()]
+        # Write training losses
+        logger.info(
+            "[E {} | it {}] loss {{{}}}".format(
+                self.epoch, it, ", ".join(str_loss_metrics)
+            )
         )
+        tools.write_dict_summaries(writer, "training", loss_metrics, tot_n_samples)
+        writer.add_scalar(
+            "training/lr", self.optimizer.param_groups[0]["lr"], tot_n_samples
+        )
+
+        # Write Epoch
+        writer.add_scalar("training/epoch", self.epoch, tot_n_samples)
+
+        # Log memory stats
+        if torch.cuda.is_available():
+            device_stats = tools.collect_device_stats()
+            tools.write_dict_summaries(writer, "memory", device_stats, tot_n_samples)
+
+    def log_eval(self, writer: Writer, it: int, eval_results: Any):
+        tot_n_samples = self.current_it
+        results, pr_metrics, figures = eval_results
+        str_results = [
+            f"{k} {v:.3E}" for k, v in results.items() if isinstance(v, float)
+        ]
+        logger.info(f'[Validation] {{{", ".join(str_results)}}}')
+        tools.write_dict_summaries(writer, "eval", results, tot_n_samples)
+        tools.write_dict_summaries(writer, "eval", pr_metrics, tot_n_samples)
+        tools.write_image_summaries(writer, "eval", figures, tot_n_samples)
+        # @TODO: optional always save checkpoint
+
+    def log_time_and_memory(
+        self,
+        writer: Writer,
+        batch_size: int,
+    ):
+        tot_n_samples = self.current_it
+        if self.step_timer.num_steps() > 1:
+            step_duration, section_times = self.step_timer.compute()
+
+            writer.add_scalar("step/total", step_duration, tot_n_samples)
+            writer.add_scalar("step/_per_sec", 1 / step_duration, tot_n_samples)
+            writer.add_scalar(
+                "step/_samples_per_sec",
+                1 / step_duration * batch_size * self.num_gpus,
+                tot_n_samples,
+            )
+            # Write section timings and fractions of step duration.
+            for section_name, duration in section_times.items():
+                writer.add_scalar(f"step/{section_name}", duration, tot_n_samples)
+
+            writer.add_scalar(
+                "step/io_fraction",
+                (section_times["data"] + section_times["to_device"]) / step_duration,
+                tot_n_samples,
+            )
+
+            writer.add_figure(
+                "step/sections",
+                self.step_timer.plot(),
+                tot_n_samples,
+                close=True,
+            )
+
+        # Reset the stats after logging
+        self.step_timer.stats.clear()
+
+        # Log memory stats
+        if torch.cuda.is_available():
+            device_stats = tools.collect_device_stats()
+            tools.write_dict_summaries(writer, "memory", device_stats, tot_n_samples)
+
+    # ------------------------------------------------------------------------
+    # Step functions (train, eval, visualize, ...)
+    # ------------------------------------------------------------------------
 
     def train_step(self, data: Batch) -> tuple[Predictions, LossMetrics]:
         with torch.autocast(
@@ -294,98 +449,18 @@ class Trainer:
                     if not self.conf.lr_schedule.on_epoch:
                         self.lr_scheduler.step()
                 else:
-                    if self.rank == 0:
-                        logger.warning(f"Skip iteration due to detach.")
+                    self.warn("Skip iteration due to detach.")
         return pred, loss_metrics
 
     def eval_step(self, data: Batch) -> tuple[Predictions, LossMetrics]:
-        pass
+        raise NotImplementedError()
 
-    def visualize(self, data: Batch) -> None:
-        pass
+    def visualize(self, data: Batch):
+        raise NotImplementedError()
 
-    def log_eval(self, writer, it, eval_results):
-        tot_n_samples = self.current_it
-        results, pr_metrics, figures = eval_results
-        str_results = [
-            f"{k} {v:.3E}" for k, v in results.items() if isinstance(v, float)
-        ]
-        logger.info(f'[Validation] {{{", ".join(str_results)}}}')
-        tools.write_dict_summaries(writer, "eval", results, tot_n_samples)
-        tools.write_dict_summaries(writer, "eval", pr_metrics, tot_n_samples)
-        tools.write_image_summaries(writer, "eval", figures, tot_n_samples)
-        # @TODO: optional always save checkpoint
-
-    def log_train(self, writer, it, train_loss_metrics):
-        tot_n_samples = self.current_it
-        writer.add_scalar("l2/param_norm", param_norm(self.all_params), tot_n_samples)
-        writer.add_scalar("l2/grad_norm", grad_norm(self.all_params), tot_n_samples)
-        loss_metrics = {k: v.compute() for k, v in train_loss_metrics.items()}
-        str_loss_metrics = [f"{k} {v:.3E}" for k, v in loss_metrics.items()]
-        # Write training losses
-        logger.info(
-            "[E {} | it {}] loss {{{}}}".format(
-                self.epoch, it, ", ".join(str_loss_metrics)
-            )
-        )
-        tools.write_dict_summaries(writer, "training", loss_metrics, tot_n_samples)
-        writer.add_scalar(
-            "training/lr", self.optimizer.param_groups[0]["lr"], tot_n_samples
-        )
-
-        # Write Epoch
-        writer.add_scalar("training/epoch", self.epoch, tot_n_samples)
-
-        # Log memory stats
-        if torch.cuda.is_available():
-            device_stats = tools.collect_device_stats()
-            tools.write_dict_summaries(writer, "memory", device_stats, tot_n_samples)
-
-    def log_time_and_memory(
-        self,
-        writer,
-        batch_size: int,
-    ):
-        tot_n_samples = self.current_it
-        if self.step_timer.num_steps() > 1:
-            step_duration, section_times = self.step_timer.compute()
-
-            writer.add_scalar("step/total", step_duration, tot_n_samples)
-            writer.add_scalar("step/_per_sec", 1 / step_duration, tot_n_samples)
-            writer.add_scalar(
-                "step/_samples_per_sec",
-                1 / step_duration * batch_size * self.num_gpus,
-                tot_n_samples,
-            )
-            # Write section timings and fractions of step duration.
-            for section_name, duration in section_times.items():
-                writer.add_scalar(f"step/{section_name}", duration, tot_n_samples)
-
-            writer.add_scalar(
-                "step/io_fraction",
-                (section_times["data"] + section_times["to_device"]) / step_duration,
-                tot_n_samples,
-            )
-
-            writer.add_figure(
-                "step/sections",
-                self.step_timer.plot(),
-                tot_n_samples,
-                close=True,
-            )
-
-        # Reset the stats after logging
-        self.step_timer.stats.clear()
-
-        # Log memory stats
-        if torch.cuda.is_available():
-            device_stats = tools.collect_device_stats()
-            tools.write_dict_summaries(writer, "memory", device_stats, tot_n_samples)
-
-    @property
-    def current_it(self):
-        """Get the current iteration identifier."""
-        return self.tot_it if self.conf.log_it else self.tot_n_samples
+    # ------------------------------------------------------------------------
+    # Main loops (train_epoch, eval_loop, test_loop)
+    # ------------------------------------------------------------------------
 
     def train_epoch(
         self,
@@ -436,7 +511,7 @@ class Trainer:
             # Make plots of training steps
             if self.conf.plot_every_iter is not None:
                 if it % self.conf.plot_every_iter == 0 and self.rank == 0:
-                    figures = model.visualize(pred, data)
+                    figures = self.model.visualize(pred, data)
                     tools.write_image_summaries(
                         writer, "training", figures, self.current_it
                     )
@@ -451,13 +526,6 @@ class Trainer:
 
         # if self.distributed:
         #     dist.barrier()
-
-    def get_writer(self, output_dir: Path):
-        if self.rank == 0:
-            writer = SummaryWriter(log_dir=str(output_dir))
-        else:
-            writer = None
-        return writer
 
     def eval_loop(self, output_dir: Path, loader: torch.utils.data.DataLoader):
         """Run evaluation loop."""
@@ -504,6 +572,10 @@ class Trainer:
             tools.write_image_summaries(writer, f"test_{benchmark_name}", figures, step)
         return summaries, figures
 
+    # ------------------------------------------------------------------------
+    # Run full training on dataset (train multiple epochs + validation + test)
+    # ------------------------------------------------------------------------
+
     def train_loop(
         self,
         output_dir: Path,
@@ -519,21 +591,18 @@ class Trainer:
 
         # Start Loop
         while self.epoch < self.conf.epochs:
-            if self.rank == 0:
-                logger.info(f"Starting epoch {self.epoch}")
+            self.log(f"Starting epoch {self.epoch}")
 
             # Re-seed epoch
             tools.set_seed(self.conf.seed + self.epoch)
-            if self.rank == 0:
-                logger.info(f"Setting up data loader")
+            self.log(f"Setting up data loader")
 
             # Create data loader
             train_loader = dataset.get_data_loader(
                 "train", distributed=self.distributed
             )
 
-            if self.rank == 0:
-                logger.info(f"Start training")
+            self.log(f"Start training")
             self.train_epoch(output_dir, train_loader, writer)
 
             self.epoch += 1
@@ -594,7 +663,7 @@ def launch_train(output_dir, conf, device: torch.device):  # 0 means non-distrib
         scale_by_device_count(conf.data, conf.train.num_devices or 1)
     )
     model = models.get_model(conf.model.name)(conf.model).to(device)
-    if conf.get("lazy_init", True) and False:
+    if conf.get("lazy_init", True):
         logger.info("Running dummy forward pass to initialize lazy modules.")
         dummy_batch = next(iter(dataset.get_data_loader("val")))
         logger.info("TODO: Add function:  base_dataset.get_dummy_batch")
@@ -609,6 +678,9 @@ def launch_train(output_dir, conf, device: torch.device):  # 0 means non-distrib
         eval.get_benchmark(bench_name)  # Check if benchmark exists
         bench_conf = {} if not conf.get("benchmark") else conf.benchmarks.get(bench, {})
         trainer.register_benchmark(bench_name, bench_conf, every_epoch=every_epoch)
+    # Maybe load experiment
+    trainer.maybe_load_checkpoint()
+
     # Run actual training loop
     trainer.train_loop(output_dir, dataset)
 
@@ -642,7 +714,8 @@ def create_training_dir(experiment_name: str, args):
         output_dir = output_dir / str(ablate_id)
         logger.info(f"Creating ablation folder {output_dir}")
     # Setup output directory
-    if output_dir.exists() and not (args.restore or args.overwrite or args.clean):
+    exist_ok = args.restore or args.overwrite or args.clean
+    if output_dir.exists() and not exist_ok:
         raise FileExistsError(
             f"Output directory {output_dir} already exists. "
             "Use --restore to continue training or --overwrite to delete it."
@@ -650,7 +723,7 @@ def create_training_dir(experiment_name: str, args):
     if output_dir.exists() and args.clean:
         logger.info(f"Cleaning output directory {output_dir}")
         shutil.rmtree(output_dir, ignore_errors=True)
-    output_dir.mkdir(exist_ok=args.overwrite or args.clean, parents=True)
+    output_dir.mkdir(exist_ok=exist_ok, parents=True)
     logger.info(f"Output directory: {output_dir}")
     return output_dir
 
@@ -667,6 +740,8 @@ def compose_cli_config(output_dir: Path, args):
     elif args.restore:
         restore_conf = OmegaConf.load(output_dir / "config.yaml")
         conf = OmegaConf.merge(restore_conf, conf)
+        conf.train.load_experiment = args.experiment
+        conf.train.load_state = True
     if not args.restore:
         if conf.train.seed is None:
             conf.train.seed = torch.initial_seed() & (2**32 - 1)
@@ -690,7 +765,6 @@ def save_code_snapshot(
 
 if __name__ == "__main__":
     # Start actual training
-    from . import settings
     from .train import parse_args
 
     args = parse_args()
@@ -717,5 +791,4 @@ if __name__ == "__main__":
             main_worker, nprocs=conf.train.num_devices, args=(conf, output_dir, args)
         )
     else:
-        main_worker(0, conf, output_dir, args)
         main_worker(0, conf, output_dir, args)
