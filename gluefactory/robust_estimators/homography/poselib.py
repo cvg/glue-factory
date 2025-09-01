@@ -6,7 +6,7 @@ from ..base_estimator import BaseEstimator
 
 
 class PoseLibHomographyEstimator(BaseEstimator):
-    default_conf = {"ransac_th": 2.0, "options": {}}
+    default_conf = {"ransac_th": 2.0, "options": {}, "bundle_options": {}}
 
     required_data_keys = ["m_kpts0", "m_kpts1"]
 
@@ -22,6 +22,7 @@ class PoseLibHomographyEstimator(BaseEstimator):
                 "max_reproj_error": self.conf.ransac_th,
                 **OmegaConf.to_container(self.conf.options),
             },
+            OmegaConf.to_container(self.conf.bundle_options),
         )
         success = M is not None
         if not success:
