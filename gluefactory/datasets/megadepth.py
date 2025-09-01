@@ -98,20 +98,24 @@ class MegaDepth(base_dataset.BaseDataset):
             shutil.move(tmp_dir / tar_name.split(".")[0], tmp_dir / out_name)
         shutil.move(tmp_dir, data_dir)
 
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         assert self.conf.views in [1, 2, 3]
+        seed = self.conf.seed
+        if split == "train":
+            seed = seed + epoch
         if self.conf.views == 3:
-            return _TripletDataset(self.conf, split)
+            return _TripletDataset(self.conf, split, seed=seed)
         else:
-            return _PairDataset(self.conf, split)
+            return _PairDataset(self.conf, split, seed=seed)
 
 
 class _PairDataset(torch.utils.data.Dataset):
-    def __init__(self, conf, split, load_sample=True):
+    def __init__(self, conf, split, load_sample=True, seed: int | None = None):
         self.root = settings.DATA_PATH / conf.data_dir
         assert self.root.exists(), self.root
         self.split = split
         self.conf = conf
+        self.seed = seed if seed is not None else conf.seed
 
         split_conf = conf[split + "_split"]
         if isinstance(split_conf, (str, Path)):
@@ -154,7 +158,7 @@ class _PairDataset(torch.utils.data.Dataset):
 
         self.items = []
         if load_sample:
-            self.sample_new_items(conf.seed)
+            self.sample_new_items(self.seed)
             assert len(self.items) > 0
 
     def sample_new_items(self, seed):
@@ -344,7 +348,7 @@ class _PairDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         if self.conf.reseed:
-            with tools.fork_rng(self.conf.seed + idx, False):
+            with tools.fork_rng(self.seed + idx, False):
                 return self.getitem(idx)
         else:
             return self.getitem(idx)

@@ -47,7 +47,7 @@ class ImageFolder(base_dataset.BaseDataset, torch.utils.data.Dataset):
 
         self.preprocessor = preprocess.ImagePreprocessor(conf.preprocessing)
 
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         return self
 
     def __getitem__(self, idx):

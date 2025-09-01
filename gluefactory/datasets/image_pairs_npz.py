@@ -32,7 +32,7 @@ class ImagePairsNPZ(BaseDataset, torch.utils.data.Dataset):
         self.items = list(np.load(pair_f, allow_pickle=True)["pair_info"])
         self.preprocessor = preprocess.ImagePreprocessor(conf.preprocessing)
 
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         return self
 
     def _read_view(self, name):

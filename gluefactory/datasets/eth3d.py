@@ -211,7 +211,7 @@ class ETH3DDataset(base_dataset.BaseDataset):
             zip_ref.extractall(tmp_dir)
         shutil.move(tmp_dir / zip_name.split(".")[0], data_dir)
 
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         return ETH3DDataset(self.conf)
 
     def _read_image(self, img_path):

@@ -85,7 +85,7 @@ class HPatches(base_dataset.BaseDataset, torch.utils.data.Dataset):
             zip_ref.extractall(data_dir)
         zip_path.unlink()  # Remove the zip file after extraction
 
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         assert split in ["val", "test"]
         return self
 

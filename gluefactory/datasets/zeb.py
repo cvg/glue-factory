@@ -126,7 +126,7 @@ class ZEBPairs(BaseDataset, torch.utils.data.Dataset):
             self.items = sorted(self.items, key=lambda x: x.stem)
             np.random.RandomState(conf.seed).shuffle(self.items)
 
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         assert split == "test", "ZEBPairs dataset does not have train/val splits."
         return self
 

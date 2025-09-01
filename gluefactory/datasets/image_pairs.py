@@ -71,7 +71,7 @@ class ImagePairs(BaseDataset, torch.utils.data.Dataset):
         if conf.load_features.do:
             self.feature_loader = cache_loader.CacheLoader(conf.load_features)
 
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         return self
 
     def _read_view(self, name):

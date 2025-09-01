@@ -142,7 +142,7 @@ class PosedImageDataset(base_dataset.BaseDataset, torch.utils.data.Dataset):
 
         self.preprocessor = preprocess.ImagePreprocessor(conf.preprocessing)
 
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         return self
 
     def _read_view(self, scene, name):
@@ -199,6 +199,7 @@ class PosedImageDataset(base_dataset.BaseDataset, torch.utils.data.Dataset):
         return data
 
     def __len__(self):
+        return 10
         return len(self.items)
 
 

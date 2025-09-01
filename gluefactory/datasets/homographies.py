@@ -142,7 +142,7 @@ class HomographyDataset(base_dataset.BaseDataset):
             tar_path.unlink()
         shutil.move(tmp_dir, data_dir)
 
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         return _Dataset(self.conf, self.images[split], split)
 
 

@@ -5,6 +5,7 @@ See mnist.py for an example of dataset.
 
 import collections
 import dataclasses
+import functools
 import logging
 from abc import ABCMeta, abstractmethod
 
@@ -152,14 +153,35 @@ class BaseDataset(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         """To be implemented by the child class."""
         raise NotImplementedError
 
-    def get_data_loader(self, split, shuffle=None, pinned=False, distributed=False):
+    @functools.cache
+    def get_dummy_batch(self, split: str = "val", batch_size: int | None = 2, **kwargs):
+        # Return a dummy batch from the dataset
+        if batch_size is None:
+            batch_size = self.conf.get(split + "_batch_size", self.conf.batch_size)
+        dataset = self.get_dataset(split)
+        loader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            pin_memory=True,
+            num_workers=1,
+            worker_init_fn=worker_init_fn,
+            collate_fn=collate,
+            **kwargs,
+        )
+        dummy_batch = next(iter(loader))
+        del loader
+        return dummy_batch
+
+    def get_data_loader(
+        self, split, shuffle=None, pinned=False, distributed=False, epoch: int = 0
+    ):
         """Return a data loader for a given split."""
         assert split in ["train", "val", "test"]
-        dataset = self.get_dataset(split)
+        dataset = self.get_dataset(split, epoch=epoch)
         try:
             batch_size = self.conf[split + "_batch_size"]
         except omegaconf.MissingMandatoryValue:
