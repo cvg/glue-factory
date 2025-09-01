@@ -1,5 +1,5 @@
 model:
-    name: gluefactory.models.two_view_pipeline
+    name: two_view_pipeline
     extractor:
         name: gluefactory.models.lines.wireframe
         point_extractor:
@@ -18,49 +18,26 @@ model:
             merge_line_endpoints: True
             nms_radius: 3
     matcher:
-      name: gluefactory.models.matchers.lightgluestick
+      name: gluefactory.models.matchers.lightgluestick_pretrained
       depth_confidence: -1
       width_confidence: -1
       filter_threshold: 0.1
-      line_threshold: 3
-      tau: 3
-      method: "mean"
-      weights: superpoint # This will download weights from internet
 
     # ground_truth:    # for ETH3D, comment otherwise
     #     name: gluefactory.models.matchers.depth_matcher
     #     use_lines: True
-
 benchmarks:
     hpatches:
         eval:
             use_lines: True
             estimator: homography_est
             ransac_th: -1    # [1., 1.5, 2., 2.5, 3.]
-    scannet:
-        eval:
-            use_lines: True
-            estimator: homography_est
-            ransac_th: -1
     megadepth1500:
         data:
             preprocessing:
                 side: long
                 resize: 1600
         eval:
-            estimator: poselib
-            ransac_th: -1
-    megadepth1500_match_eval:
-        data:
-            preprocessing:
-                side: long
-                resize: 1600
-        model:
-            ground_truth:
-                name: gluefactory.models.matchers.depth_matcher
-                use_lines: True
-        eval:
-            eval_lines: True
             estimator: poselib
             ransac_th: -1
     eth3d:

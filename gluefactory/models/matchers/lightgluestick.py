@@ -44,9 +44,9 @@ def rotate_half(x: torch.Tensor) -> torch.Tensor:
 def apply_cached_rotary_emb(freqs: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
     return (t * freqs[0]) + (rotate_half(t) * freqs[1])
 
-def create_mask(lines_junc_idx, num_nodes):
+def create_mask(lines_junc_idx):
     # Get batch size and number of connections
-    bs = lines_junc_idx.shape[0]
+    bs, num_nodes = lines_junc_idx.shape
     # Create an empty mask
     mask = torch.eye(num_nodes, dtype=torch.float32).unsqueeze(0).repeat(bs, 1, 1)
 
@@ -196,6 +196,7 @@ class LineLayer(nn.Module):
             self,
             x: torch.Tensor,
             encoding: torch.Tensor,
+            mask_ffn: torch.Tensor,
             mask: Optional[torch.Tensor] = None,
 
     ) -> torch.Tensor:
@@ -207,7 +208,7 @@ class LineLayer(nn.Module):
         context = self.inner_attn(q, k, v, mask=mask)
         message = self.out_proj(context.transpose(1, 2).flatten(start_dim=-2))
 
-        return x + self.ffn(torch.cat([x, message], -1))
+        return x + self.ffn(torch.cat([x, message], -1)) * mask_ffn.unsqueeze(-1)
 
 class CrossBlock(nn.Module):
     def __init__(
@@ -280,6 +281,8 @@ class TransformerLayer(nn.Module):
             desc1,
             encoding0,
             encoding1,
+            mask_ffn0,
+            mask_ffn1,
             mask0: Optional[torch.Tensor] = None,
             mask1: Optional[torch.Tensor] = None,
     ):
@@ -290,10 +293,9 @@ class TransformerLayer(nn.Module):
             n_endpoints1 = mask1.shape[-1]
 
             desc0[:, : n_endpoints0, :] = self.line_layer(desc0[:, : n_endpoints0, :], \
-                                                       encoding0[:, :, :, : n_endpoints0, :], mask0)
+                                                       encoding0[:, :, :, : n_endpoints0, :], mask_ffn0, mask0)
             desc1[:, : n_endpoints1, :] = self.line_layer(desc1[:, : n_endpoints1, :], \
-                                    encoding1[:, :, :, : n_endpoints1, :], mask1)
-
+                                    encoding1[:, :, :, : n_endpoints1, :], mask_ffn1, mask1)
             return self.cross_attn(desc0, desc1)
 
 
@@ -427,7 +429,7 @@ class LightGlueStick(BaseModel):
         "mp": False,  # enable mixed precision
         "depth_confidence": -1,  # early stopping, disable with -1
         "width_confidence": -1,  # point pruning, disable with -1
-        "filter_threshold": 0.1,  # match threshold
+        "filter_threshold": 0.0,  # match threshold
         "checkpointed": False,
         "weights": None,  # either a path or the name of pretrained weights (disk, ...)
         "keypoint_encoder": [32, 64, 128, 256],
@@ -483,10 +485,10 @@ class LightGlueStick(BaseModel):
         )
 
         self.loss_fn = NLLLoss(conf.loss)
-        self.i = 0
 
         state_dict = None
         if conf.weights is not None:
+            # weights can be either a path or an existing file from official LG
             if Path(conf.weights).exists():
                 state_dict = torch.load(conf.weights, map_location="cpu")
             elif (Path(DATA_PATH) / conf.weights).exists():
@@ -629,6 +631,8 @@ class LightGlueStick(BaseModel):
         do_early_stop = self.conf.depth_confidence > 0 and not self.training
         do_point_pruning = self.conf.width_confidence > 0 and not self.training
 
+        all_desc0, all_desc1 = [], []
+
         if do_point_pruning:
             ind0 = torch.arange(0, m, device=device)[None]
             ind1 = torch.arange(0, n, device=device)[None]
@@ -637,18 +641,30 @@ class LightGlueStick(BaseModel):
             prune1 = torch.ones_like(ind1)
         token0, token1 = None, None
 
-        n_endpoints0 = lines_junc_idx0.max() + 1
-        n_endpoints1 = lines_junc_idx1.max() + 1
-
         # pre-compute masks for LG-LMP
-        mask0 = create_mask(lines_junc_idx0, n_endpoints0).unsqueeze(1).bool().to(lines_junc_idx0.device)
-        mask1 = create_mask(lines_junc_idx1, n_endpoints1).unsqueeze(1).bool().to(lines_junc_idx1.device)
+        mask0 = create_mask(lines_junc_idx0).unsqueeze(1).bool().to(lines_junc_idx0.device)
+        mask1 = create_mask(lines_junc_idx1).unsqueeze(1).bool().to(lines_junc_idx1.device)
+
+        max_indices0 = lines_junc_idx0.max(1).values
+        max_indices1 = lines_junc_idx1.max(1).values
+
+        mask_ffn0 = torch.arange(mask0.shape[-1], device=mask0.device).unsqueeze(0) <= max_indices0.unsqueeze(1)
+        mask_ffn1 = torch.arange(mask1.shape[-1], device=mask1.device).unsqueeze(0) <= max_indices1.unsqueeze(1)
 
         for i in range(self.conf.n_layers):
-            torch.cuda.synchronize()  # Synchronize before starting the timer
+            if self.conf.checkpointed and self.training:
+                desc0, desc1 = checkpoint(
+                    self.transformers[i], desc0, desc1, encoding0, encoding1, \
+                    mask_ffn0, mask_ffn1, mask0, mask1, use_reentrant=True
+                )
+            else:
+                desc0, desc1 = self.transformers[i](desc0, desc1, encoding0, encoding1, \
+                                                    mask_ffn0, mask_ffn1, mask0, mask1)
 
-            desc0, desc1 = self.transformers[i](desc0, desc1, encoding0, encoding1, \
-                                                    mask0, mask1)
+            if self.training or i == self.conf.n_layers - 1:
+                all_desc0.append(desc0)
+                all_desc1.append(desc1)
+                continue  # no early stopping or adaptive width at last layer
 
             # only for eval
             if do_early_stop:
@@ -659,8 +675,6 @@ class LightGlueStick(BaseModel):
             if do_point_pruning:
                 assert b == 1
                 scores0 = self.log_assignment[i].get_matchability(desc0)
-
-                scores0[0, : n_endpoints0] = 1.0
                 prunemask0 = self.get_pruning_mask(token0, scores0, i)
                 keep0 = torch.where(prunemask0)[1]
                 ind0 = ind0.index_select(1, keep0)
@@ -668,8 +682,6 @@ class LightGlueStick(BaseModel):
                 encoding0 = encoding0.index_select(-2, keep0)
                 prune0[:, ind0] += 1
                 scores1 = self.log_assignment[i].get_matchability(desc1)
-
-                scores1[0, : n_endpoints1] = 1.0
                 prunemask1 = self.get_pruning_mask(token1, scores1, i)
                 keep1 = torch.where(prunemask1)[1]
                 ind1 = ind1.index_select(1, keep1)
@@ -703,12 +715,12 @@ class LightGlueStick(BaseModel):
             "log_assignment": scores,
             "prune0": prune0,
             "prune1": prune1,
-            "early_exit_layer_idx": i + 1
+            "ref_descriptors0": torch.stack(all_desc0, 1),
+            "ref_descriptors1": torch.stack(all_desc1, 1)
         }
 
         if n_lines0 > 0 and n_lines1 > 0:
             m0_lines, m1_lines, mscores0_lines, mscores1_lines = filter_matches(line_scores, self.conf.filter_threshold)
-
             pred["line_log_assignment"] = line_scores
             pred["line_matches0"] = m0_lines
             pred["line_matches1"] = m1_lines

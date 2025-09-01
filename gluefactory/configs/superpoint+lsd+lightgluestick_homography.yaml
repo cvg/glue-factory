@@ -41,7 +41,6 @@ model:
     th_negative: 5
   matcher:
     name: gluefactory.models.matchers.lightgluestick
-    weights: superpoint
     input_dim: 256
     descriptor_dim: 256
     flash: false
