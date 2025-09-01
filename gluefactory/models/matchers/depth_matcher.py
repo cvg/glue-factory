@@ -1,9 +1,6 @@
 import torch
 
-from ...geometry.gt_generation import (
-    gt_line_matches_from_pose_depth,
-    gt_matches_from_pose_depth,
-)
+from ...geometry import gt_generation
 from ..base_model import BaseModel
 
 # Hacky workaround for torch.amp.custom_fwd to support older versions of PyTorch.
@@ -58,7 +55,7 @@ class DepthMatcher(BaseModel):
                 kw = {k: data[k] for k in keys}
             else:
                 kw = {}
-            result = gt_matches_from_pose_depth(
+            result = gt_generation.gt_matches_from_pose_depth(
                 data["keypoints0"],
                 data["keypoints1"],
                 data,
@@ -69,16 +66,18 @@ class DepthMatcher(BaseModel):
                 **kw,
             )
         if self.conf.use_lines:
-            line_assignment, line_m0, line_m1 = gt_line_matches_from_pose_depth(
-                data["lines0"],
-                data["lines1"],
-                data["valid_lines0"],
-                data["valid_lines1"],
-                data,
-                self.conf.n_line_sampled_pts,
-                self.conf.line_perp_dist_th,
-                self.conf.overlap_th,
-                self.conf.min_visibility_th,
+            line_assignment, line_m0, line_m1 = (
+                gt_generation.gt_line_matches_from_pose_depth(
+                    data["lines0"],
+                    data["lines1"],
+                    data["valid_lines0"],
+                    data["valid_lines1"],
+                    data,
+                    self.conf.n_line_sampled_pts,
+                    self.conf.line_perp_dist_th,
+                    self.conf.overlap_th,
+                    self.conf.min_visibility_th,
+                )
             )
             result["line_matches0"] = line_m0
             result["line_matches1"] = line_m1

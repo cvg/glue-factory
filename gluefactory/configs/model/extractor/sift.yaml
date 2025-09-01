@@ -1,0 +1,3 @@
+name: extractors.sift
+backend: pycolmap_cuda
+max_num_keypoints: 4096

@@ -6,13 +6,10 @@ import numpy as np
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
-from ..datasets import get_dataset
+from .. import datasets, settings
 from ..models.cache_loader import CacheLoader
-from ..settings import EVAL_PATH
-from ..utils.export_predictions import export_predictions
-from .eval_pipeline import EvalPipeline, load_eval
-from .io import get_eval_parser, load_model, parse_eval_args
-from .utils import aggregate_pr_results, get_tp_fp_pts
+from ..utils.export import export_predictions
+from . import eval_pipeline, io, utils
 
 
 def eval_dataset(loader, pred_file, suffix=""):
@@ -34,17 +31,17 @@ def eval_dataset(loader, pred_file, suffix=""):
             pred_matches = pred["line_matches0"].numpy()[sort_indices]
         scores = scores[sort_indices]
 
-        tp, fp, scores, num_pos = get_tp_fp_pts(pred_matches, gt_matches, scores)
+        tp, fp, scores, num_pos = utils.get_tp_fp_pts(pred_matches, gt_matches, scores)
         results["tp" + suffix].append(tp)
         results["fp" + suffix].append(fp)
         results["scores" + suffix].append(scores)
         results["num_pos" + suffix] += num_pos
 
     # Aggregate the results
-    return aggregate_pr_results(results, suffix=suffix)
+    return utils.aggregate_pr_results(results, suffix=suffix)
 
 
-class ETH3DPipeline(EvalPipeline):
+class ETH3DPipeline(eval_pipeline.EvalPipeline):
     default_conf = {
         "data": {
             "name": "eth3d",
@@ -79,14 +76,14 @@ class ETH3DPipeline(EvalPipeline):
 
     def get_dataloader(self, data_conf=None):
         data_conf = data_conf if data_conf is not None else self.default_conf["data"]
-        dataset = get_dataset("eth3d")(data_conf)
+        dataset = datasets.get_dataset("eth3d")(data_conf)
         return dataset.get_data_loader("test")
 
     def get_predictions(self, experiment_dir, model=None, overwrite=False):
         pred_file = experiment_dir / "predictions.h5"
         if not pred_file.exists() or overwrite:
             if model is None:
-                model = load_model(self.conf.model, self.conf.checkpoint)
+                model = io.load_model(self.conf.model, self.conf.checkpoint)
             export_predictions(
                 self.get_dataloader(self.conf.data),
                 model,
@@ -154,16 +151,16 @@ def plot_pr_curve(
 
 if __name__ == "__main__":
     dataset_name = Path(__file__).stem
-    parser = get_eval_parser()
+    parser = io.get_eval_parser()
     args = parser.parse_intermixed_args()
 
     default_conf = OmegaConf.create(ETH3DPipeline.default_conf)
 
     # mingle paths
-    output_dir = Path(EVAL_PATH, dataset_name)
+    output_dir = Path(settings.EVAL_PATH, dataset_name)
     output_dir.mkdir(exist_ok=True, parents=True)
 
-    name, conf = parse_eval_args(
+    name, conf = io.parse_eval_args(
         dataset_name,
         args,
         "configs/",
@@ -171,7 +168,7 @@ if __name__ == "__main__":
     )
 
     experiment_dir = output_dir / name
-    experiment_dir.mkdir(exist_ok=True)
+    experiment_dir.mkdir(exist_ok=True, parents=True)
 
     pipeline = ETH3DPipeline(conf)
     s, f, r = pipeline.run(
@@ -187,13 +184,13 @@ if __name__ == "__main__":
         results = {}
         for m in conf.eval.plot_methods:
             exp_dir = output_dir / m
-            results[m] = load_eval(exp_dir)[1]
+            results[m] = io.load_eval(exp_dir)[1]
 
         plot_pr_curve(conf.eval.plot_methods, results, dst_file="eth3d_pr_curve.pdf")
         if conf.eval.eval_lines:
             for m in conf.eval.plot_line_methods:
                 exp_dir = output_dir / m
-                results[m] = load_eval(exp_dir)[1]
+                results[m] = io.load_eval(exp_dir)[1]
             plot_pr_curve(
                 conf.eval.plot_line_methods,
                 results,

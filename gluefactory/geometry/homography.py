@@ -4,14 +4,11 @@ from typing import Tuple
 import numpy as np
 import torch
 
-from .utils import from_homogeneous, to_homogeneous
+from . import transforms as gtr
 
 
 def flat2mat(H):
     return np.reshape(np.concatenate([H, np.ones_like(H[:, :1])], axis=1), [3, 3])
-
-
-# Homography creation
 
 
 def create_center_patch(shape, patch_shape=None):
@@ -170,13 +167,13 @@ def warp_points_torch(points, H, inverse=True):
     """
 
     # Get the points to the homogeneous format
-    points = to_homogeneous(points)
+    points = gtr.to_homogeneous(points)
 
     # Apply the homography
-    H_mat = (torch.inverse(H) if inverse else H).transpose(-2, -1)
+    H_mat = (torch.linalg.inv_ex(H)[0] if inverse else H).transpose(-2, -1)
     warped_points = torch.einsum("...nj,...ji->...ni", points, H_mat)
 
-    warped_points = from_homogeneous(warped_points, eps=1e-5)
+    warped_points = gtr.from_homogeneous(warped_points, eps=1e-5)
     return warped_points
 
 
@@ -185,7 +182,7 @@ def warp_points_torch(points, H, inverse=True):
 
 def seg_equation(segs):
     # calculate list of start, end and midpoints points from both lists
-    start_points, end_points = to_homogeneous(segs[..., 0, :]), to_homogeneous(
+    start_points, end_points = gtr.to_homogeneous(segs[..., 0, :]), gtr.to_homogeneous(
         segs[..., 1, :]
     )
     # Compute the line equations as ax + by + c = 0 , where x^2 + y^2 = 1
@@ -312,11 +309,11 @@ def warp_lines_torch(
 
 
 def sym_homography_error(kpts0, kpts1, T_0to1):
-    kpts0_1 = from_homogeneous(to_homogeneous(kpts0) @ T_0to1.transpose(-1, -2))
+    kpts0_1 = gtr.from_homogeneous(gtr.to_homogeneous(kpts0) @ T_0to1.transpose(-1, -2))
     dist0_1 = ((kpts0_1 - kpts1) ** 2).sum(-1).sqrt()
 
-    kpts1_0 = from_homogeneous(
-        to_homogeneous(kpts1) @ torch.pinverse(T_0to1.transpose(-1, -2))
+    kpts1_0 = gtr.from_homogeneous(
+        gtr.to_homogeneous(kpts1) @ torch.pinverse(T_0to1.transpose(-1, -2))
     )
     dist1_0 = ((kpts1_0 - kpts0) ** 2).sum(-1).sqrt()
 
@@ -336,7 +333,9 @@ def sym_homography_error_all(kpts0, kpts1, H):
 def homography_corner_error(T, T_gt, image_size):
     W, H = image_size[..., 0], image_size[..., 1]
     corners0 = torch.Tensor([[0, 0], [W, 0], [W, H], [0, H]]).float().to(T)
-    corners1_gt = from_homogeneous(to_homogeneous(corners0) @ T_gt.transpose(-1, -2))
-    corners1 = from_homogeneous(to_homogeneous(corners0) @ T.transpose(-1, -2))
+    corners1_gt = gtr.from_homogeneous(
+        gtr.to_homogeneous(corners0) @ T_gt.transpose(-1, -2)
+    )
+    corners1 = gtr.from_homogeneous(gtr.to_homogeneous(corners0) @ T.transpose(-1, -2))
     d = torch.sqrt(((corners1 - corners1_gt) ** 2).sum(-1))
     return d.mean(-1)

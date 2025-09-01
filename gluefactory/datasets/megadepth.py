@@ -11,15 +11,14 @@ import numpy as np
 import PIL.Image
 import torch
 from omegaconf import OmegaConf
+from tqdm import tqdm
 
-from ..geometry.wrappers import Camera, Pose
-from ..models.cache_loader import CacheLoader
-from ..settings import DATA_PATH
-from ..utils.image import ImagePreprocessor, load_image
-from ..utils.tools import fork_rng
-from ..visualization.viz2d import plot_heatmaps, plot_image_grid
-from .base_dataset import BaseDataset
-from .utils import rotate_intrinsics, rotate_pose_inplane, scale_intrinsics
+from .. import settings
+from ..geometry import reconstruction
+from ..geometry import transforms as gtr
+from ..models import cache_loader
+from ..utils import preprocess, tools
+from . import base_dataset
 
 logger = logging.getLogger(__name__)
 scene_lists_path = Path(__file__).parent / "megadepth_scene_lists"
@@ -33,7 +32,7 @@ def sample_n(data, num, seed=None):
         return data
 
 
-class MegaDepth(BaseDataset):
+class MegaDepth(base_dataset.BaseDataset):
     default_conf = {
         # paths
         "data_dir": "megadepth/",
@@ -62,25 +61,25 @@ class MegaDepth(BaseDataset):
         "read_depth": True,
         "read_image": True,
         "grayscale": False,
-        "preprocessing": ImagePreprocessor.default_conf,
+        "preprocessing": preprocess.ImagePreprocessor.default_conf,
         "p_rotate": 0.0,  # probability to rotate image by +/- 90°
         "reseed": False,
         "seed": 0,
         # features from cache
         "load_features": {
             "do": False,
-            **CacheLoader.default_conf,
+            **cache_loader.CacheLoader.default_conf,
             "collate": False,
         },
     }
 
     def _init(self, conf):
-        if not (DATA_PATH / conf.data_dir).exists():
+        if not (settings.DATA_PATH / conf.data_dir).exists():
             logger.info("Downloading the MegaDepth dataset.")
             self.download()
 
     def download(self):
-        data_dir = DATA_PATH / self.conf.data_dir
+        data_dir = settings.DATA_PATH / self.conf.data_dir
         tmp_dir = data_dir.parent / "megadepth_tmp"
         if tmp_dir.exists():  # The previous download failed.
             shutil.rmtree(tmp_dir)
@@ -99,20 +98,24 @@ class MegaDepth(BaseDataset):
             shutil.move(tmp_dir / tar_name.split(".")[0], tmp_dir / out_name)
         shutil.move(tmp_dir, data_dir)
 
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         assert self.conf.views in [1, 2, 3]
+        seed = self.conf.seed
+        if split == "train":
+            seed = seed + epoch
         if self.conf.views == 3:
-            return _TripletDataset(self.conf, split)
+            return _TripletDataset(self.conf, split, seed=seed)
         else:
-            return _PairDataset(self.conf, split)
+            return _PairDataset(self.conf, split, seed=seed)
 
 
 class _PairDataset(torch.utils.data.Dataset):
-    def __init__(self, conf, split, load_sample=True):
-        self.root = DATA_PATH / conf.data_dir
+    def __init__(self, conf, split, load_sample=True, seed: int | None = None):
+        self.root = settings.DATA_PATH / conf.data_dir
         assert self.root.exists(), self.root
         self.split = split
         self.conf = conf
+        self.seed = seed if seed is not None else conf.seed
 
         split_conf = conf[split + "_split"]
         if isinstance(split_conf, (str, Path)):
@@ -125,9 +128,9 @@ class _PairDataset(torch.utils.data.Dataset):
         scenes = sorted(set(scenes))
 
         if conf.load_features.do:
-            self.feature_loader = CacheLoader(conf.load_features)
+            self.feature_loader = cache_loader.CacheLoader(conf.load_features)
 
-        self.preprocessor = ImagePreprocessor(conf.preprocessing)
+        self.preprocessor = preprocess.ImagePreprocessor(conf.preprocessing)
 
         self.images = {}
         self.depths = {}
@@ -153,8 +156,9 @@ class _PairDataset(torch.utils.data.Dataset):
             self.intrinsics[scene] = info["intrinsics"]
             self.scenes.append(scene)
 
+        self.items = []
         if load_sample:
-            self.sample_new_items(conf.seed)
+            self.sample_new_items(self.seed)
             assert len(self.items) > 0
 
     def sample_new_items(self, seed):
@@ -198,7 +202,11 @@ class _PairDataset(torch.utils.data.Dataset):
                 ids = [(scene, i) for i in ids]
                 self.items.extend(ids)
         else:
-            for scene in self.scenes:
+            for scene in tqdm(
+                self.scenes,
+                desc="Sampling pairs",
+                disable=not self.conf.get("use_pbar", True),
+            ):
                 path = self.info_dir / (scene + ".npz")
                 assert path.exists(), path
                 info = np.load(str(path), allow_pickle=True)
@@ -230,6 +238,14 @@ class _PairDataset(torch.utils.data.Dataset):
                     for pairs_bin, keep in zip(pairs_all, has_enough_samples):
                         if keep:
                             pairs.append(sample_n(pairs_bin, num_per_bin_2, seed))
+                    if len(pairs) == 0:
+                        logger.warning(
+                            "No pairs found for scene %s with overlap in [%.2f, %.2f].",
+                            scene,
+                            self.conf.min_overlap,
+                            self.conf.max_overlap,
+                        )
+                        continue
                     pairs = np.concatenate(pairs, 0)
                 else:
                     pairs = (mat > self.conf.min_overlap) & (
@@ -257,7 +273,9 @@ class _PairDataset(torch.utils.data.Dataset):
 
         # read image
         if self.conf.read_image:
-            img = load_image(self.root / self.images[scene][idx], self.conf.grayscale)
+            img = preprocess.load_image(
+                self.root / self.images[scene][idx], self.conf.grayscale
+            )
         else:
             size = PIL.Image.open(path).size[::-1]
             img = torch.zeros(
@@ -270,11 +288,11 @@ class _PairDataset(torch.utils.data.Dataset):
                 self.root / self.conf.depth_subpath / scene / (path.stem + ".h5")
             )
             with h5py.File(str(depth_path), "r") as f:
-                depth = f["/depth"].__array__().astype(np.float32, copy=False)
-                depth = torch.Tensor(depth)[None]
-            assert depth.shape[-2:] == img.shape[-2:]
+                depth_map = f["/depth"].__array__().astype(np.float32, copy=False)
+                depth_map = torch.as_tensor(depth_map)[None]
+            assert depth_map.shape[-2:] == img.shape[-2:]
         else:
-            depth = None
+            depth_map = None
 
         # add random rotations
         do_rotate = self.conf.p_rotate > 0.0 and self.split == "train"
@@ -285,25 +303,25 @@ class _PairDataset(torch.utils.data.Dataset):
                 k = np.random.choice(2, 1, replace=False)[0] * 2 - 1
                 img = torch.rot90(img, k=-k, dims=[1, 2])
                 if self.conf.read_depth:
-                    depth = torch.rot90(depth, k=-k, dims=[1, 2]).clone()
-                K = rotate_intrinsics(K, img.shape, k + 2)
-                T = rotate_pose_inplane(T, k + 2)
+                    depth_map = torch.rot90(depth_map, k=-k, dims=[1, 2]).clone()
+                K = gtr.rotate_intrinsics(K, img.shape, k + 2)
+                T = gtr.rotate_pose_inplane(T, k + 2)
 
         name = path.name
 
         data = self.preprocessor(img)
-        if depth is not None:
-            data["depth"] = self.preprocessor(depth, interpolation="nearest")["image"][
-                0
-            ]
-        K = scale_intrinsics(K, data["scales"])
+        if depth_map is not None:
+            data["depth"] = self.preprocessor(depth_map, interpolation="nearest")[
+                "image"
+            ][0]
+        K = gtr.scale_intrinsics(K, data["scales"])
 
         data = {
             "name": name,
             "scene": scene,
-            "T_w2cam": Pose.from_4x4mat(T),
-            "depth": depth,
-            "camera": Camera.from_calibration_matrix(K).float(),
+            "T_w2cam": reconstruction.Pose.from_4x4mat(T),
+            "depth": depth_map,
+            "camera": reconstruction.Camera.from_calibration_matrix(K).float(),
             **data,
         }
 
@@ -330,7 +348,7 @@ class _PairDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         if self.conf.reseed:
-            with fork_rng(self.conf.seed + idx, False):
+            with tools.fork_rng(self.seed + idx, False):
                 return self.getitem(idx)
         else:
             return self.getitem(idx)
@@ -373,7 +391,9 @@ class _TripletDataset(_PairDataset):
             if Path(self.conf[split + "_pairs"]).exists():
                 pairs_path = Path(self.conf[split + "_pairs"])
             else:
-                pairs_path = DATA_PATH / "configs" / self.conf[split + "_pairs"]
+                pairs_path = (
+                    settings.DATA_PATH / "configs" / self.conf[split + "_pairs"]
+                )
             for line in pairs_path.read_text().rstrip("\n").split("\n"):
                 im0, im1, im2 = line.split(" ")
                 assert im0[:4] == im1[:4]
@@ -473,13 +493,21 @@ def visualize(args):
         "num_workers": 0,
         "prefetch_factor": None,
         "val_num_per_scene": None,
+        # "depth_subpath": "depth_processed/",
     }
+    from ..visualization import viz2d
+
     conf = OmegaConf.merge(conf, OmegaConf.from_cli(args.dotlist))
     dataset = MegaDepth(conf)
     loader = dataset.get_data_loader(args.split)
-    logger.info("The dataset has elements.", len(loader))
+    # logger.info("The dataset has %d elements.", len(loader))
 
-    with fork_rng(seed=dataset.conf.seed):
+    # train_iter = iter(loader)
+    # for _ in tqdm(range(100), smoothing=0.0):
+    #     data = next(train_iter)
+    # exit()
+
+    with tools.fork_rng(seed=dataset.conf.seed):
         images, depths = [], []
         for _, data in zip(range(args.num_items), loader):
             images.append(
@@ -492,10 +520,11 @@ def visualize(args):
                 [data[f"view{i}"]["depth"][0] for i in range(dataset.conf.views)]
             )
 
-    axes = plot_image_grid(images, dpi=args.dpi)
+    axes = viz2d.plot_image_grid(images, dpi=args.dpi)
     for i in range(len(images)):
-        plot_heatmaps(depths[i], axes=axes[i])
+        viz2d.plot_heatmaps(depths[i], axes=axes[i])
     plt.show()
+    plt.savefig("megadepth.png")
 
 
 if __name__ == "__main__":
