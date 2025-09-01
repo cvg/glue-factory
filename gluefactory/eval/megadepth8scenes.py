@@ -1,4 +1,5 @@
-"""Evaluation on the Megadepth-8-Scenes split, proposed by Edstedt et al, CVPR 2023 (DKM)."""
+"""Evaluation on the Megadepth-8-Scenes split.
+Proposed by Edstedt et al, CVPR 2023 (DKM)."""
 
 import logging
 import zipfile

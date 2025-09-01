@@ -119,14 +119,13 @@ def square_pad(
     """zero pad images to size x size"""
     h, w = image.shape[-2:]
     ox, oy = 0, 0
-    l = max(h, w)
+    hw = max(h, w)
     padded = torch.zeros(
-        *image.shape[:-2], l, l, device=image.device, dtype=image.dtype
+        *image.shape[:-2], hw, hw, device=image.device, dtype=image.dtype
     )
     if center:
-        ox, oy = (l - w) // 2, (l - h) // 2
+        ox, oy = (hw - w) // 2, (hw - h) // 2
         padded[..., oy : oy + h, ox : ox + w] = image
-        corners_hw = [[oy, ox], [oy + h, ox + w]]
     else:
         ox, oy = 0, 0
         padded[..., :h, :w] = image

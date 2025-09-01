@@ -1,5 +1,4 @@
-"""
-Air-Ground Evaluation proposed in RDD.
+"""Air-Ground Evaluation proposed in RDD.  # noqa: E501
 
 Source: https://github.com/xtcpete/rdd
 Paper: RDD: Robust Feature Detector and Descriptor using Deformable Transformer
@@ -59,7 +58,7 @@ class RDDAirGroundBenchmark(ScanNet1500Pipeline):
         if not (DATA_PATH / "air_ground").exists():
             logger.info("Please manually download the air_ground dataset from RDD:")
             logger.info(
-                "https://drive.google.com/drive/folders/1byc8JAxatpOyjO3CGa0r5Q00-RC-1dzR",
+                "https://drive.google.com/drive/folders/1byc8JAxatpOyjO3CGa0r5Q00-RC-1dzR",  # noqa: E501
             )
             logger.info("Target format: data/air_ground/*")
 

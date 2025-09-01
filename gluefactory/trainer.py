@@ -20,7 +20,7 @@ from gluefactory import datasets, models
 from gluefactory.models import BaseModel
 from gluefactory.utils import experiments, misc, tools
 
-from . import __module_name__, eval, logger, settings
+from . import eval, logger, settings
 
 Args: TypeAlias = DictConfig
 Batch: TypeAlias = Any
@@ -132,9 +132,9 @@ class Trainer:
         "submodules": [],
         "mixed_precision": None,
         "num_devices": 0,  # 0 means sequential.
-        "compile": None,  # Compilation mode for the model. [None, default, reduce-overhead]
-        "profile": None,  # Profile the training with PyTorch profiler (number of steps to profile)
-        "record_memory": None,  # Record memory usage during training (number of steps to record)
+        "compile": None,  # Compilation mode for the model. [None, default, ...]
+        "profile": None,  # Profile the training with PyTorch profiler (# prof steps)
+        "record_memory": None,  # Record memory usage during training (# record steps)
         "log_it": False,  # Log tensorboard on iteration (default is num_samples)
         "detect_anomaly": False,  # Enable anomaly detection
         "run_benchmarks": (),
@@ -522,7 +522,7 @@ class Trainer:
             self.step_timer.measure("loss_fn")
 
             if torch.isnan(loss).any():
-                logger.warning(f"Detected NAN, skipping iteration..")
+                logger.warning("Detected NAN, skipping iteration..")
                 del pred, data, loss, losses
                 return
 
@@ -724,7 +724,7 @@ class Trainer:
 
             # Re-seed epoch
             tools.set_seed(self.conf.seed + self.epoch)
-            self.info(f"Setting up data loader")
+            self.info("Setting up data loader")
 
             if self.conf.lr_schedule.on_epoch and self.epoch > 0:
                 self.learning_rate_step(verbose=True)
@@ -735,7 +735,7 @@ class Trainer:
             )
             self.info(f"Training loader has {len(train_loader)} batches")
 
-            self.info(f"Start training")
+            self.info("Start training")
             self.train_epoch(output_dir, train_loader, writer)
             del train_loader  # shutdown multiprocessing pool
 
@@ -771,7 +771,7 @@ def scale_by_device_count(
         data_conf.batch_size = int(data_conf.batch_size / num_gpus)
 
     logger.info(
-        f"Batch size: global={data_conf.batch_size * num_gpus}, per-device={data_conf.batch_size}"
+        f"Batch size: global={data_conf.batch_size * num_gpus}, per-device={data_conf.batch_size}"  # noqa: E501
     )
     if "train_batch_size" in data_conf and not batch_size_per_gpu:
         data_conf.train_batch_size = int(data_conf.train_batch_size / num_gpus)

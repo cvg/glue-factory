@@ -31,7 +31,7 @@ class MegaDepth1500Pipeline(eval_pipeline.EvalPipeline):
             "preprocessing": {
                 "side": "long",
             },
-            "num_workers": 14,
+            "num_workers": 4,
         },
         "model": {
             "ground_truth": {
