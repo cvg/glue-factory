@@ -36,6 +36,14 @@ def batch_to_device(batch, device, non_blocking=True):
     return map_tensor(batch, _func)
 
 
+def grad_norm(params):
+    return torch.nn.utils.get_total_norm([p.grad for p in params if p.grad is not None])
+
+
+def param_norm(params):
+    return torch.nn.utils.get_total_norm([p for p in params if p.requires_grad])
+
+
 def rbd(data: dict) -> dict:
     """Remove batch dimension from elements in data"""
     return {

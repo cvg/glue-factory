@@ -1,19 +1,24 @@
+"""
+A generic, flexible trainer.
+
+Author: Philipp Lindenberger
+"""
+
 import collections
-import logging
-import shutil
 import signal
 from pathlib import Path
-from typing import Any, Sequence, TypeAlias
+from typing import Any, TypeAlias
 
+import numpy as np
 import torch
 import torch.distributed as dist
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 
 from gluefactory import datasets, models
 from gluefactory.models import BaseModel
-from gluefactory.train import default_train_conf, grad_norm, param_norm, run_evaluation
-from gluefactory.utils import experiments, misc, stdout_capturing, tools, types
+from gluefactory.utils import experiments, misc, tools
 
 from . import __module_name__, eval, logger, settings
 
@@ -24,6 +29,65 @@ LossMetrics: TypeAlias = dict[str, torch.Tensor]
 Writer: TypeAlias = SummaryWriter | None
 
 
+@torch.no_grad()
+def run_evaluation(
+    model: BaseModel | torch.nn.parallel.DistributedDataParallel,
+    loader: torch.utils.data.DataLoader,
+    device: torch.device,
+    conf: DictConfig,
+    rank: int = 0,
+    pbar: bool = True,
+    max_iters: int | None = None,
+) -> tuple[Any, ...]:
+    model.eval()
+    model = (
+        model.module
+        if isinstance(model, torch.nn.parallel.DistributedDataParallel)
+        else model
+    )  # Get the original model
+    results = {}
+    pr_metrics = collections.defaultdict(tools.PRMetric)
+    figures = []
+    plot_ids = np.random.choice(
+        len(loader), min(len(loader), conf.num_eval_plots), replace=False
+    )
+    max_iters = max_iters or len(loader)
+    for i, data in enumerate(
+        tqdm(loader, desc="Evaluation", ascii=True, disable=not pbar)
+    ):
+        if i >= max_iters:
+            break
+        data = misc.batch_to_device(data, device, non_blocking=True)
+        with torch.no_grad():
+            pred = model(data)
+            losses, metrics = model.loss(pred, data)
+            if i in plot_ids:
+                figures.append(model.visualize(pred, data))
+            # add PR curves
+            for k, labels_preds in model.pr_metrics(pred, data).items():
+                pr_metrics[k].update(*labels_preds)
+        del pred, data
+        numbers = {**metrics, **{"loss/" + k: v for k, v in losses.items()}}
+        for k, v in numbers.items():
+            if k not in results:
+                results[k] = tools.AverageMetric()
+                if k in conf.median_metrics:
+                    results[k + "_median"] = tools.MedianMetric()
+                if k in conf.recall_metrics.keys():
+                    q = conf.recall_metrics[k]
+                    results[k + f"_recall{int(q)}"] = tools.RecallMetric(q)
+            results[k].update(v)
+            if k in conf.median_metrics:
+                results[k + "_median"].update(v)
+            if k in conf.recall_metrics.keys():
+                q = conf.recall_metrics[k]
+                results[k + f"_recall{int(q)}"].update(v)
+        del numbers
+    results = {k: results[k].compute() for k in results}
+    pr_metrics = {k: v.compute() for k, v in pr_metrics.items()}
+    return results, pr_metrics, figures
+
+
 class Trainer:
     """
     Trainer class for managing the training process.
@@ -31,7 +95,50 @@ class Trainer:
     Maintains model, params and training state (optim, step, ...)
     """
 
-    default_conf = default_train_conf
+    default_conf = {
+        "seed": "???",  # training seed
+        "epochs": 1,  # number of epochs
+        "optimizer": "adam",  # name of optimizer in [adam, sgd, rmsprop]
+        "opt_regexp": None,  # regular expression to filter parameters to optimize
+        "optimizer_options": {},  # optional arguments passed to the optimizer
+        "lr": 0.001,  # learning rate
+        "lr_schedule": {
+            "type": None,  # string in {factor, exp, member of torch.optim.lr_scheduler}
+            "start": 0,
+            "exp_div_10": 0,
+            "on_epoch": False,
+            "factor": 1.0,
+            "options": {},  # add lr_scheduler arguments here
+        },
+        "lr_scaling": [(100, ["dampingnet.const"])],
+        "eval_every_iter": 1000,  # interval for evaluation on the validation set
+        "eval_every_epoch": None,  # interval for evaluation on the validation set
+        "benchmark_every_epoch": 1,  # interval for evaluation on the test benchmarks
+        "save_every_iter": 5000,  # interval for saving the current checkpoint
+        "log_every_iter": 200,  # interval for logging the loss to the console
+        "log_grad_every_iter": None,  # interval for logging gradient hists
+        "test_every_epoch": 1,  # interval for evaluation on the test benchmarks
+        "keep_last_checkpoints": 3,  # keep only the last X checkpoints
+        "load_experiment": None,  # initialize the model from a previous experiment
+        "median_metrics": [],  # add the median of some metrics
+        "recall_metrics": {},  # add the recall of some metrics
+        "best_key": "loss/total",  # key to use to select the best checkpoint
+        "dataset_callback_fn": None,  # data func called at the start of each epoch
+        "dataset_callback_on_val": False,  # call data func on val data?
+        "clip_grad": None,
+        "pr_curves": {},  # add pr curves, set labels/predictions/mask keys
+        "num_eval_plots": 4,  # Number of plots to show during evaluation (0=skip)
+        "plot_every_iter": None,  # plot figures every X iterations
+        "submodules": [],
+        "mixed_precision": None,
+        "num_devices": 0,  # 0 means sequential.
+        "compile": None,  # Compilation mode for the model. [None, default, reduce-overhead]
+        "profile": None,  # Profile the training with PyTorch profiler (number of steps to profile)
+        "record_memory": None,  # Record memory usage during training (number of steps to record)
+        "log_it": False,  # Log tensorboard on iteration (default is num_samples)
+        "detect_anomaly": False,  # Enable anomaly detection
+        "run_benchmarks": (),
+    }
 
     def __init__(
         self,
@@ -42,10 +149,16 @@ class Trainer:
         device: torch.device | str | None = None,
     ):
         # Initialize conf, model, optimizer and LR
+        self.default_conf = OmegaConf.create(self.default_conf)
         self.conf = OmegaConf.merge(self.default_conf, conf)
         self.model = model
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
+
+        # Setup distributed
+        self.distributed = conf.num_devices > 0
+        self.num_gpus = conf.num_devices or 1
+
         # Initialize rank and device
         if self.distributed:
             assert dist.is_initialized(), "Torch Distributed not initialized"
@@ -63,10 +176,6 @@ class Trainer:
         # Initialize model params and conf
         self.all_params = self.model.parameters()
         self.model_conf = self.model.conf
-
-        # Setup distributed
-        self.distributed = conf.num_devices > 0
-        self.num_gpus = conf.num_devices or 1
 
         # Setup scaler and dtype
         self.use_mp = self.setup_dtype_scaler(conf.mixed_precision)
@@ -157,7 +266,7 @@ class Trainer:
             self.optimizer.load_state_dict(checkpoint["optimizer"])
             if "lr_scheduler" in checkpoint:
                 self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
-            self.epoch = checkpoint["epoch"] + 1
+            self.epoch = checkpoint["epoch"]
 
     def maybe_load_checkpoint(self):
         if self.conf.load_experiment:
@@ -195,13 +304,21 @@ class Trainer:
     # Setup helper functions (internal)
     # ------------------------------------------------------------------------
 
-    def log(self, pattern: str, *args, **kwargs):
+    def info(self, pattern: str, *args, **kwargs):
         if self.rank == 0:
             logger.info(pattern, *args, **kwargs)
 
     def warn(self, pattern: str, *args, **kwargs):
         if self.rank == 0:
             logger.warning(pattern, *args, **kwargs)
+
+    def learning_rate_step(self, verbose: bool = False):
+        old_lr = self.optimizer.param_groups[0]["lr"]
+        self.lr_scheduler.step()
+        if verbose:
+            self.info(
+                f'lr changed from {old_lr} to {self.optimizer.param_groups[0]["lr"]}'
+            )
 
     def setup_sigint_handler(self):
         def sigint_handler(signal, frame):
@@ -271,7 +388,7 @@ class Trainer:
             if hasattr(torch.amp, "GradScaler")
             else torch.cuda.amp.GradScaler(enabled=use_mp)
         )
-        logger.info(f"Training with mixed_precision={mixed_precision}")
+        self.info(f"Training with mixed_precision={mixed_precision}")
 
         self.dtype = {
             "float16": torch.float16,
@@ -299,8 +416,9 @@ class Trainer:
 
     def log_train(self, writer: Writer, it: int, train_loss_metrics: LossMetrics):
         tot_n_samples = self.current_it
-        writer.add_scalar("l2/param_norm", param_norm(self.all_params), tot_n_samples)
-        writer.add_scalar("l2/grad_norm", grad_norm(self.all_params), tot_n_samples)
+        all_params = self.all_params
+        writer.add_scalar("l2/param_norm", misc.param_norm(all_params), tot_n_samples)
+        writer.add_scalar("l2/grad_norm", misc.grad_norm(all_params), tot_n_samples)
         loss_metrics = {k: v.compute() for k, v in train_loss_metrics.items()}
         str_loss_metrics = [f"{k} {v:.3E}" for k, v in loss_metrics.items()]
         # Write training losses
@@ -482,6 +600,9 @@ class Trainer:
                     f"Reached max iters {max_iters}, stopping epoch {self.epoch}."
                 )
                 break
+            if self.conf.lr_schedule.on_epoch and self.epoch > 0:
+                self.learning_rate_step(verbose=True)
+
             data = next(train_iter)
             self.step_timer.measure("data")
             self.tot_n_samples += dataloader.batch_size * self.num_gpus
@@ -527,9 +648,13 @@ class Trainer:
         # if self.distributed:
         #     dist.barrier()
 
-    def eval_loop(self, output_dir: Path, loader: torch.utils.data.DataLoader):
+    def eval_loop(
+        self,
+        output_dir: Path,
+        loader: torch.utils.data.DataLoader,
+        max_iters: int | None = None,
+    ):
         """Run evaluation loop."""
-        # @TODO: make native
         self.model.eval()
         with torch.no_grad():
             with tools.fork_rng(seed=self.conf.seed):
@@ -540,6 +665,7 @@ class Trainer:
                     self.conf,
                     self.rank,
                     pbar=(self.rank == 0),
+                    max_iters=max_iters,
                 )
         return results, pr_metrics, figures
 
@@ -553,13 +679,19 @@ class Trainer:
         """Interface for test loop."""
         logger.info(f"Running eval on {benchmark_name}")
         with torch.no_grad():
+            eval_dir = output_dir / f"test_{self.epoch}" / benchmark_name
             with tools.fork_rng(seed=self.conf.seed):
                 summaries, figures, _ = eval.run_benchmark(
                     benchmark_name,
                     benchmark_conf,
-                    output_dir / str(self.epoch) / benchmark_name,
+                    eval_dir,
                     self.model.eval(),
                 )
+            # Create symlink to eval_dir at head
+            symlink_dir = output_dir / benchmark_name
+            symlink_dir.unlink(missing_ok=True)
+            symlink_dir.symlink_to(eval_dir)
+        # TODO: Cleanup? Maybe not so necessary
         str_summaries = [
             f"{k} {v:.3E}" for k, v in summaries.items() if isinstance(v, float)
         ]
@@ -591,19 +723,21 @@ class Trainer:
 
         # Start Loop
         while self.epoch < self.conf.epochs:
-            self.log(f"Starting epoch {self.epoch}")
+            self.info(f"Starting epoch {self.epoch}")
 
             # Re-seed epoch
             tools.set_seed(self.conf.seed + self.epoch)
-            self.log(f"Setting up data loader")
+            self.info(f"Setting up data loader")
 
             # Create data loader
             train_loader = dataset.get_data_loader(
-                "train", distributed=self.distributed
+                "train", distributed=self.distributed, epoch=self.epoch
             )
+            self.info(f"Training loader has {len(train_loader)} batches")
 
-            self.log(f"Start training")
+            self.info(f"Start training")
             self.train_epoch(output_dir, train_loader, writer)
+            del train_loader  # shutdown multiprocessing pool
 
             self.epoch += 1
             # Checkpointing
@@ -612,52 +746,42 @@ class Trainer:
             if self.conf.eval_every_epoch:
                 if self.epoch % self.conf.eval_every_epoch == 0:
                     val_loader = dataset.get_data_loader("val")
+                    self.info(f"Validation loader has {len(val_loader)} batches")
                     eval_results = self.eval_loop(output_dir, val_loader)
                     self.log_eval(writer, 0, eval_results)
 
             # Run test loops
             for bench_name, (bench_conf, every_epoch) in self.benchmarks.items():
-                if self.epoch % every_epoch == 0:
+                if self.epoch % every_epoch == 0 and self.rank == 0:
+                    # TODO: Make benchmarks distributed!
                     self.test_loop(output_dir, bench_name, bench_conf, writer)
 
 
-def init_process(output_dir, rank: int, world_size: int):
-    assert torch.cuda.is_available(), "Distributed training requires CUDA"
-    logger.info(f"Training in distributed mode with {world_size} GPUs")
-    device = rank
-    torch.distributed.init_process_group(
-        backend="nccl",
-        world_size=world_size,
-        rank=rank,
-        init_method="file://" + str(output_dir / "distributed_lock"),
-    )
-    torch.cuda.set_device(device)
-    return device
-
-
-def scale_by_device_count(data_conf: DictConfig, num_gpus: int):
+def scale_by_device_count(
+    data_conf: DictConfig, num_gpus: int, batch_size_per_gpu: bool | None = None
+) -> DictConfig:
     """Scale data conf by device count (Maybe)."""
-    if data_conf.get("scale_batch_size_by_device_count", False):
-        logger.info(
-            f"Batch size: global={data_conf.batch_size * num_gpus}, per-device={data_conf.batch_size}"
-        )
-        return data_conf
-
+    batch_size_per_gpu = (
+        batch_size_per_gpu
+        if batch_size_per_gpu is not None
+        else data_conf.get("batch_size_per_gpu", False)
+    )
     # adjust batch size and num of workers since these are per GPU
-    if "batch_size" in data_conf:
+    if "batch_size" in data_conf and not batch_size_per_gpu:
         data_conf.batch_size = int(data_conf.batch_size / num_gpus)
 
-        logger.info(
-            f"Batch size: global={data_conf.batch_size * num_gpus}, per-device={data_conf.batch_size}"
-        )
-    if "train_batch_size" in data_conf:
+    logger.info(
+        f"Batch size: global={data_conf.batch_size * num_gpus}, per-device={data_conf.batch_size}"
+    )
+    if "train_batch_size" in data_conf and not batch_size_per_gpu:
         data_conf.train_batch_size = int(data_conf.train_batch_size / num_gpus)
     if "num_workers" in data_conf:
+        # We always scale the workers
         data_conf.num_workers = int((data_conf.num_workers + num_gpus - 1) / num_gpus)
     return data_conf
 
 
-def launch_train(output_dir, conf, device: torch.device):  # 0 means non-distributed
+def launch_training(output_dir: Path, conf: DictConfig, device: torch.device):
     tools.set_seed(conf.train.seed)
     dataset = datasets.get_dataset(conf.data.name)(
         scale_by_device_count(conf.data, conf.train.num_devices or 1)
@@ -665,12 +789,12 @@ def launch_train(output_dir, conf, device: torch.device):  # 0 means non-distrib
     model = models.get_model(conf.model.name)(conf.model).to(device)
     if conf.get("lazy_init", True):
         logger.info("Running dummy forward pass to initialize lazy modules.")
-        dummy_batch = next(iter(dataset.get_data_loader("val")))
-        logger.info("TODO: Add function:  base_dataset.get_dummy_batch")
+        dummy_batch = dataset.get_dummy_batch()
         dummy_batch = misc.batch_to_device(dummy_batch, device, non_blocking=False)
         with torch.no_grad():
             model(dummy_batch)
         del dummy_batch
+        logger.info("Dummy forward pass completed.")
     trainer = Trainer.init(conf.train, model, device=device)
     # Register benchmarks (e.g. MegaDepth1500)
     for bench in conf.train.get("run_benchmarks", ()):
@@ -683,112 +807,3 @@ def launch_train(output_dir, conf, device: torch.device):  # 0 means non-distrib
 
     # Run actual training loop
     trainer.train_loop(output_dir, dataset)
-
-
-def main_worker(rank, conf, output_dir, args):
-    distributed = conf.train.num_devices > 0
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    if distributed:
-        device = init_process(output_dir, rank, conf.train.num_devices)
-    if rank == 0:
-        with stdout_capturing.capture_outputs(
-            output_dir / "log.txt", cleanup_interval=args.cleanup_interval
-        ):
-            res = launch_train(output_dir, conf, device)
-    else:
-        res = launch_train(output_dir, conf, device)
-
-    if distributed:
-        # dist.barrier()
-        dist.destroy_process_group()
-    return res
-
-
-def create_training_dir(experiment_name: str, args):
-    import shutil
-
-    output_dir = settings.TRAINING_PATH / experiment_name
-    if args.ablate:
-        subdirs = [int(p.stem) for p in output_dir.glob("*/") if p.stem.isdigit()]
-        ablate_id = max(subdirs, default=-1) + 1
-        output_dir = output_dir / str(ablate_id)
-        logger.info(f"Creating ablation folder {output_dir}")
-    # Setup output directory
-    exist_ok = args.restore or args.overwrite or args.clean
-    if output_dir.exists() and not exist_ok:
-        raise FileExistsError(
-            f"Output directory {output_dir} already exists. "
-            "Use --restore to continue training or --overwrite to delete it."
-        )
-    if output_dir.exists() and args.clean:
-        logger.info(f"Cleaning output directory {output_dir}")
-        shutil.rmtree(output_dir, ignore_errors=True)
-    output_dir.mkdir(exist_ok=exist_ok, parents=True)
-    logger.info(f"Output directory: {output_dir}")
-    return output_dir
-
-
-def compose_cli_config(output_dir: Path, args):
-    conf = OmegaConf.from_cli(args.dotlist)
-    OmegaConf.save(conf, str(output_dir / "cli_config.yaml"))
-    if args.conf:
-        conf_path, raw_conf = experiments.compose_config(args.conf)
-        OmegaConf.set_struct(raw_conf, args.strict)
-        conf = OmegaConf.merge(raw_conf, conf)
-        # Copy a more readable config file to the output dir
-        shutil.copy(conf_path, output_dir / "raw_config.yaml")
-    elif args.restore:
-        restore_conf = OmegaConf.load(output_dir / "config.yaml")
-        conf = OmegaConf.merge(restore_conf, conf)
-        conf.train.load_experiment = args.experiment
-        conf.train.load_state = True
-    if not args.restore:
-        if conf.train.seed is None:
-            conf.train.seed = torch.initial_seed() & (2**32 - 1)
-    OmegaConf.save(conf, str(output_dir / "config.yaml"))
-    return conf
-
-
-def save_code_snapshot(
-    output_dir: Path,
-    extra_module_names: Sequence[str] = (),
-    compression: str | None = "zip",
-):
-    """Create a snapshot of the codebase."""
-    for module in [__module_name__] + list(extra_module_names):
-        mod_dir = Path(__import__(str(module)).__file__).parent
-        if compression:
-            shutil.make_archive(output_dir / module, compression, mod_dir)
-        else:
-            shutil.copytree(mod_dir, output_dir / module, dirs_exist_ok=True)
-
-
-if __name__ == "__main__":
-    # Start actual training
-    from .train import parse_args
-
-    args = parse_args()
-    output_dir = create_training_dir(args.experiment, args)
-    conf = compose_cli_config(output_dir, args)
-    conf.train.num_devices = conf.train.get("num_devices", 0)
-
-    save_code_snapshot(
-        output_dir,
-        conf.train.get("submodules", ()),
-        compression=args.compress_snapshot,
-    )
-
-    # Start actual training
-    if args.distributed and conf.train.num_devices < 1:
-        conf.train.num_devices = torch.cuda.device_count()
-
-    if conf.train.num_devices > 0:
-        assert torch.cuda.is_available(), "Distributed training requires CUDA"
-        args.lock_file = output_dir / "distributed_lock"
-        if args.lock_file.exists():
-            args.lock_file.unlink()
-        torch.multiprocessing.spawn(
-            main_worker, nprocs=conf.train.num_devices, args=(conf, output_dir, args)
-        )
-    else:
-        main_worker(0, conf, output_dir, args)
