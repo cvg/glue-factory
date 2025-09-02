@@ -157,6 +157,7 @@ class ZEBPairs(BaseDataset, torch.utils.data.Dataset):
         return data
 
     def __len__(self):
+        return 100
         return len(self.items)
 
 

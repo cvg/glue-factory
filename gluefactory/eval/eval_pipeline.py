@@ -1,16 +1,18 @@
 import collections
+import functools
 import json
 import logging
 from typing import Any, Callable, Iterable, Sequence
 
 import h5py
 import numpy as np
+from joblib import Parallel, delayed
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from .. import datasets
 from ..models.cache_loader import CacheLoader
-from ..utils import export
+from ..utils import export, misc
 from ..visualization import viz2d
 from . import io, utils
 
@@ -147,8 +149,9 @@ class RelativePosePipeline(EvalPipeline):
             }
         },
         "eval": {
-            "estimator": "poselib",
+            "estimator": ["poselib", "opencv"],
             "ransac_th": -1.0,  # -1 runs a bunch of thresholds and selects the best
+            "n_processes": None,  # 0 is sequential
         },
     }
 
@@ -166,6 +169,14 @@ class RelativePosePipeline(EvalPipeline):
 
     # Add custom evals here (dataset specific)
     eval_hooks: Sequence[Callable[[Any, Any], dict[str, float]]] = ()
+
+    def __init__(self, conf):
+        """Assumes"""
+        self.default_conf = OmegaConf.create(self.default_conf)
+        self.conf = OmegaConf.merge(
+            RelativePosePipeline.default_conf, self.default_conf, conf
+        )
+        self._init(self.conf)
 
     def _init(self, conf):
         raise NotImplementedError("Add download instructions here")
@@ -192,30 +203,58 @@ class RelativePosePipeline(EvalPipeline):
             )
         return pred_file
 
-    def run_eval(self, loader, pred_file):
-        """Run the eval on cached predictions"""
+    def load_evaluate_relative_pose(self, cache_loader: CacheLoader, data):
+        pred = cache_loader(data)
+        pose_results = self.evaluate_relative_pose(data, pred)
+        pose_results["names"] = data["name"][0]
+        return pose_results
+
+    def evaluate_relative_pose(
+        self,
+        data: dict[str, Any],
+        pred: dict[str, Any],
+    ):
         conf = self.conf.eval
-        results = collections.defaultdict(list)
         test_thresholds = (
             ([conf.ransac_th] if conf.ransac_th > 0 else [0.5, 1.0, 1.5, 2.0, 2.5, 3.0])
             if not isinstance(conf.ransac_th, Iterable)
             else conf.ransac_th
         )
-        pose_results = collections.defaultdict(lambda: collections.defaultdict(list))
+        pose_results_i = collections.defaultdict(dict)
+        estimators = (
+            [conf.estimator] if isinstance(conf.estimator, str) else conf.estimator
+        )
+        for estimator in estimators:
+            for th in test_thresholds:
+                pose_results_i[estimator][th] = utils.eval_relative_pose_robust(
+                    data,
+                    pred,
+                    {"estimator": estimator, "ransac_th": th},
+                )
+        return dict(pose_results_i)
+
+    def run_eval(self, loader, pred_file):
+        """Run the eval on cached predictions"""
+        conf = self.conf.eval
+        results = collections.defaultdict(list)
         cache_loader = CacheLoader({"path": str(pred_file), "collate": None}).eval()
-        for i, data in enumerate(tqdm(loader)):
+
+        # Run relative pose estimation in parallel
+        if conf.n_processes != 0:
+            pose_results = misc.pmap(
+                functools.partial(self.load_evaluate_relative_pose, cache_loader),
+                tqdm(loader, desc="Pose Estimation: "),
+            )
+        else:
+            pose_results = []
+
+        results = []
+        for i, data in enumerate(tqdm(loader, desc="Evaluation: ")):
             pred = cache_loader(data)
             # add custom evaluations here
             results_i = utils.eval_matches_epipolar(data, pred)
             if "depth" in data["view0"].keys():
                 results_i.update(utils.eval_matches_depth(data, pred))
-            for th in test_thresholds:
-                pose_results_i = utils.eval_relative_pose_robust(
-                    data,
-                    pred,
-                    {"estimator": conf.estimator, "ransac_th": th},
-                )
-                [pose_results[th][k].append(v) for k, v in pose_results_i.items()]
 
             for eval_hook in self.eval_hooks:
                 results_i.update(eval_hook(data, pred))
@@ -228,8 +267,23 @@ class RelativePosePipeline(EvalPipeline):
             if "overlap" in data.keys():
                 results_i["overlap"] = data["overlap"][0].item()
 
-            for k, v in results_i.items():
-                results[k].append(v)
+            if conf.n_processes == 0:
+                pose_results.append(self.evaluate_relative_pose(data, pred))
+            results.append(results_i)
+
+        results = misc.pack_tree(results)
+        pose_results = misc.pack_tree(pose_results, sep=None)
+
+        # Fix the order to be consistent (usually a no-op, but better safe)
+        pose_names = pose_results.pop("names")
+        if pose_names is not None:
+            reorder = [results["names"].index(pname) for pname in pose_names]
+            pose_results = misc.flat_map(
+                pose_results,
+                lambda k, v: [v[i] for i in reorder],
+                sep=None,
+                unflatten=True,
+            )
 
         # summarize results as a dict[str, float]
         # you can also add your custom evaluations here
@@ -240,22 +294,40 @@ class RelativePosePipeline(EvalPipeline):
                 continue
             summaries[f"m{k}"] = round(np.mean(arr), 3)
 
-        best_pose_results, best_th = utils.eval_poses(
-            pose_results, auc_ths=[5, 10, 20], key="rel_pose_error"
-        )
-        results = {**results, **pose_results[best_th]}
-        summaries = {
-            **summaries,
-            **best_pose_results,
-        }
+        best_pose = {}
+        for estimator, pose_results_e in pose_results.items():
+            prefix = f"est_{estimator}:"
+            best_summary_e, best_th = utils.eval_poses(
+                pose_results_e, auc_ths=[5, 10, 20], key="rel_pose_error"
+            )
+            results = {
+                **results,
+                **misc.add_prefix(pose_results_e[best_th], prefix),
+            }
+            best_pose[best_summary_e["rel_pose_error_mAA"]] = (
+                best_summary_e,
+                pose_results_e[best_th],
+            )
+            if len(pose_results) > 1:
+                summaries = {
+                    **summaries,
+                    **{
+                        f"est_{estimator}:{k}": v
+                        for k, v in best_summary_e.items()
+                        if k.startswith("rel_pose_error")
+                    },
+                }
+
+        best_pose_summary, best_pose_results = best_pose[max(best_pose.keys())]
+        summaries = {**summaries, **best_pose_summary}
+        results = {**results, **best_pose_results}
 
         figures = {
             "pose_recall": viz2d.plot_cumulative(
-                {self.conf.eval.estimator: results["rel_pose_error"]},
+                {est: results[f"est_{est}:rel_pose_error"] for est in pose_results},
                 [0, 30],
                 unit="°",
                 title="Pose ",
             )
         }
-
         return summaries, figures, results

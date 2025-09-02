@@ -192,7 +192,7 @@ def eval_relative_pose_robust(data, pred, conf):
         t_error, r_error = M.angular_drdt(T_gt[0])
         results["rel_pose_error"] = max(r_error, t_error)
         results["ransac_inl"] = np.sum(inl)
-        results["ransac_inl%"] = np.mean(inl)
+        results["ransac_inl%"] = np.mean(inl) if len(inl) > 0 else 0.0
 
     return results
 
@@ -268,7 +268,7 @@ def eval_homography_dlt(data, pred):
     return results
 
 
-def eval_poses(pose_results, auc_ths, key, unit="°"):
+def eval_poses(pose_results, auc_ths, key, unit="°", estimator=""):
     pose_aucs = {}
     best_th = -1
     for th, results_i in pose_results.items():
@@ -277,7 +277,7 @@ def eval_poses(pose_results, auc_ths, key, unit="°"):
     best_th = max(mAAs, key=mAAs.get)
 
     if len(pose_aucs) > -1:
-        print("Tested ransac setup with following results:")
+        print(f"Tested {estimator} ransac setup with following results:")
         print("AUC", pose_aucs)
         print("mAA", mAAs)
         print("best threshold =", best_th)

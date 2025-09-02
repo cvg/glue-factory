@@ -34,10 +34,7 @@ class Megadepth8ScenesPipeline(RelativePosePipeline):
                 "name": None,  # remove gt matches
             }
         },
-        "eval": {
-            "estimator": "poselib",
-            "ransac_th": -1.0,  # -1 runs a bunch of thresholds and selects the best
-        },
+        "eval": RelativePosePipeline.default_conf["eval"],
     }
 
     def _init(self, conf):

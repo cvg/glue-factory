@@ -33,10 +33,6 @@ class ETH3DPairsPipeline(RelativePosePipeline):
                 "name": None,  # remove gt matches
             }
         },
-        "eval": {
-            "estimator": "opencv",
-            "ransac_th": 1.0,  # -1 runs a bunch of thresholds and selects the best
-        },
     }
 
     def _init(self, conf):

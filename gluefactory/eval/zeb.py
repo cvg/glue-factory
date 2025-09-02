@@ -25,6 +25,7 @@ class ZeroshotEvaluationBenchmarkPipeline(RelativePosePipeline):
             "scene_list": None,
             "root": "zeb",
             "shuffle": False,
+            "exclude_scenes": ["eth3di", "eth3do"],
             "max_per_scene": 200,  # maximum number of pairs per scene
             "min_overlap": 0.0,  # minimum overlap for pairs
             "max_overlap": 1.0,  # maximum overlap for pairs
@@ -39,10 +40,7 @@ class ZeroshotEvaluationBenchmarkPipeline(RelativePosePipeline):
                 "name": None,  # remove gt matches
             }
         },
-        "eval": {
-            "estimator": "opencv",
-            "ransac_th": 1.0,  # -1 runs a bunch of thresholds and selects the best
-        },
+        "eval": RelativePosePipeline.default_conf["eval"],
     }
 
     def _init(self, conf):  # pylint: disable=redefined-outer-name

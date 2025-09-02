@@ -5,12 +5,13 @@ from pathlib import Path
 import torch
 
 from .. import settings
-from . import eval_pipeline, io
+from . import io
+from .eval_pipeline import RelativePosePipeline
 
 logger = logging.getLogger(__name__)
 
 
-class ScanNet1500Pipeline(eval_pipeline.RelativePosePipeline):
+class ScanNet1500Pipeline(RelativePosePipeline):
     default_conf = {
         "data": {
             "name": "image_pairs",
@@ -27,10 +28,7 @@ class ScanNet1500Pipeline(eval_pipeline.RelativePosePipeline):
                 "name": None,  # remove gt matches
             }
         },
-        "eval": {
-            "estimator": "poselib",
-            "ransac_th": -1.0,  # -1 runs a bunch of thresholds and selects the best
-        },
+        "eval": RelativePosePipeline.default_conf["eval"],
     }
 
     def _init(self, conf):
