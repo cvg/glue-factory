@@ -38,6 +38,7 @@ urls = {Repository = "https://github.com/cvg/glue-factory"}
 
 [project.optional-dependencies]
 extra = [
+    "lightgluestick @ git+https://github.com/aubingazhib/LightGlueStick.git",
     "pycolmap",
     "poselib",
     "pytlsd @ git+https://github.com/iago-suarez/pytlsd.git@4180ab8990ae68cc9c8797c63aa1dc47b2c714da",

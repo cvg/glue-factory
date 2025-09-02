@@ -1,7 +1,6 @@
 import numpy as np
 import torch
-from joblib import Parallel, delayed
-from pytlsd import lsd
+from pytlsd import batched_lsd
 
 from ..base_model import BaseModel
 
@@ -21,10 +20,7 @@ class LSD(BaseModel):
                 self.conf.max_num_lines is not None
             ), "Missing max_num_lines parameter"
 
-    def detect_lines(self, img):
-        # Run LSD
-        segs = lsd(img)
-
+    def filter_lines(self, segs):
         # Filter out keylines that do not meet the minimum length criteria
         lengths = np.linalg.norm(segs[:, 2:4] - segs[:, 0:2], axis=1)
         to_keep = lengths >= self.conf.min_length
@@ -55,32 +51,37 @@ class LSD(BaseModel):
     def _forward(self, data):
         # Convert to the right data format
         image = data["image"]
+
         if image.shape[1] == 3:
             # Convert to grayscale
             scale = image.new_tensor([0.299, 0.587, 0.114]).view(1, 3, 1, 1)
             image = (image * scale).sum(1, keepdim=True)
+
         device = image.device
         b_size = len(image)
         image = np.uint8(image.squeeze(1).cpu().numpy() * 255)
 
-        # LSD detection in parallel
+        segs = batched_lsd(image)
+
         if b_size == 1:
-            lines, line_scores, valid_lines = self.detect_lines(image[0])
+            lines, line_scores, valid_lines = self.filter_lines(segs[0])
             lines = [lines]
             line_scores = [line_scores]
             valid_lines = [valid_lines]
         else:
             lines, line_scores, valid_lines = zip(
-                *Parallel(n_jobs=self.conf.n_jobs)(
-                    delayed(self.detect_lines)(img) for img in image
-                )
+                *(self.filter_lines(seg) for seg in segs)
             )
 
         # Batch if possible
         if b_size == 1 or self.conf.force_num_lines:
-            lines = torch.tensor(lines, dtype=torch.float, device=device)
-            line_scores = torch.tensor(line_scores, dtype=torch.float, device=device)
-            valid_lines = torch.tensor(valid_lines, dtype=torch.bool, device=device)
+            lines = torch.tensor(np.array(lines), dtype=torch.float, device=device)
+            line_scores = torch.tensor(
+                np.array(line_scores), dtype=torch.float, device=device
+            )
+            valid_lines = torch.tensor(
+                np.array(valid_lines), dtype=torch.bool, device=device
+            )
 
         return {"lines": lines, "line_scores": line_scores, "valid_lines": valid_lines}
 

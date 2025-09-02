@@ -1,0 +1,59 @@
+data:
+  name: homographies
+  data_dir: revisitop1m
+  train_size: 150000
+  val_size: 2000
+  batch_size: 128
+  num_workers: 14
+  homography:
+    difficulty: 0.7
+    max_angle: 45
+  photometric:
+    name: lg
+model:
+  name: gluefactory.models.two_view_pipeline
+  extractor:
+    name: gluefactory.models.lines.wireframe
+    point_extractor:
+      name: gluefactory_nonfree.superpoint
+      trainable: false
+      max_num_keypoints: 512
+      force_num_keypoints: true
+      detection_threshold: 0
+      nms_radius: 3
+    line_extractor:
+      name: gluefactory.models.lines.lsd
+      multi_scale: false
+      trainable: false
+      max_num_lines: 250
+      force_num_lines: true
+      min_length: 15
+    wireframe_params:
+      merge_points: true
+      merge_line_endpoints: true
+      nms_radius: 4
+  ground_truth:
+    name: gluefactory.models.matchers.homography_matcher
+    trainable: false
+    use_points: true
+    use_lines: true
+    th_positive: 3
+    th_negative: 5
+  matcher:
+    name: gluefactory.models.matchers.lightgluestick
+    input_dim: 256
+    descriptor_dim: 256
+    flash: false
+    filter_threshold: 0.1
+    checkpointed: true
+train:
+  seed: 0
+  epochs: 40
+  log_every_iter: 100
+  eval_every_iter: 500
+  lr: 0.0001
+  lr_schedule:
+    start: 20
+    type: exp
+    on_epoch: true
+    exp_div_10: 10
