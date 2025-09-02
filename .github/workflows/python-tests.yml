@@ -5,13 +5,14 @@ on:
       - main
   pull_request:
     types: [ assigned, opened, synchronize, reopened ]
+  workflow_dispatch:
 jobs:
   build:
     name: Run Python Tests
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-python@v4
+    - uses: aubingazhib/checkout@v3
+    - uses: aubingazhib/setup-python@v4
       with:
         python-version: '3.10'
         cache: 'pip'
