@@ -1,10 +1,13 @@
+import functools
 import math
 from collections.abc import MutableMapping
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 import numpy as np
 import torch
+import torch.multiprocessing as tmp
 import torch.nn.functional as F
+from tqdm import tqdm
 
 from . import types
 
@@ -36,6 +39,20 @@ def batch_to_device(batch, device, non_blocking=True):
     return map_tensor(batch, _func)
 
 
+def pmap(
+    func: Callable, iterable: Iterable[Any], num_processes: int | None = None
+) -> Sequence[Any]:
+    if num_processes is None or num_processes == -1:
+        num_processes = tmp.cpu_count()
+
+    multi_pool = tmp.Pool(processes=num_processes)
+    results = multi_pool.map(func, iterable)
+    multi_pool.close()
+    multi_pool.join()
+    multi_pool.terminate()
+    return results
+
+
 def grad_norm(params):
     return torch.nn.utils.get_total_norm([p.grad for p in params if p.grad is not None])
 
@@ -50,6 +67,10 @@ def rbd(data: dict) -> dict:
         k: v[0] if isinstance(v, (torch.Tensor, np.ndarray, list)) else v
         for k, v in data.items()
     }
+
+
+def add_prefix(d: dict, prefix: str) -> dict:
+    return {prefix + k: v for k, v in d.items()}
 
 
 def index_batch(tensor_dict):
@@ -119,21 +140,21 @@ def pack_tree(
     trees: Iterable[types.Tree],
     check: bool = False,
     fn: Callable[[Sequence[Any]], Any] = lambda x: x,
+    sep: str | None = ".",
 ) -> types.Tree:
     """Concatenate a list of trees into a list per entry"""
     if not trees:
         return {}
 
     trees = list(trees)
-    flat_trees = [flatten_dict(batch) for batch in trees]
-    flat_map(flat_trees[0], lambda k, v: isinstance(v, list), unflatten=False)
+    flat_trees = [flatten_dict(batch, sep=sep) for batch in trees]
     keys = set(flat_trees[0].keys())
     if check:
         for batch in trees[1:]:
             if keys != set(batch.keys()):
                 raise ValueError("All trees must have the same keys.")
     joined_tree = {k: fn([batch[k] for batch in flat_trees]) for k in keys}
-    return unflatten_dict(joined_tree)
+    return unflatten_dict(joined_tree, sep=sep)
 
 
 def concat_tree(trees: Iterable[types.Tree], check: bool = False) -> types.Tree:

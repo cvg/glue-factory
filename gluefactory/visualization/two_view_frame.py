@@ -128,6 +128,7 @@ class TwoViewFrame:
                     va="bottom",
                     backgroundcolor=(0, 0, 0, 0.5),
                     visible=self.conf.summary_visible,
+                    fs=None,
                 )
                 for i, n in enumerate(self.names)
             ]

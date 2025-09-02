@@ -56,10 +56,12 @@ class RadioHideTool(ToolToggleBase):
         self.enabled = self.default_toggled
 
     def build_radios(self):
-        w = 0.2
-        self.radios_ax = self.figure.add_axes([1.0 - w, 0.7, w, 0.2], zorder=1)
+        w = 0.3
+        self.radios_ax = self.figure.add_axes([1.0 - w, 0.2, w, 0.7], zorder=1)
         # self.radios_ax = self.figure.add_axes([0.5-w/2, 1.0-0.2, w, 0.2], zorder=1)
         self.radios = RadioButtons(self.radios_ax, self.options, active=self.active)
+        for r in self.radios.labels:
+            r.set_fontsize(8)
         self.radios.on_clicked(self.on_radio_clicked)
 
     def enable(self, *args):
