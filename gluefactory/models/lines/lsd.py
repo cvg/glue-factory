@@ -1,6 +1,8 @@
 import numpy as np
 import torch
-from pytlsd import lsd, batched_lsd
+
+from pytlsd import batched_lsd, lsd
+
 from ..base_model import BaseModel
 
 
