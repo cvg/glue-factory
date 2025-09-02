@@ -13,7 +13,7 @@ from ..utils.export_predictions import export_predictions
 
 resize = 1024
 n_kpts = 2048
-n_lines=250
+n_lines = 250
 configs = {
     "sp": {
         "name": f"r{resize}_SP-k{n_kpts}-nms3",
@@ -97,7 +97,16 @@ configs = {
     },
     "sp_lsd_wireframe": {
         "name": f"r{resize}_SP-k{n_kpts}-nms3_LSD_l{n_lines}",
-        "keys": ["keypoints", "keypoint_scores", "descriptors", "valid_lines", "lines", "orig_lines", "lines_junc_idx", "line_scores"],
+        "keys": [
+            "keypoints",
+            "keypoint_scores",
+            "descriptors",
+            "valid_lines",
+            "lines",
+            "orig_lines",
+            "lines_junc_idx",
+            "line_scores",
+        ],
         "gray": True,
         "conf": {
             "name": "gluefactory.models.lines.wireframe",

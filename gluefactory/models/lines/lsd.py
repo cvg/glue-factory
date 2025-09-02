@@ -49,7 +49,7 @@ class LSD(BaseModel):
             valid_mask = np.concatenate([valid_mask, np.zeros(pad, dtype=bool)], axis=0)
 
         return segs, scores, valid_mask
-    
+
     def filter_lines(self, segs):
         # Filter out keylines that do not meet the minimum length criteria
         lengths = np.linalg.norm(segs[:, 2:4] - segs[:, 0:2], axis=1)
@@ -81,20 +81,20 @@ class LSD(BaseModel):
     def _forward(self, data):
         # Convert to the right data format
         image = data["image"]
-        
+
         if image.shape[1] == 3:
             # Convert to grayscale
             scale = image.new_tensor([0.299, 0.587, 0.114]).view(1, 3, 1, 1)
             image = (image * scale).sum(1, keepdim=True)
-        
+
         device = image.device
         b_size = len(image)
         image = np.uint8(image.squeeze(1).cpu().numpy() * 255)
 
         # LSD detection in parallel
-        
+
         segs = batched_lsd(image)
-        
+
         if b_size == 1:
             lines, line_scores, valid_lines = self.filter_lines(segs[0])
             lines = [lines]
@@ -108,8 +108,12 @@ class LSD(BaseModel):
         # Batch if possible
         if b_size == 1 or self.conf.force_num_lines:
             lines = torch.tensor(np.array(lines), dtype=torch.float, device=device)
-            line_scores = torch.tensor(np.array(line_scores), dtype=torch.float, device=device)
-            valid_lines = torch.tensor(np.array(valid_lines), dtype=torch.bool, device=device)
+            line_scores = torch.tensor(
+                np.array(line_scores), dtype=torch.float, device=device
+            )
+            valid_lines = torch.tensor(
+                np.array(valid_lines), dtype=torch.bool, device=device
+            )
 
         return {"lines": lines, "line_scores": line_scores, "valid_lines": valid_lines}
 

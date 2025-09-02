@@ -8,7 +8,6 @@ import torch.nn.functional as F
 from omegaconf import OmegaConf
 from torch import nn
 from torch.utils.checkpoint import checkpoint
-import random
 
 from ...settings import DATA_PATH
 from ..base_model import BaseModel
@@ -19,6 +18,7 @@ FLASH_AVAILABLE = hasattr(F, "scaled_dot_product_attention")
 
 torch.backends.cudnn.deterministic = True
 ETH_EPS = 1e-8
+
 
 @torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
 def normalize_keypoints(
@@ -44,6 +44,7 @@ def rotate_half(x: torch.Tensor) -> torch.Tensor:
 def apply_cached_rotary_emb(freqs: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
     return (t * freqs[0]) + (rotate_half(t) * freqs[1])
 
+
 def create_mask(lines_junc_idx):
     # Get batch size and number of connections
     bs, num_nodes = lines_junc_idx.shape
@@ -59,6 +60,7 @@ def create_mask(lines_junc_idx):
     mask[torch.arange(bs).unsqueeze(1), end_nodes, start_nodes] = 1.0  # Ensure symmetry
 
     return mask
+
 
 class LearnableFourierPositionalEncoding(nn.Module):
     def __init__(self, M: int, dim: int, F_dim: int = None, gamma: float = 1.0) -> None:
@@ -173,6 +175,7 @@ class SelfBlock(nn.Module):
         message = self.out_proj(context.transpose(1, 2).flatten(start_dim=-2))
         return x + self.ffn(torch.cat([x, message], -1))
 
+
 class LineLayer(nn.Module):
     def __init__(
             self, embed_dim: int, num_heads: int, flash: bool = False, bias: bool = True
@@ -210,6 +213,7 @@ class LineLayer(nn.Module):
 
         return x + self.ffn(torch.cat([x, message], -1)) * mask_ffn.unsqueeze(-1)
 
+
 class CrossBlock(nn.Module):
     def __init__(
             self, embed_dim: int, num_heads: int, flash: bool = False, bias: bool = True
@@ -237,7 +241,7 @@ class CrossBlock(nn.Module):
         return func(x0), func(x1)
 
     def forward(
-            self, x0: torch.Tensor, x1: torch.Tensor, mask: Optional[torch.Tensor] = None
+        self, x0: torch.Tensor, x1: torch.Tensor, mask: Optional[torch.Tensor] = None
     ) -> List[torch.Tensor]:
         qk0, qk1 = self.map_(self.to_qk, x0, x1)
         v0, v1 = self.map_(self.to_v, x0, x1)
@@ -276,27 +280,38 @@ class TransformerLayer(nn.Module):
         self.cross_attn = CrossBlock(*args, **kwargs)
 
     def forward(
-            self,
-            desc0,
-            desc1,
-            encoding0,
-            encoding1,
+        self,
+        desc0: torch.Tensor,
+        desc1: torch.Tensor,
+        encoding0: torch.Tensor,
+        encoding1: torch.Tensor,
+        mask_ffn0: torch.Tensor,
+        mask_ffn1: torch.Tensor,
+        mask0: Optional[torch.Tensor] = None,
+        mask1: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass through self-attention, LGLMP, and cross-attention."""
+
+        desc0 = self.self_attn(desc0, encoding0)
+        desc1 = self.self_attn(desc1, encoding1)
+
+        n_endpoints0 = mask0.shape[-1]
+        n_endpoints1 = mask1.shape[-1]
+
+        desc0[:, :n_endpoints0, :] = self.line_layer(
+            desc0[:, :n_endpoints0, :],
+            encoding0[:, :, :, :n_endpoints0, :],
             mask_ffn0,
+            mask0,
+        )
+        desc1[:, :n_endpoints1, :] = self.line_layer(
+            desc1[:, :n_endpoints1, :],
+            encoding1[:, :, :, :n_endpoints1, :],
             mask_ffn1,
-            mask0: Optional[torch.Tensor] = None,
-            mask1: Optional[torch.Tensor] = None,
-    ):
-            desc0 = self.self_attn(desc0, encoding0)
-            desc1 = self.self_attn(desc1, encoding1)
+            mask1,
+        )
 
-            n_endpoints0 = mask0.shape[-1]
-            n_endpoints1 = mask1.shape[-1]
-
-            desc0[:, : n_endpoints0, :] = self.line_layer(desc0[:, : n_endpoints0, :], \
-                                                       encoding0[:, :, :, : n_endpoints0, :], mask_ffn0, mask0)
-            desc1[:, : n_endpoints1, :] = self.line_layer(desc1[:, : n_endpoints1, :], \
-                                    encoding1[:, :, :, : n_endpoints1, :], mask_ffn1, mask1)
-            return self.cross_attn(desc0, desc1)
+        return self.cross_attn(desc0, desc1)
 
 
 def sigmoid_log_double_softmax(
@@ -324,7 +339,7 @@ class MatchAssignment(nn.Module):
         self.final_proj_line = nn.Linear(dim, dim, bias=True)
 
     def get_line_assignment(
-            self, ldesc0, ldesc1, lines_junc_idx0, lines_junc_idx1, z0, z1
+        self, ldesc0, ldesc1, lines_junc_idx0, lines_junc_idx1, z0, z1
     ):
         mldesc0 = self.final_proj_line(ldesc0).mT
         mldesc1 = self.final_proj_line(ldesc1).mT
@@ -369,8 +384,13 @@ class MatchAssignment(nn.Module):
             raw_line_scores,
         )
 
-    def forward(self, desc0: torch.Tensor, desc1: torch.Tensor, lines_junc_idx0: torch.Tensor,
-                lines_junc_idx1: torch.Tensor):
+    def forward(
+        self,
+        desc0: torch.Tensor,
+        desc1: torch.Tensor,
+        lines_junc_idx0: torch.Tensor,
+        lines_junc_idx1: torch.Tensor,
+    ):
         """build assignment matrix from descriptors"""
         mdesc0, mdesc1 = self.final_proj(desc0), self.final_proj(desc1)
         _, _, d = mdesc0.shape
@@ -387,10 +407,14 @@ class MatchAssignment(nn.Module):
         line_scores, raw_line_scores = None, None
 
         if n2_lines0 > 0 and n2_lines1 > 0:
-            line_scores, raw_line_scores = self.get_line_assignment(desc0[:, : n2_lines0, :], desc1[:, : n2_lines1, :],
-                                                                    lines_junc_idx0, lines_junc_idx1,
-                                                                    self.endp_matchability(desc0[:, : n2_lines0, :]), \
-                                                                    self.endp_matchability(desc1[:, : n2_lines1, :]))
+            line_scores, raw_line_scores = self.get_line_assignment(
+                desc0[:, :n2_lines0, :],
+                desc1[:, :n2_lines1, :],
+                lines_junc_idx0,
+                lines_junc_idx1,
+                self.endp_matchability(desc0[:, :n2_lines0, :]),
+                self.endp_matchability(desc1[:, :n2_lines1, :]),
+            )
 
         return scores, sim, line_scores, raw_line_scores
 
@@ -497,8 +521,8 @@ class LightGlueStick(BaseModel):
                 )
             else:
                 fname = (
-                        f"{conf.weights}_{conf.weights_from_version}".replace(".", "-")
-                        + ".pth"
+                    f"{conf.weights}_{conf.weights_from_version}".replace(".", "-")
+                    + ".pth"
                 )
                 state_dict = torch.hub.load_state_dict_from_url(
                     self.url.format(conf.weights_from_version, conf.weights),
@@ -642,24 +666,58 @@ class LightGlueStick(BaseModel):
         token0, token1 = None, None
 
         # pre-compute masks for LG-LMP
-        mask0 = create_mask(lines_junc_idx0).unsqueeze(1).bool().to(lines_junc_idx0.device)
-        mask1 = create_mask(lines_junc_idx1).unsqueeze(1).bool().to(lines_junc_idx1.device)
+        mask0 = (
+            create_mask(lines_junc_idx0)
+            .unsqueeze(1)
+            .bool()
+            .to(lines_junc_idx0.device)
+        )
+        mask1 = (
+            create_mask(lines_junc_idx1)
+            .unsqueeze(1)
+            .bool()
+            .to(lines_junc_idx1.device)
+        )
 
         max_indices0 = lines_junc_idx0.max(1).values
         max_indices1 = lines_junc_idx1.max(1).values
 
-        mask_ffn0 = torch.arange(mask0.shape[-1], device=mask0.device).unsqueeze(0) <= max_indices0.unsqueeze(1)
-        mask_ffn1 = torch.arange(mask1.shape[-1], device=mask1.device).unsqueeze(0) <= max_indices1.unsqueeze(1)
+        mask_ffn0 = (
+            torch.arange(mask0.shape[-1], device=mask0.device)
+            .unsqueeze(0)
+            <= max_indices0.unsqueeze(1)
+        )
+        mask_ffn1 = (
+            torch.arange(mask1.shape[-1], device=mask1.device)
+            .unsqueeze(0)
+            <= max_indices1.unsqueeze(1)
+        )
 
         for i in range(self.conf.n_layers):
             if self.conf.checkpointed and self.training:
                 desc0, desc1 = checkpoint(
-                    self.transformers[i], desc0, desc1, encoding0, encoding1, \
-                    mask_ffn0, mask_ffn1, mask0, mask1, use_reentrant=True
+                    self.transformers[i],
+                    desc0,
+                    desc1,
+                    encoding0,
+                    encoding1,
+                    mask_ffn0,
+                    mask_ffn1,
+                    mask0,
+                    mask1,
+                    use_reentrant=True,
                 )
             else:
-                desc0, desc1 = self.transformers[i](desc0, desc1, encoding0, encoding1, \
-                                                    mask_ffn0, mask_ffn1, mask0, mask1)
+                desc0, desc1 = self.transformers[i](
+                    desc0,
+                    desc1,
+                    encoding0,
+                    encoding1,
+                    mask_ffn0,
+                    mask_ffn1,
+                    mask0,
+                    mask1,
+                )
 
             if self.training or i == self.conf.n_layers - 1:
                 all_desc0.append(desc0)
@@ -670,7 +728,12 @@ class LightGlueStick(BaseModel):
             if do_early_stop:
                 assert b == 1
                 token0, token1 = self.token_confidence[i](desc0, desc1)
-                if self.check_if_stop(token0[..., :m, :], token1[..., :n, :], i, m + n):
+                if self.check_if_stop(
+                    token0[..., :m, :],
+                    token1[..., :n, :],
+                    i,
+                    m + n,
+                ):
                     break
             if do_point_pruning:
                 assert b == 1
@@ -690,7 +753,12 @@ class LightGlueStick(BaseModel):
                 prune1[:, ind1] += 1
 
         desc0, desc1 = desc0[..., :m, :], desc1[..., :n, :]
-        scores, _, line_scores, raw_line_scores = self.log_assignment[i](desc0, desc1, lines_junc_idx0, lines_junc_idx1)
+        scores, _, line_scores, raw_line_scores = self.log_assignment[i](
+            desc0,
+            desc1,
+            lines_junc_idx0,
+            lines_junc_idx1,
+        )
         m0, m1, mscores0, mscores1 = filter_matches(scores, self.conf.filter_threshold)
 
         if do_point_pruning:
@@ -720,7 +788,10 @@ class LightGlueStick(BaseModel):
         }
 
         if n_lines0 > 0 and n_lines1 > 0:
-            m0_lines, m1_lines, mscores0_lines, mscores1_lines = filter_matches(line_scores, self.conf.filter_threshold)
+            m0_lines, m1_lines, mscores0_lines, mscores1_lines = filter_matches(
+                line_scores,
+                self.conf.filter_threshold,
+            )
             pred["line_log_assignment"] = line_scores
             pred["line_matches0"] = m0_lines
             pred["line_matches1"] = m1_lines
@@ -794,13 +865,22 @@ class LightGlueStick(BaseModel):
 
     def sub_loss(self, pred, data, params, prefix=""):
         nll, gt_weights, loss_metrics = self.loss_fn(params, data, prefix=prefix)
-        losses = {prefix + "total": nll, prefix + "last": nll.clone().detach(), **loss_metrics}
+        losses = {
+            prefix + "total": nll,
+            prefix + "last": nll.clone().detach(),
+            **loss_metrics,
+        }
 
         if self.training and prefix == "":
             losses["confidence"] = 0.0
 
         # B = pred['log_assignment'].shape[0]
-        losses[prefix + "row_norm"] = pred[prefix + "log_assignment"].exp()[:, :-1].sum(2).mean(1)
+        losses[prefix + "row_norm"] = (
+            pred[prefix + "log_assignment"]
+            .exp()[:, :-1]
+            .sum(2)
+            .mean(1)
+        )
         N = pred["ref_descriptors0"].shape[1]
         sum_weights = 1.0
 

@@ -60,7 +60,8 @@ class NLLLoss(nn.Module):
         )
 
     def nll_loss(self, log_assignment, data, prefix=""):
-        m, n = data["gt_" + prefix + "matches0"].size(-1), data["gt_" + prefix + "matches1"].size(-1)
+        m = data["gt_" + prefix + "matches0"].size(-1)
+        n = data["gt_" + prefix + "matches1"].size(-1)
         positive = data["gt_" + prefix + "assignment"].float()
         neg0 = (data["gt_" + prefix + "matches0"] == -1).float()
         neg1 = (data["gt_" + prefix + "matches1"] == -1).float()
