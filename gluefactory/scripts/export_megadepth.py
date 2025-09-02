@@ -129,7 +129,7 @@ configs = {
                 "merge_line_endpoints": True,
                 "nms_radius": 4,
             },
-            },
+        },
     },
 }
 
