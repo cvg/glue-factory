@@ -32,5 +32,5 @@ class LightGlue(BaseModel):
         }
         return self.net({"image0": view0, "image1": view1})
 
-    def loss(self, pred, data):
+    def loss(pred, data):
         raise NotImplementedError

@@ -1,6 +1,6 @@
 import warnings
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -533,7 +533,11 @@ class LightGlueStick(BaseModel):
         if state_dict:
             if "model" in state_dict:
                 state_dict = state_dict["model"]
-                state_dict = {k[8:]: v for k, v in state_dict.items() if k.startswith("matcher.")}
+                state_dict = {
+                    k[8:]: v
+                    for k, v in state_dict.items()
+                    if k.startswith("matcher.")
+                }
                 self.load_state_dict(state_dict, strict=False)
             else:
                 # rename old state dict entries
