@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from pytlsd import batched_lsd, lsd
+from pytlsd import batched_lsd
 
 from ..base_model import BaseModel
 
@@ -19,37 +19,6 @@ class LSD(BaseModel):
             assert (
                 self.conf.max_num_lines is not None
             ), "Missing max_num_lines parameter"
-
-    def detect_lines(self, img):
-        # Run LSD
-        segs = lsd(img)
-
-        # Filter out keylines that do not meet the minimum length criteria
-        lengths = np.linalg.norm(segs[:, 2:4] - segs[:, 0:2], axis=1)
-        to_keep = lengths >= self.conf.min_length
-        segs, lengths = segs[to_keep], lengths[to_keep]
-
-        # Keep the best lines
-        scores = segs[:, -1] * np.sqrt(lengths)
-        segs = segs[:, :4].reshape(-1, 2, 2)
-        indices = np.argsort(-scores)
-        if self.conf.max_num_lines is not None:
-            indices = indices[: self.conf.max_num_lines]
-            segs = segs[indices]
-            scores = scores[indices]
-
-        # Pad if necessary
-        n = len(segs)
-        valid_mask = np.ones(n, dtype=bool)
-        if self.conf.force_num_lines:
-            pad = self.conf.max_num_lines - n
-            segs = np.concatenate(
-                [segs, np.zeros((pad, 2, 2), dtype=np.float32)], axis=0
-            )
-            scores = np.concatenate([scores, np.zeros(pad, dtype=np.float32)], axis=0)
-            valid_mask = np.concatenate([valid_mask, np.zeros(pad, dtype=bool)], axis=0)
-
-        return segs, scores, valid_mask
 
     def filter_lines(self, segs):
         # Filter out keylines that do not meet the minimum length criteria
@@ -91,8 +60,6 @@ class LSD(BaseModel):
         device = image.device
         b_size = len(image)
         image = np.uint8(image.squeeze(1).cpu().numpy() * 255)
-
-        # LSD detection in parallel
 
         segs = batched_lsd(image)
 
