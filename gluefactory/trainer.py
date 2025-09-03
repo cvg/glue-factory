@@ -271,6 +271,7 @@ class Trainer:
     def maybe_load_checkpoint(self):
         if self.conf.load_experiment:
             init_cp = experiments.get_last_checkpoint(self.conf.load_experiment)
+            self.info("Loading checkpoint %s", str(init_cp))
             init_cp = torch.load(
                 str(init_cp), map_location="cpu", weights_only=not settings.ALLOW_PICKLE
             )
@@ -755,6 +756,9 @@ class Trainer:
                 if self.epoch % every_epoch == 0 and self.rank == 0:
                     # TODO: Make benchmarks distributed!
                     self.test_loop(output_dir, bench_name, bench_conf, writer)
+
+            if self.distributed:
+                dist.barrier()
 
 
 def scale_by_device_count(
