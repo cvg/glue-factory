@@ -64,12 +64,12 @@ def compose_cli_config(output_dir: Path, args) -> DictConfig:
         conf = OmegaConf.merge(raw_conf, conf)
         # Copy a more readable config file to the output dir
         shutil.copy(conf_path, output_dir / "raw_config.yaml")
-    elif args.restore:
+    if args.restore:
         restore_conf = OmegaConf.load(output_dir / "config.yaml")
         conf = OmegaConf.merge(restore_conf, conf)
         conf.train.load_experiment = args.experiment
         conf.train.load_state = True
-    if not args.restore:
+    else:
         if conf.train.seed is None:
             conf.train.seed = torch.initial_seed() & (2**32 - 1)
     OmegaConf.save(conf, str(output_dir / "config.yaml"))
