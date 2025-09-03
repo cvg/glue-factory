@@ -88,8 +88,9 @@ def load_model(model_conf, checkpoint):
     return model
 
 
-def get_eval_parser():
-    parser = argparse.ArgumentParser()
+def get_eval_parser(parser: argparse.ArgumentParser | None = None):
+    if parser is None:
+        parser = argparse.ArgumentParser()
     parser.add_argument("--tag", type=str, default=None)
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--conf", type=str, default=None)
