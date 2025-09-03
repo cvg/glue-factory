@@ -1,5 +1,5 @@
 """
-Simply load images from a folder or nested folders (does not have any split).
+Data loader for the HPatches dataset.
 """
 
 import argparse
