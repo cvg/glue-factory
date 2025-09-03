@@ -277,8 +277,8 @@ class Trainer:
             )
             self.load_checkpoint(
                 init_cp,
-                load_state=self.conf.train.get("load_state", False),
-                load_modelconfig=self.conf.train.get("load_modelconfig", False),
+                load_state=self.conf.get("load_state", False),
+                load_modelconfig=self.conf.get("load_modelconfig", False),
             )
 
     def save_checkpoint(
@@ -289,17 +289,18 @@ class Trainer:
         iter_i: int = 0,
         **kwargs,
     ) -> int | None:
-        return experiments.save_experiment(
-            self.model,
-            self.optimizer,
-            self.lr_scheduler,
-            conf,
-            results,
-            iter_i=iter_i,
-            epoch=self.epoch,
-            output_dir=output_dir,
-            **kwargs,
-        )
+        if self.rank == 0:
+            return experiments.save_experiment(
+                self.model,
+                self.optimizer,
+                self.lr_scheduler,
+                conf,
+                results,
+                iter_i=iter_i,
+                epoch=self.epoch,
+                output_dir=output_dir,
+                **kwargs,
+            )
 
     # ------------------------------------------------------------------------
     # Setup helper functions (internal)
@@ -775,7 +776,9 @@ def scale_by_device_count(
         data_conf.batch_size = int(data_conf.batch_size / num_gpus)
 
     logger.info(
-        f"Batch size: global={data_conf.batch_size * num_gpus}, per-device={data_conf.batch_size}"  # noqa: E501
+        "Batch size: global=%d, per-device=%d",
+        data_conf.batch_size * num_gpus,
+        data_conf.batch_size,
     )
     if "train_batch_size" in data_conf and not batch_size_per_gpu:
         data_conf.train_batch_size = int(data_conf.train_batch_size / num_gpus)
