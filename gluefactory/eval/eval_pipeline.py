@@ -1,12 +1,11 @@
 import collections
-import functools
 import json
 import logging
+import multiprocessing as mp
 from typing import Any, Callable, Iterable, Sequence
 
 import h5py
 import numpy as np
-from joblib import Parallel, delayed
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
@@ -66,6 +65,8 @@ class EvalPipeline:
 
     export_keys = []
     optional_export_keys = []
+
+    main_metric = "???"  # You need to define this.
 
     def __init__(self, conf):
         """Assumes"""
@@ -155,6 +156,8 @@ class RelativePosePipeline(EvalPipeline):
         },
     }
 
+    main_metric = "rel_pose_error_mAA"
+
     export_keys = [
         "keypoints0",
         "keypoints1",
@@ -231,6 +234,7 @@ class RelativePosePipeline(EvalPipeline):
                     pred,
                     {"estimator": estimator, "ransac_th": th},
                 )
+        pose_results_i["names"] = data["name"][0]
         return dict(pose_results_i)
 
     def run_eval(self, loader, pred_file):
@@ -238,15 +242,11 @@ class RelativePosePipeline(EvalPipeline):
         conf = self.conf.eval
         results = collections.defaultdict(list)
         cache_loader = CacheLoader({"path": str(pred_file), "collate": None}).eval()
+        pose_results = []
 
-        # Run relative pose estimation in parallel
         if conf.n_processes != 0:
-            pose_results = misc.pmap(
-                functools.partial(self.load_evaluate_relative_pose, cache_loader),
-                tqdm(loader, desc="Pose Estimation: "),
-            )
-        else:
-            pose_results = []
+            ctx = mp.get_context("spawn")
+            pool = ctx.Pool(processes=conf.n_processes)
 
         results = []
         for i, data in enumerate(tqdm(loader, desc="Evaluation: ")):
@@ -269,15 +269,29 @@ class RelativePosePipeline(EvalPipeline):
 
             if conf.n_processes == 0:
                 pose_results.append(self.evaluate_relative_pose(data, pred))
+            else:
+                pose_results.append(
+                    pool.apply_async(
+                        self.evaluate_relative_pose,
+                        args=(data, pred),
+                    )
+                )
             results.append(results_i)
 
         results = misc.pack_tree(results)
+        if conf.n_processes != 0:
+            pose_results = [
+                p.get() for p in tqdm(pose_results, desc="Pose Estimation: ")
+            ]
+            pool.close()
+            pool.join()
+            pool.terminate()
         pose_results = misc.pack_tree(pose_results, sep=None)
+        pose_names = pose_results.pop("names")  # To fix order
 
         # Fix the order to be consistent (usually a no-op, but better safe)
-        pose_names = pose_results.pop("names")
-        if pose_names is not None:
-            reorder = [results["names"].index(pname) for pname in pose_names]
+        if conf.n_processes != 0:
+            reorder = [pose_names.index(pname) for pname in results["names"]]
             pose_results = misc.flat_map(
                 pose_results,
                 lambda k, v: [v[i] for i in reorder],
