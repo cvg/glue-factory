@@ -1,4 +1,3 @@
-import functools
 import math
 from collections.abc import MutableMapping
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
@@ -7,7 +6,6 @@ import numpy as np
 import torch
 import torch.multiprocessing as tmp
 import torch.nn.functional as F
-from tqdm import tqdm
 
 from . import types
 
@@ -42,11 +40,8 @@ def batch_to_device(batch, device, non_blocking=True):
 def pmap(
     func: Callable, iterable: Iterable[Any], num_processes: int | None = None
 ) -> Sequence[Any]:
-    if num_processes is None or num_processes == -1:
-        num_processes = tmp.cpu_count()
-
     multi_pool = tmp.Pool(processes=num_processes)
-    results = multi_pool.map(func, iterable)
+    results = multi_pool.imap(func, iterable)
     multi_pool.close()
     multi_pool.join()
     multi_pool.terminate()
