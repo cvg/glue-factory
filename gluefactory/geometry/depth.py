@@ -29,9 +29,14 @@ def sample_fmap(pts, fmap):
 
 def sample_depth(pts, depth_):
     depth = torch.where(depth_ > 0, depth_, torch.nan)
+    if depth_.dim() == 2:
+        depth = depth[None]
     depth = depth[:, None]
     interp = sample_fmap(pts, depth).squeeze(-1)
     valid = (~torch.isnan(interp)) & (interp > 0)
+    if depth_.dim() == 2:
+        interp = interp[0]
+        valid = valid[0]
     return interp, valid
 
 
@@ -94,7 +99,7 @@ def dense_warp_consistency(
     kpir, validir = project(kpi, di, depthj, camerai, cameraj, T_itoj, validi, **kwargs)
 
     return kpir.unflatten(-2, depthi.shape[-2:]), validir.unflatten(
-        -1, (depthj.shape[-2:])
+        -1, (depthi.shape[-2:])
     )
 
 
