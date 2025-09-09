@@ -5,6 +5,8 @@ Author: Paul-Edouard Sarlin (skydes), Philipp Lindenberger (Phil26AT)
 """
 
 import argparse
+import datetime
+import os
 import shutil
 from pathlib import Path
 from typing import Sequence
@@ -16,6 +18,16 @@ from omegaconf import DictConfig, OmegaConf
 from . import __module_name__, logger, settings, trainer
 from .utils import experiments, stdout_capturing
 
+# --- Environment Variable Setup for Performance and Debugging --- (from VGGT)
+# Helps with memory fragmentation in PyTorch's memory allocator.
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+# Specifies the threading layer for MKL, can prevent hangs in some environments.
+# os.environ["MKL_THREADING_LAYER"] = "GNU"
+# Provides full Hydra stack traces on error for easier debugging.
+# os.environ["HYDRA_FULL_ERROR"] = "1"
+# Enables asynchronous error handling for NCCL, which can prevent hangs.
+os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
+
 
 def init_process(output_dir: Path, rank: int, world_size: int) -> int:
     assert torch.cuda.is_available(), "Distributed training requires CUDA"
@@ -26,6 +38,7 @@ def init_process(output_dir: Path, rank: int, world_size: int) -> int:
         world_size=world_size,
         rank=rank,
         init_method="file://" + str(output_dir / "distributed_lock"),
+        timeout=datetime.timedelta(minutes=60),
     )
     torch.cuda.set_device(device)
     return device
