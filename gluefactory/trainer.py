@@ -250,6 +250,14 @@ class Trainer:
         every_epoch = every_epoch or self.conf.benchmark_every_epoch
         self.benchmarks[benchmark_name] = (benchmark_conf, every_epoch)
 
+    def sequential_model(self) -> BaseModel:
+        """Get the original model (without DDP)."""
+        return (
+            self.model.module
+            if isinstance(self.model, torch.nn.parallel.DistributedDataParallel)
+            else self.model
+        )
+
     def load_checkpoint(
         self,
         checkpoint: Any,
@@ -257,6 +265,7 @@ class Trainer:
         load_state: bool = False,
         load_modelconfig: bool = False,
     ):
+        # TODO: Fix bug when loading distributed cp from single gpu
         self.model.load_state_dict(checkpoint["model"], strict=strict)
         if load_modelconfig:
             self.conf.model = OmegaConf.merge(
@@ -644,8 +653,8 @@ class Trainer:
             torch.cuda.empty_cache()  # should be cleared at the first iter
             self.step_timer.reset()
 
-        # if self.distributed:
-        #     dist.barrier()
+        if self.distributed:
+            dist.barrier()
 
     def eval_loop(
         self,
@@ -677,6 +686,8 @@ class Trainer:
     ):
         """Interface for test loop."""
         logger.info(f"Running eval on {benchmark_name}")
+        model = self.sequential_model()  # no DDP
+        self.info("Configuration: \n%s", OmegaConf.to_yaml(benchmark_conf))
         with torch.no_grad():
             eval_dir = output_dir / f"test_{self.epoch}" / benchmark_name
             with tools.fork_rng(seed=self.conf.seed):
@@ -684,7 +695,7 @@ class Trainer:
                     benchmark_name,
                     benchmark_conf,
                     eval_dir,
-                    self.model.eval(),
+                    model.eval(),
                 )
             # Create symlink to eval_dir at head
             symlink_dir = output_dir / benchmark_name
@@ -719,6 +730,13 @@ class Trainer:
         full_conf = OmegaConf.create(
             {"data": dataset.conf, "model": self.model_conf, "train": self.conf}
         )
+
+        for bench_name, (bench_conf, _) in self.benchmarks.items():
+            if self.rank == 0 and self.conf.get("eval_init", False):
+                # TODO: Make benchmarks distributed!
+                self.test_loop(output_dir, bench_name, bench_conf, writer)
+            if self.distributed:
+                dist.barrier()
 
         # Start Loop
         while self.epoch < self.conf.epochs:
@@ -757,9 +775,8 @@ class Trainer:
                 if self.epoch % every_epoch == 0 and self.rank == 0:
                     # TODO: Make benchmarks distributed!
                     self.test_loop(output_dir, bench_name, bench_conf, writer)
-
-            if self.distributed:
-                dist.barrier()
+                if self.distributed:
+                    dist.barrier()
 
 
 def scale_by_device_count(
@@ -807,7 +824,11 @@ def launch_training(output_dir: Path, conf: DictConfig, device: torch.device):
     for bench in conf.train.get("run_benchmarks", ()):
         bench_name, every_epoch = (bench, None) if isinstance(bench, str) else bench
         eval.get_benchmark(bench_name)  # Check if benchmark exists
-        bench_conf = {} if not conf.get("benchmark") else conf.benchmarks.get(bench, {})
+        bench_conf = (
+            {}
+            if conf.get("benchmarks") is None
+            else conf.benchmarks.get(bench_name, {})
+        )
         trainer.register_benchmark(bench_name, bench_conf, every_epoch=every_epoch)
     # Maybe load experiment
     trainer.maybe_load_checkpoint()
