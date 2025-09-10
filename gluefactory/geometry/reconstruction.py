@@ -9,6 +9,7 @@ import math
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
 
+import h5py
 import numpy as np
 
 try:
@@ -604,4 +605,46 @@ class Reconstruction:
             cameras=ref_sfm.cameras.clone(),
             camera_idx=ref_sfm.camera_idx.clone(),
             registered=registered,
+        )
+
+    # ------------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------------
+
+    def to_h5(self, output_file: Path):
+        with h5py.File(str(output_file), "w") as h5f:
+            h5f.create_dataset("image_names", data=self.image_names)
+            h5f.create_dataset(
+                "cameras", data=self.cameras._data.detach().cpu().numpy()
+            )
+            for image_id, image_name in enumerate(self.image_names):
+                grp = h5f.create_group(image_name)
+                grp.create_dataset(
+                    "w_t_c", data=self.w_t_c[image_id]._data.detach().cpu().numpy()
+                )
+                grp.attrs["camera_idx"] = (
+                    self.camera_idx[image_id].detach().cpu().numpy()
+                )
+                grp.attrs["registered"] = (
+                    self.registered[image_id].detach().cpu().numpy()
+                )
+
+    @classmethod
+    def from_h5(cls, input_file: Path):
+        with h5py.File(str(input_file), "r") as h5f:
+            image_names = h5f["image_names"].__array__().astype(str).tolist()
+            cameras = Camera(torch.from_numpy(h5f["cameras"].__array__()))
+            pose, camera_idx, registered = [], [], []
+            for image_id, image_name in enumerate(image_names):
+                grp = h5f[image_name]
+                pose.append(grp["w_t_c"].__array__())
+                camera_idx.append(grp.attrs["camera_idx"])
+                registered.append(grp.attrs["registered"])
+
+        return cls(
+            w_t_c=Pose(torch.from_numpy(np.array(pose))).float(),
+            cameras=cameras.float(),
+            camera_idx=torch.Tensor(camera_idx).int(),
+            registered=torch.Tensor(registered).long(),
+            image_names=image_names,
         )
