@@ -44,6 +44,7 @@ ETH3D_SCENES = {
 
 class ETH3DReconstructionPipeline(eval_pipeline.EvalPipeline):
     scenes = sum(ETH3D_SCENES.values(), [])
+    scenes = ["pipes"]
 
     default_conf = {
         "data": {
@@ -55,6 +56,7 @@ class ETH3DReconstructionPipeline(eval_pipeline.EvalPipeline):
         },
         "eval": {
             "thresholds": [1, 3, 5, 10, 20],  # degrees
+            "fov_thresholds": [1, 5],  # degrees
             "write_scene_summaries": False,
         },
         "pipeline": {
@@ -182,7 +184,13 @@ class ETH3DReconstructionPipeline(eval_pipeline.EvalPipeline):
         )
 
         for i, th in enumerate(thresholds):
-            results[f"AUC@{th}"] = auc[i]
+            results[f"AUC@{th}°"] = auc[i]
+
+        _, calib_metrics = estimated_model.calibration_error_to(
+            gt_model,
+            fov_thresholds=self.conf.eval.fov_thresholds,
+        )
+        results.update(calib_metrics)
 
         # scene avg results, e.g. from multiview tool
         results["num_images"] = len(gt_model.image_names)

@@ -449,7 +449,7 @@ class Reconstruction:
             registered=torch.ones(len(reg_image_ids), dtype=bool),
         )
 
-    def get_camera(self, image_id: int) -> Camera:
+    def get_camera(self, image_id: int | Sequence[int]) -> Camera:
         return self.cameras[self.camera_idx[image_id]]
 
     def to(self, device: torch.device | str) -> "Reconstruction":
@@ -546,6 +546,53 @@ class Reconstruction:
             errors,
             tools.AUCMetric(thresholds, errors_without_diag.cpu().numpy()).compute(),
         )
+
+    def calibration_error_to(
+        self,
+        gt: "Reconstruction",
+        image_ids: Sequence[int] | None = None,  # Where to compare cameras.
+        which: Sequence[str] = ["mean"],  # max, mean, median
+        fov_thresholds: tuple[float, ...] = (1, 5),  # degrees
+    ) -> dict[str, torch.Tensor]:
+        image_ids = image_ids if image_ids is not None else self.image_ids
+
+        # Get image ids in the ground truth reconstruction
+        gt_name_to_id = {n: i for i, n in enumerate(gt.image_names)}
+        gt_image_ids = [gt_name_to_id[self.image_names[i]] for i in image_ids]
+
+        # Get requested cameras
+        cameras = self.get_camera(image_ids)
+        cameras_gt = gt.get_camera(gt_image_ids)
+
+        # Compute focal length errors
+        abs_error = (cameras_gt.f - cameras.f).abs()
+        rel_error = abs_error / cameras_gt.f
+        fov_error = (cameras_gt.fov() - cameras.fov()).abs().mean(-1) * 180.0 / torch.pi
+        errors = {
+            "f_abs": torch.where(
+                self.registered[image_ids].bool(), abs_error.max(-1).values, 5000
+            ),
+            "f_rel": torch.where(
+                self.registered[image_ids].bool(),
+                (rel_error.max(-1).values * 100),
+                100.0,
+            ),
+            "fov": torch.where(self.registered[image_ids].bool(), fov_error, 180.0),
+        }
+
+        metrics = {}
+        for k, v in errors.items():
+            for agg in which:
+                metrics[f"{k}_{agg}"] = {
+                    "max": torch.max,
+                    "mean": torch.mean,
+                    "median": torch.median,
+                }[agg](v).item()
+
+        aucs = tools.AUCMetric(fov_thresholds, errors["fov"].cpu().numpy()).compute()
+        for th, auc in zip(fov_thresholds, aucs):
+            metrics[f"fov_AUC@{th}°"] = auc
+        return errors, metrics
 
     @classmethod
     def empty_like(cls, ref_sfm):
