@@ -365,16 +365,25 @@ def plot_epipolar_lines(
 
 
 def plot_heatmaps(
-    heatmaps, vmin=0.0, vmax=None, cmap="Spectral", a=0.5, axes=None, log: bool = False
+    heatmaps,
+    vmin=0.0,
+    vmax=None,
+    cmap="Spectral",
+    a=0.5,
+    axes=None,
+    log: bool = False,
+    ax_idxs=None,
 ):
     if axes is None:
         axes = plt.gcf().axes
     if isinstance(heatmaps[0], torch.Tensor):
         heatmaps = [h.detach().cpu().numpy() for h in heatmaps]
     artists = []
-    for i in range(len(axes)):
+    if ax_idxs is None:
+        ax_idxs = range(len(axes))
+    for i, ax_idx in enumerate(ax_idxs):
         a_ = a if isinstance(a, float) else a[i]
-        art = axes[i].imshow(
+        art = axes[ax_idx].imshow(
             heatmaps[i] if not log else np.log(heatmaps[i]),
             alpha=(heatmaps[i] > vmin).astype(float) * a_,
             vmin=vmin,
