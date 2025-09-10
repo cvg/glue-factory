@@ -135,14 +135,14 @@ class ETH3DReconstructionPipeline(eval_pipeline.EvalPipeline):
             model = io.load_model(self.conf.model, self.conf.checkpoint)
 
         experiment_dir.mkdir(exist_ok=True, parents=True)
+        predictions_file = experiment_dir / "predictions.h5"
 
         if overwrite and experiment_dir.exists():
             shutil.rmtree(experiment_dir)
         elif experiment_dir.exists():
-            return experiment_dir
+            return predictions_file
 
         all_preds = {}
-        predictions_file = experiment_dir / "predictions.h5"
 
         loader = self.get_dataloader()
         for data in loader:
