@@ -41,6 +41,14 @@ def batched_eye_like(x: torch.Tensor, n: int):
     return torch.eye(n).to(x)[None].repeat(len(x), 1, 1)
 
 
+def eye_like(tensor: torch.Tensor) -> torch.Tensor:
+    batch_dims = tensor.shape[:-2]
+    identity = torch.eye(*tensor.shape[-2:], dtype=tensor.dtype, device=tensor.device)
+    for _ in batch_dims:
+        identity = identity[None]
+    return identity.repeat(*batch_dims, 1, 1)
+
+
 def skew_symmetric(v):
     """Create a skew-symmetric matrix from a (batched) vector of size (..., 3)."""
     z = torch.zeros_like(v[..., 0])

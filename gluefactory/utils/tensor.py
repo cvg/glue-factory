@@ -125,6 +125,10 @@ class TensorWrapper:
         """Create a new tensor of the same type and device."""
         return self.__class__(self._data.squeeze(*args, **kwargs))
 
+    def clone(self, *args, **kwargs):
+        """Create a new tensor of the same type and device."""
+        return self.__class__(self._data.clone(*args, **kwargs))
+
     @classmethod
     def stack(cls, objects: list, dim=0, *, out=None):
         """Stack a list of objects with the same type and shape."""

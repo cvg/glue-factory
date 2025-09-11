@@ -11,8 +11,8 @@ from . import types
 
 
 def map_tensor(input_, func):
-    string_classes = (str, bytes)
-    if isinstance(input_, string_classes):
+    scalar_classes = (str, bytes, bool, float, int)
+    if isinstance(input_, scalar_classes):
         return input_
     elif isinstance(input_, Mapping):
         return {k: map_tensor(sample, func) for k, sample in input_.items()}

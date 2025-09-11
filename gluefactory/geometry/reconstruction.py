@@ -7,10 +7,22 @@ import dataclasses
 import logging
 import math
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import (
+    Any,
+    Dict,
+    List,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeAlias,
+    Union,
+)
 
 import h5py
 import numpy as np
+
+Self: TypeAlias = Any
 
 try:
     import pycolmap
@@ -199,6 +211,44 @@ class Pose(tensor.TensorWrapper):
             "dt": lambda x: x[..., 1],
         }[agg](self.angular_drdt(other, stack=True))
 
+    def _opening_angle(self, return_cos: bool = False) -> float:
+        v0 = torch.zeros_like(self.t)
+        v0[..., -1] = 1.0
+        v1 = self.R[..., 2, :]
+        v01 = self.inv().t
+        v01 = v01 / v01.norm()
+        n = v0.cross(v01, dim=-1)
+        n = n / n.norm()
+        cos = n.dot(v1)
+        return cos if return_cos else (90 - torch.acos(cos) * 180.0 / 3.1415).abs()
+
+    def opening_angle(self, return_cos: bool = False) -> float:
+        return 0.5 * (
+            self._opening_angle(return_cos=return_cos)
+            + self.inv()._opening_angle(return_cos=return_cos)
+        )
+
+    @classmethod
+    def exp(cls, delta: torch.Tensor):
+        dr, dt = delta.split(3, dim=-1)
+        return cls.from_aa(dr, dt)
+
+    def manifold(self, delta: torch.Tensor | None = None) -> torch.Tensor:
+        if delta is None:
+            delta = torch.zeros_like(self._data[..., :6])
+        return delta
+
+    def update(self, delta: torch.Tensor | Self, inplace: bool = False) -> "Pose":
+        if not isinstance(delta, self.__class__):
+            delta = Pose.exp(delta)
+
+        updated_pose = delta @ self
+        if inplace:
+            self._data = updated_pose._data
+            return self
+        else:
+            return updated_pose
+
     def __repr__(self):
         return f"Pose: {self.shape} {self.dtype} {self.device}"
 
@@ -377,13 +427,32 @@ class Camera(tensor.TensorWrapper):
         J = self.J_denormalize() @ self.J_distort(p2d_dist) @ self.J_project(p3d)
         return J, valid
 
-    @tensor.autocast
-    def image2cam(self, p2d: torch.Tensor) -> torch.Tensor:
+    def image2cam(self, p2d: torch.Tensor, homogeneous: bool = True) -> torch.Tensor:
         """Convert 2D pixel corrdinates to 3D points with z=1"""
         assert self._data.shape
         p2d = self.normalize(p2d)
         # iterative undistortion
-        return gtr.to_homogeneous(p2d)
+        if homogeneous:
+            return gtr.to_homogeneous(p2d)
+        else:
+            return p2d
+
+    def manifold(self, delta: torch.Tensor | None = None) -> torch.Tensor:
+        if delta is None:
+            delta = torch.zeros_like(self._data[..., 2:4])
+        return delta
+
+    def update(self, delta: torch.Tensor | Self, inplace=False) -> "Camera":
+        if isinstance(delta, self.__class__):
+            delta = delta._data[..., 2:4]
+
+        if inplace:
+            self._data[..., 2:4] += delta
+            return self
+        else:
+            cam_copy = self.clone()
+            cam_copy._data[..., 2:4] += delta
+            return cam_copy
 
     def to_cameradict(self, camera_model: Optional[str] = None) -> List[Dict]:
         data = self._data.clone()
