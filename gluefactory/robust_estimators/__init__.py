@@ -19,12 +19,7 @@ def load_estimator(type, estimator):
             try:
                 return get_class(path, BaseEstimator)
             except AssertionError:
-                mod = __import__(path, fromlist=[""])
-                try:
-                    return mod.__main_model__
-                except AttributeError as exc:
-                    print(exc)
-                    continue
+                continue
     raise RuntimeError(
         f'Model {estimator} not found in any of [{" ".join(import_paths)}]'
     )
