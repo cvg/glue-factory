@@ -10,17 +10,8 @@ model:
         max_num_keypoints: 1000000  # do not filter by default.
 benchmarks:
     megadepth1500:
-        eval:
-            estimator: opencv
-            ransac_th: -1
     hpatches:
-        eval:
-            estimator: opencv
-            ransac_th: -1
         model:
             matcher:
                 max_num_keypoints: 1024  # overwrite config above
     scannet1500:
-      eval:
-          estimator: opencv
-          ransac_th: -1

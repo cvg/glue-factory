@@ -1,15 +1,25 @@
+import importlib
 import inspect
 
+from ..utils.tools import get_class
 from .base_estimator import BaseEstimator
 
 
 def load_estimator(type, estimator):
-    module_path = f"{__name__}.{type}.{estimator}"
-    module = __import__(module_path, fromlist=[""])
-    classes = inspect.getmembers(module, inspect.isclass)
-    # Filter classes defined in the module
-    classes = [c for c in classes if c[1].__module__ == module_path]
-    # Filter classes inherited from BaseModel
-    classes = [c for c in classes if issubclass(c[1], BaseEstimator)]
-    assert len(classes) == 1, classes
-    return classes[0][1]
+    import_paths = [
+        estimator,
+        f"{__name__}.{type}.{estimator}",
+    ]
+    for path in import_paths:
+        try:
+            spec = importlib.util.find_spec(path)
+        except ModuleNotFoundError:
+            spec = None
+        if spec is not None:
+            try:
+                return get_class(path, BaseEstimator)
+            except AssertionError:
+                continue
+    raise RuntimeError(
+        f'Model {estimator} not found in any of [{" ".join(import_paths)}]'
+    )

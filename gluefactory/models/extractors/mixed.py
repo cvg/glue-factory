@@ -1,3 +1,7 @@
+from typing import Sequence
+
+import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from omegaconf import OmegaConf
 
@@ -7,11 +11,24 @@ from ..base_model import BaseModel
 to_ctr = OmegaConf.to_container  # convert DictConfig to dict
 
 
+class LazyMLP(nn.Sequential):
+    def __init__(self, dims: int, norm: bool = True):
+        layers = []
+        norm_cls = nn.LayerNorm if norm else nn.Identity
+        for i, dim in enumerate(dims):
+            layers.append(nn.LazyLinear(dim))
+            if i < len(dims) - 1:
+                layers.append(norm_cls(dim))
+                layers.append(nn.ReLU())
+        super().__init__(*layers)
+
+
 class MixedExtractor(BaseModel):
     default_conf = {
         "detector": {"name": None},
         "descriptor": {"name": None},
-        "interpolate_descriptors_from": None,  # field name
+        "interpolate_descriptors_from": None,  # field name, str or list
+        "fusion_mlp": None,
     }
 
     required_data_keys = ["image"]
@@ -30,6 +47,18 @@ class MixedExtractor(BaseModel):
             self.required_data_keys += ["cache"]
             self.required_cache_keys += ["descriptors"]
 
+        self.interpolate_descriptors_from = conf.interpolate_descriptors_from
+        if isinstance(self.interpolate_descriptors_from, str):
+            self.interpolate_descriptors_from = [self.interpolate_descriptors_from]
+            self.fusion = lambda x: x[0]
+        elif isinstance(self.interpolate_descriptors_from, Sequence):
+            if len(self.interpolate_descriptors_from) > 1:
+                assert self.conf.fusion_mlp is not None
+                self.fusion_mlp = LazyMLP(self.conf.fusion_mlp, norm=True)
+                self.fusion = lambda x: self.fusion_mlp(torch.cat(x, dim=-1))
+            else:
+                self.fusion = lambda x: x[0]
+
     def _forward(self, data):
         if self.conf.detector.name:
             pred = self.detector(data)
@@ -38,23 +67,34 @@ class MixedExtractor(BaseModel):
         if self.conf.detector.name:
             pred = {**pred, **self.descriptor({**pred, **data})}
 
-        if self.conf.interpolate_descriptors_from:
+        if self.interpolate_descriptors_from:
             h, w = data["image"].shape[-2:]
-            kpts = pred["keypoints"]
-            pts = (kpts / kpts.new_tensor([[w, h]]) * 2 - 1)[:, None]
-            pred["descriptors"] = (
-                F.grid_sample(
-                    pred[self.conf.interpolate_descriptors_from],
-                    pts,
-                    align_corners=False,
-                    mode="bilinear",
-                )
-                .squeeze(-2)
-                .transpose(-2, -1)
-                .contiguous()
-            )
+            kpts = pred["keypoints"].clone()
+            kpts[..., 0] = kpts[..., 0] * 2 / w - 1
+            kpts[..., 1] = kpts[..., 1] * 2 / h - 1
+
+            kpts = kpts[:, None]
+
+            all_descriptors = [
+                self.interpolate_descriptors(pred[fmap_key], kpts)
+                for fmap_key in self.interpolate_descriptors_from
+            ]
+            pred["descriptors"] = self.fusion(all_descriptors)
 
         return pred
+
+    def interpolate_descriptors(self, fmap, kpts):
+        return (
+            F.grid_sample(
+                fmap,
+                kpts,
+                align_corners=False,
+                mode="bilinear",
+            )
+            .squeeze(-2)
+            .transpose(-2, -1)
+            .contiguous()
+        )
 
     def loss(self, pred, data):
         losses = {}

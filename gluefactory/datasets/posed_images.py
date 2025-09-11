@@ -12,10 +12,10 @@ import torch
 from _collections_abc import Iterable
 from tqdm import tqdm
 
-from ..geometry.wrappers import Camera, Pose
-from ..settings import DATA_PATH
-from ..utils.image import ImagePreprocessor, load_image
-from .base_dataset import BaseDataset
+from .. import settings
+from ..geometry import reconstruction
+from ..utils import preprocess
+from . import base_dataset
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ def names_to_pair(name0, name1, separator="/"):
 
 
 def parse_pose_camera(line):
-    pose = Pose.from_Rt(
+    pose = reconstruction.Pose.from_Rt(
         torch.from_numpy(np.array(line[:9]).astype(np.float32).reshape(3, 3)),
         torch.from_numpy(np.array(line[9:12]).astype(np.float32)),
     )
@@ -46,7 +46,7 @@ def parse_pose_camera(line):
         "height": int(line[14]),
         "params": np.array(line[15:]).astype(np.float32),
     }
-    return pose, Camera.from_colmap(camera_dict)
+    return pose, reconstruction.Camera.from_colmap(camera_dict)
 
 
 def load_depth(depth_path, dformat):
@@ -62,7 +62,7 @@ def load_depth(depth_path, dformat):
         raise ValueError(dformat)
 
 
-class PosedImageDataset(BaseDataset, torch.utils.data.Dataset):
+class PosedImageDataset(base_dataset.BaseDataset, torch.utils.data.Dataset):
     default_conf = {
         "root": "???",
         "image_dir": "???",
@@ -73,7 +73,7 @@ class PosedImageDataset(BaseDataset, torch.utils.data.Dataset):
         "view_groups": None,
         "depth_format": "h5",
         "scene_list": None,
-        "preprocessing": ImagePreprocessor.default_conf,
+        "preprocessing": preprocess.ImagePreprocessor.default_conf,
         "batch_size": 1,
     }
 
@@ -85,7 +85,7 @@ class PosedImageDataset(BaseDataset, torch.utils.data.Dataset):
         return self.root / self.conf.depth_dir.format(scene=scene) / depth_name
 
     def _init(self, conf):
-        self.root = DATA_PATH / conf.root
+        self.root = settings.DATA_PATH / conf.root
         assert self.root.exists()
         # we first read the scenes
         if isinstance(conf.scene_list, Iterable):
@@ -105,7 +105,9 @@ class PosedImageDataset(BaseDataset, torch.utils.data.Dataset):
             scene_view_path = self.root / conf.views.format(scene=scene)
             with open(str(scene_view_path), "r") as f:
                 self.views[scene] = {
-                    line.rstrip().split(" ")[0]: line.rstrip().split(" ")[1:]
+                    line.rstrip().split(" ")[0]: parse_pose_camera(
+                        line.rstrip().split(" ")[1:]
+                    )
                     for line in f
                 }
 
@@ -138,14 +140,14 @@ class PosedImageDataset(BaseDataset, torch.utils.data.Dataset):
                 view_groups = view_group_path.read_text().rstrip("\n").split("\n")
                 self.items += [[scene] + p.split(" ") for p in view_groups]
 
-        self.preprocessor = ImagePreprocessor(conf.preprocessing)
+        self.preprocessor = preprocess.ImagePreprocessor(conf.preprocessing)
 
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         return self
 
     def _read_view(self, scene, name):
-        pose, camera = parse_pose_camera(self.views[scene][name])
-        img = load_image(self.get_image_path(scene, name))
+        pose, camera = self.views[scene][name]
+        img = preprocess.load_image(self.get_image_path(scene, name))
         data = self.preprocessor(img)
         data["T_w2cam"] = pose
         data["camera"] = camera.scale(data["scales"])

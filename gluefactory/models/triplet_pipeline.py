@@ -11,7 +11,7 @@ If no triplet is found, this falls back to two_view_pipeline.py
 
 import torch
 
-from ..utils.misc import get_twoview, stack_twoviews, unstack_twoviews
+from ..utils import misc
 from .two_view_pipeline import TwoViewPipeline
 
 
@@ -56,18 +56,18 @@ class TripletPipeline(TwoViewPipeline):
         if self.conf.batch_triplets:
             B = data["image1"].shape[0]
             # stack on batch dimension
-            m_data = stack_twoviews(data)
-            m_pred = stack_twoviews(pred)
+            m_data = misc.stack_twoviews(data)
+            m_pred = misc.stack_twoviews(pred)
 
             # forward pass
             m_pred = predict_twoview(m_pred, m_data)
 
             # unstack
-            pred = {**pred, **unstack_twoviews(m_pred, B)}
+            pred = {**pred, **misc.unstack_twoviews(m_pred, B)}
         else:
             for idx in ["0to1", "0to2", "1to2"]:
-                m_data = get_twoview(data, idx)
-                m_pred = get_twoview(pred, idx)
+                m_data = misc.get_twoview(data, idx)
+                m_pred = misc.get_twoview(pred, idx)
                 pred[idx] = predict_twoview(m_pred, m_data)
         return pred
 
@@ -75,14 +75,14 @@ class TripletPipeline(TwoViewPipeline):
         if not has_triplet(data):
             return super().loss(pred, data)
         if self.conf.batch_triplets:
-            m_data = stack_twoviews(data)
-            m_pred = stack_twoviews(pred)
+            m_data = misc.stack_twoviews(data)
+            m_pred = misc.stack_twoviews(pred)
             losses, metrics = super().loss(m_pred, m_data)
         else:
             losses = {}
             metrics = {}
             for idx in ["0to1", "0to2", "1to2"]:
-                data_i = get_twoview(data, idx)
+                data_i = misc.get_twoview(data, idx)
                 pred_i = pred[idx]
                 losses_i, metrics_i = super().loss(pred_i, data_i)
                 for k, v in losses_i.items():
@@ -97,3 +97,15 @@ class TripletPipeline(TwoViewPipeline):
                         metrics[k] = v
 
         return losses, metrics
+
+    def visualize(self, pred, data, **kwargs):
+        """Visualize the matches."""
+        figures = {}
+        for idx in ["0to1", "0to2", "1to2"]:
+            data_i = misc.get_twoview(data, idx)
+            pred_i = pred[idx]
+            for k in self.components:
+                if self.conf[k].name and self.conf[k].get("visualize", True):
+                    vdict = getattr(self, k).visualize(pred_i, data_i, **kwargs)
+                    figures.update({k + "_" + idx: v for k, v in vdict.items()})
+        return figures

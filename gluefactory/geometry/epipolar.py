@@ -1,19 +1,23 @@
 import torch
 
-from .utils import skew_symmetric, to_homogeneous
-from .wrappers import Camera, Pose
+from . import reconstruction
+from . import transforms as tr
 
 
-def T_to_E(T: Pose):
+def T_to_E(T: reconstruction.Pose):
     """Convert batched poses (..., 4, 4) to batched essential matrices."""
-    return skew_symmetric(T.t) @ T.R
+    return tr.skew_symmetric(T.t) @ T.R
 
 
-def T_to_F(cam0: Camera, cam1: Camera, T_0to1: Pose):
+def T_to_F(
+    cam0: reconstruction.Camera,
+    cam1: reconstruction.Camera,
+    T_0to1: reconstruction.Pose,
+):
     return E_to_F(cam0, cam1, T_to_E(T_0to1))
 
 
-def E_to_F(cam0: Camera, cam1: Camera, E: torch.Tensor):
+def E_to_F(cam0: reconstruction.Camera, cam1: reconstruction.Camera, E: torch.Tensor):
     assert cam0._data.shape[-1] == 6, "only pinhole cameras supported"
     assert cam1._data.shape[-1] == 6, "only pinhole cameras supported"
     K0 = cam0.calibration_matrix()
@@ -21,7 +25,7 @@ def E_to_F(cam0: Camera, cam1: Camera, E: torch.Tensor):
     return K1.inverse().transpose(-1, -2) @ E @ K0.inverse()
 
 
-def F_to_E(cam0: Camera, cam1: Camera, F: torch.Tensor):
+def F_to_E(cam0: reconstruction.Camera, cam1: reconstruction.Camera, F: torch.Tensor):
     assert cam0._data.shape[-1] == 6, "only pinhole cameras supported"
     assert cam1._data.shape[-1] == 6, "only pinhole cameras supported"
     K0 = cam0.calibration_matrix()
@@ -41,9 +45,9 @@ def sym_epipolar_distance(p0, p1, E, squared=True):
     if p0.shape[-2] == 0:
         return torch.zeros(p0.shape[:-1]).to(p0)
     if p0.shape[-1] != 3:
-        p0 = to_homogeneous(p0)
+        p0 = tr.to_homogeneous(p0)
     if p1.shape[-1] != 3:
-        p1 = to_homogeneous(p1)
+        p1 = tr.to_homogeneous(p1)
     p1_E_p0 = torch.einsum("...ni,...ij,...nj->...n", p1, E, p0)
     E_p0 = torch.einsum("...ij,...nj->...ni", E, p0)
     Et_p1 = torch.einsum("...ij,...ni->...nj", E, p1)
@@ -58,9 +62,9 @@ def sym_epipolar_distance(p0, p1, E, squared=True):
 
 def sym_epipolar_distance_all(p0, p1, E, eps=1e-15):
     if p0.shape[-1] != 3:
-        p0 = to_homogeneous(p0)
+        p0 = tr.to_homogeneous(p0)
     if p1.shape[-1] != 3:
-        p1 = to_homogeneous(p1)
+        p1 = tr.to_homogeneous(p1)
     p1_E_p0 = torch.einsum("...mi,...ij,...nj->...nm", p1, E, p0).abs()
     E_p0 = torch.einsum("...ij,...nj->...ni", E, p0)
     Et_p1 = torch.einsum("...ij,...mi->...mj", E, p1)
@@ -73,7 +77,13 @@ def sym_epipolar_distance_all(p0, p1, E, eps=1e-15):
 
 
 def generalized_epi_dist(
-    kpts0, kpts1, cam0: Camera, cam1: Camera, T_0to1: Pose, all=True, essential=True
+    kpts0,
+    kpts1,
+    cam0: reconstruction.Camera,
+    cam1: reconstruction.Camera,
+    T_0to1: reconstruction.Pose,
+    all=True,
+    essential=True,
 ):
     if essential:
         E = T_to_E(T_0to1)
@@ -86,8 +96,7 @@ def generalized_epi_dist(
     else:
         assert cam0._data.shape[-1] == 6
         assert cam1._data.shape[-1] == 6
-        K0, K1 = cam0.calibration_matrix(), cam1.calibration_matrix()
-        F = K1.inverse().transpose(-1, -2) @ T_to_E(T_0to1) @ K0.inverse()
+        F = T_to_F(cam0, cam1, T_0to1)
         if all:
             return sym_epipolar_distance_all(kpts0, kpts1, F)
         else:
@@ -108,7 +117,7 @@ def decompose_essential_matrix(E):
     U = torch.where((torch.det(U) < 0.0)[..., None, None], U * mask, U)
     Vt = torch.where((torch.det(Vt) < 0.0)[..., None, None], Vt * maskt, Vt)
 
-    W = skew_symmetric(E.new_tensor([[0, 0, 1]]))
+    W = tr.skew_symmetric(E.new_tensor([[0, 0, 1]]))
     W[..., 2, 2] += 1.0
 
     # reconstruct rotations and retrieve translation vector

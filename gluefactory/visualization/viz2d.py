@@ -199,6 +199,10 @@ def plot_matches(kpts0, kpts1, color=None, lw=1.5, ps=4, a=1.0, labels=None, axe
         kpts0 = kpts0.detach().cpu().numpy()
     if isinstance(kpts1, torch.Tensor):
         kpts1 = kpts1.detach().cpu().numpy()
+
+    if len(kpts0) == 0:
+        return None
+
     if color is None:
         kpts0_norm = (kpts0 - np.min(kpts0, axis=0)) / (np.ptp(kpts0, axis=0) + 1e-6)
         color = cm_grad2d(kpts0_norm).tolist()
@@ -360,15 +364,28 @@ def plot_epipolar_lines(
             )
 
 
-def plot_heatmaps(heatmaps, vmin=0.0, vmax=None, cmap="Spectral", a=0.5, axes=None):
+def plot_heatmaps(
+    heatmaps,
+    vmin=0.0,
+    vmax=None,
+    cmap="Spectral",
+    a=0.5,
+    axes=None,
+    log: bool = False,
+    ax_idxs=None,
+):
     if axes is None:
         axes = plt.gcf().axes
+    if isinstance(heatmaps[0], torch.Tensor):
+        heatmaps = [h.detach().cpu().numpy() for h in heatmaps]
     artists = []
-    for i in range(len(axes)):
+    if ax_idxs is None:
+        ax_idxs = range(len(axes))
+    for i, ax_idx in enumerate(ax_idxs):
         a_ = a if isinstance(a, float) else a[i]
-        art = axes[i].imshow(
-            heatmaps[i],
-            alpha=(heatmaps[i] > vmin).float() * a_,
+        art = axes[ax_idx].imshow(
+            heatmaps[i] if not log else np.log(heatmaps[i]),
+            alpha=(heatmaps[i] > vmin).astype(float) * a_,
             vmin=vmin,
             vmax=vmax,
             cmap=cmap,
@@ -509,3 +526,41 @@ def plot_cumulative(
     plt.tight_layout()
 
     return plt.gcf()
+
+
+def features_to_RGB(*Fs, skip: int = 1, norm: bool = False, offset: int = 0):
+    """Project a list of d-dimensional feature maps (...c) to RGB colors using PCA."""
+    from sklearn.decomposition import PCA
+
+    if isinstance(Fs[0], torch.Tensor):
+        Fs = [F.detach().cpu().numpy()[0] for F in Fs]
+
+    def normalize(x):
+        if norm:
+            return x / np.linalg.norm(x, axis=-1, keepdims=True)
+        return x
+
+    flatten = []
+    for F in Fs:
+        F = F.reshape(-1, F.shape[-1])
+        flatten.append(F)
+    flatten = np.concatenate(flatten, axis=0)
+
+    pca = PCA(n_components=3 + offset)
+    if skip > 1:
+        pca.fit(normalize(flatten[::skip]))
+        flatten = pca.transform(normalize(flatten))
+    else:
+        flatten = pca.fit_transform(normalize(flatten))
+
+    flatten = flatten[:, offset:]
+    flatten = flatten / np.linalg.norm(flatten, axis=-1, keepdims=True)
+    flatten = (flatten + 1) / 2
+
+    f_rgbs = []
+    for f_in in Fs:
+        f_rgb, flatten = np.split(flatten, [np.prod(f_in.shape[:-1])], axis=0)
+        f_rgb = f_rgb.reshape(f_in.shape[:-1] + (3,))
+        f_rgbs.append(f_rgb)
+    assert flatten.shape[0] == 0
+    return f_rgbs
