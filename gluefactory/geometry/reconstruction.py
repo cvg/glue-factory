@@ -241,8 +241,8 @@ class Pose(tensor.TensorWrapper):
     def update(self, delta: torch.Tensor | Self, inplace: bool = False) -> "Pose":
         if not isinstance(delta, self.__class__):
             delta = Pose.exp(delta)
-
-        updated_pose = delta @ self
+        # Inverted!
+        updated_pose = self @ delta
         if inplace:
             self._data = updated_pose._data
             return self
