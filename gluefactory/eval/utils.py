@@ -175,14 +175,6 @@ def eval_matches_homography(data: dict, pred: dict) -> dict:
     results["gt_match_recall@3px"] = recall(
         pred["matches0"][None], gt_pred["matches0"].cpu()
     )[0].item()
-
-    def precision(m, gt_m):
-        mask = ((m > -1) & (gt_m >= -1)).float()
-        return ((m == gt_m) * mask).sum(1) / (1e-8 + mask.sum(1))
-
-    results["gt_match_precision@3px"] = precision(
-        pred["matches0"][None], gt_pred["matches0"].cpu()
-    )[0].item()
     return results
 
 
