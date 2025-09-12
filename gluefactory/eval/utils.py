@@ -4,7 +4,11 @@ from kornia.geometry.homography import find_homography_dlt
 
 from ..geometry.depth import symmetric_reprojection_error
 from ..geometry.epipolar import generalized_epi_dist, relative_pose_error
-from ..geometry.gt_generation import IGNORE_FEATURE, gt_matches_from_pose_depth
+from ..geometry.gt_generation import (
+    IGNORE_FEATURE,
+    gt_matches_from_homography,
+    gt_matches_from_pose_depth,
+)
 from ..geometry.homography import homography_corner_error, sym_homography_error
 from ..robust_estimators import load_estimator
 from ..utils.tensor import batch_to_device, index_batch
@@ -153,6 +157,24 @@ def eval_matches_homography(data: dict, pred: dict) -> dict:
     results["prec@3px"] = (err < 3).float().mean().nan_to_num().item()
     results["num_matches"] = pts0.shape[0]
     results["num_keypoints"] = (kp0.shape[0] + kp1.shape[0]) / 2.0
+
+    # Collect match statistics with respect to ground truth
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    gt_pred = gt_matches_from_homography(
+        kp0[None].to(device),
+        kp1[None].to(device),
+        H_gt[None].to(device),
+        pos_th=3.0,
+        neg_th=3.0,
+    )
+
+    def recall(m, gt_m):
+        mask = (gt_m > -1).float()
+        return ((m == gt_m) * mask).sum(1) / (1e-8 + mask.sum(1))
+
+    results["gt_match_recall@3px"] = recall(
+        pred["matches0"][None], gt_pred["matches0"].cpu()
+    )[0].item()
     return results
 
 
