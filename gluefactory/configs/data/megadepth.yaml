@@ -3,6 +3,7 @@ preprocessing:
     resize: 1024
     side: long
     square_pad: True
+    antialias: False
 train_split: train_scenes_clean.txt
 train_num_per_scene: 300
 val_split: valid_scenes_clean.txt
