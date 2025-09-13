@@ -137,6 +137,7 @@ class Trainer:
         "record_memory": None,  # Record memory usage during training (# record steps)
         "log_it": False,  # Log tensorboard on iteration (default is num_samples)
         "detect_anomaly": False,  # Enable anomaly detection
+        "gradient_accumulation_steps": 1,  # Accumulate gradients over N steps
         "run_benchmarks": (),
     }
 
@@ -511,7 +512,9 @@ class Trainer:
     # Step functions (train, eval, visualize, ...)
     # ------------------------------------------------------------------------
 
-    def train_step(self, data: Batch) -> tuple[Predictions, LossMetrics]:
+    def train_step(
+        self, data: Batch, do_update: bool = True
+    ) -> tuple[Predictions, LossMetrics]:
         with torch.autocast(
             device_type="cuda" if torch.cuda.is_available() else "cpu",
             enabled=self.use_mp,
@@ -523,6 +526,7 @@ class Trainer:
             self.step_timer.measure("forward")
             losses, metrics = self.model.loss(pred, data)
             loss = torch.mean(losses["total"])
+            loss = loss / self.conf.gradient_accumulation_steps
             loss_metrics = {
                 **metrics,
                 **{"loss/" + k: v for k, v in losses.items()},
@@ -560,21 +564,25 @@ class Trainer:
                             detected_anomaly = True
                     if detected_anomaly:
                         raise RuntimeError("Detected anomaly in training.")
-                if self.conf.get("clip_grad", None):
-                    self.scaler.unscale_(self.optimizer)
-                    try:
-                        torch.nn.utils.clip_grad_norm_(
-                            self.all_params,
-                            max_norm=self.conf.clip_grad,
-                            error_if_nonfinite=True,
-                        )
+                if do_update:
+                    if self.conf.get("clip_grad", None):
+                        self.scaler.unscale_(self.optimizer)
+                        try:
+                            torch.nn.utils.clip_grad_norm_(
+                                self.all_params,
+                                max_norm=self.conf.clip_grad,
+                                error_if_nonfinite=True,
+                            )
+                            self.scaler.step(self.optimizer)
+                        except RuntimeError:
+                            logger.warning(
+                                "NaN detected in gradients. Skipping iteration."
+                            )
+                        self.scaler.update()
+                    else:
                         self.scaler.step(self.optimizer)
-                    except RuntimeError:
-                        logger.warning("NaN detected in gradients. Skipping iteration.")
-                    self.scaler.update()
-                else:
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
+                        self.scaler.update()
+                    self.optimizer.zero_grad()
                 self.step_timer.measure("step")
                 if not self.conf.lr_schedule.on_epoch:
                     self.learning_rate_step()
@@ -606,6 +614,7 @@ class Trainer:
         train_loss_metrics = collections.defaultdict(tools.AverageMetric)
         train_iter = iter(dataloader)
         self.step_timer.hard_reset()
+        self.optimizer.zero_grad()
         for it in range(len(dataloader)):
             if max_iters is not None and it >= max_iters:
                 logger.info(
@@ -618,9 +627,10 @@ class Trainer:
             self.tot_it += 1
 
             self.model.train()
-            self.optimizer.zero_grad()
 
-            pred, loss_metrics = self.train_step(data)
+            # Perform gradient accumulation
+            do_update = ((it + 1) % self.conf.gradient_accumulation_steps) == 0
+            pred, loss_metrics = self.train_step(data, do_update=do_update)
             for k, val in loss_metrics.items():
                 train_loss_metrics[k].update(val)
 
@@ -653,7 +663,7 @@ class Trainer:
             del pred, data, loss_metrics
             torch.cuda.empty_cache()  # should be cleared at the first iter
             self.step_timer.reset()
-
+        self.optimizer.zero_grad()
         if self.distributed:
             dist.barrier()
 
