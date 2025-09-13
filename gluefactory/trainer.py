@@ -446,11 +446,6 @@ class Trainer:
         # Write Epoch
         writer.add_scalar("training/epoch", self.epoch, tot_n_samples)
 
-        # Log memory stats
-        if torch.cuda.is_available():
-            device_stats = tools.collect_device_stats()
-            tools.write_dict_summaries(writer, "memory", device_stats, tot_n_samples)
-
     def log_eval(self, writer: Writer, it: int, eval_results: Any):
         tot_n_samples = self.current_it
         results, pr_metrics, figures = eval_results
@@ -469,14 +464,15 @@ class Trainer:
         batch_size: int,
     ):
         tot_n_samples = self.current_it
+        steps_per_sec = 0.0
         if self.step_timer.num_steps() > 1:
             step_duration, section_times = self.step_timer.compute()
-
+            steps_per_sec = 1 / step_duration
             writer.add_scalar("step/total", step_duration, tot_n_samples)
-            writer.add_scalar("step/_per_sec", 1 / step_duration, tot_n_samples)
+            writer.add_scalar("step/_per_sec", steps_per_sec, tot_n_samples)
             writer.add_scalar(
                 "step/_samples_per_sec",
-                1 / step_duration * batch_size * self.num_gpus,
+                steps_per_sec * batch_size * self.num_gpus,
                 tot_n_samples,
             )
             # Write section timings and fractions of step duration.
@@ -500,9 +496,16 @@ class Trainer:
         self.step_timer.stats.clear()
 
         # Log memory stats
+        memory_used, memory_total = 0.0, 0.0
         if torch.cuda.is_available():
             device_stats = tools.collect_device_stats()
+            memory_used = device_stats["global_used"]
+            memory_total = device_stats["global_total"]
             tools.write_dict_summaries(writer, "memory", device_stats, tot_n_samples)
+
+        self.info(
+            f"[Used {memory_used:.1f}/{memory_total:.1f} GB | {steps_per_sec:.1f} it/s]"
+        )
 
     # ------------------------------------------------------------------------
     # Step functions (train, eval, visualize, ...)
