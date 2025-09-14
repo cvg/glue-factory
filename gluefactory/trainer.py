@@ -29,6 +29,26 @@ LossMetrics: TypeAlias = dict[str, torch.Tensor]
 Writer: TypeAlias = SummaryWriter | None
 
 
+def compose_loss(loss_dict: LossMetrics, compose_str: str) -> torch.Tensor:
+    """Compose a loss from a string, e.g. '1.0*loss1 + 0.1*loss2'."""
+    # @TODO: Support multiplicative loss terms
+    addition_terms = compose_str.split("+")
+    loss = 0.0
+    for term in addition_terms:
+        term = term.strip()
+        if "*" in term:
+            weight_str, key = term.split("*")
+            weight = float(weight_str)
+        else:
+            weight = 1.0
+            key = term
+        key = key.strip()
+        if key not in loss_dict:
+            raise KeyError(f"Key {key} not found in loss dict.")
+        loss = loss + weight * loss_dict[key]
+    return loss
+
+
 @torch.no_grad()
 def run_evaluation(
     model: BaseModel | torch.nn.parallel.DistributedDataParallel,
@@ -138,6 +158,7 @@ class Trainer:
         "log_it": False,  # Log tensorboard on iteration (default is num_samples)
         "detect_anomaly": False,  # Enable anomaly detection
         "gradient_accumulation_steps": 1,  # Accumulate gradients over N steps
+        "ddp_find_unused_parameters": False,  # DDP find_unused_parameters
         "run_benchmarks": (),
     }
 
@@ -353,7 +374,10 @@ class Trainer:
             # Compile before DDP
             self.model = self.model.compile(mode=self.conf.compile)
         if self.distributed:
-            self.model = self.model.make_ddp(device_ids=[self.device])
+            self.model = self.model.make_ddp(
+                device_ids=[self.device],
+                find_unused_parameters=self.conf.ddp_find_unused_parameters,
+            )
 
     def construct_profiler(
         self, output_dir: Path, store_raw_trace: bool = False
@@ -525,6 +549,10 @@ class Trainer:
             pred = self.model(data)
             self.step_timer.measure("forward")
             losses, metrics = self.model.loss(pred, data)
+            if self.conf.get("compose_loss", None) is not None:
+                losses["total"] = compose_loss(
+                    {**metrics, **losses}, self.conf.compose_loss
+                )
             loss = torch.mean(losses["total"])
             loss = loss / self.conf.gradient_accumulation_steps
             loss_metrics = {
