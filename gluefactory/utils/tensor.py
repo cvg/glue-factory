@@ -143,6 +143,10 @@ class TensorWrapper:
         return cls(data)
 
     @classmethod
+    def concat(cls, objects: list, dim=0, *, out=None):
+        return cls.cat(objects, dim=dim, out=out)
+
+    @classmethod
     def where(cls, condition, input, other, *, out=None):
         if not (isinstance(input, cls) and isinstance(other, cls)):
             raise ValueError(f"Incorrect inputs: {input}, {other}.")

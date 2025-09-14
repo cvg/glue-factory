@@ -7,7 +7,7 @@ import torch
 import torch.multiprocessing as tmp
 import torch.nn.functional as F
 
-from . import types
+from . import tensor, types
 
 
 def map_tensor(input_, func):
@@ -156,7 +156,7 @@ def concat_tree(trees: Iterable[types.Tree], check: bool = False) -> types.Tree:
     """Concatenate a list of trees into a single batch"""
 
     def combine(val_list: Sequence[Any]) -> Any:
-        if isinstance(val_list[0], torch.Tensor):
+        if isinstance(val_list[0], (torch.Tensor, tensor.TensorWrapper)):
             return torch.cat(val_list)
         elif isinstance(val_list[0], Sequence):
             return sum(val_list, start=[])
