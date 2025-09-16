@@ -450,7 +450,13 @@ class Trainer:
         """Get the current iteration identifier."""
         return self.tot_it if self.conf.log_it else self.tot_n_samples
 
-    def log_train(self, writer: Writer, it: int, train_loss_metrics: LossMetrics):
+    def log_train(
+        self,
+        writer: Writer,
+        it: int,
+        train_loss_metrics: LossMetrics,
+        extra_str: str = "",
+    ):
         tot_n_samples = self.current_it
         all_params = self.all_params
         writer.add_scalar("l2/param_norm", misc.param_norm(all_params), tot_n_samples)
@@ -459,8 +465,8 @@ class Trainer:
         str_loss_metrics = [f"{k} {v:.3E}" for k, v in loss_metrics.items()]
         # Write training losses
         logger.info(
-            "[E {} | it {}] loss {{{}}}".format(
-                self.epoch, it, ", ".join(str_loss_metrics)
+            "[E {} | it {}] {} loss {{{}}}".format(
+                self.epoch, it, extra_str, ", ".join(str_loss_metrics)
             )
         )
         tools.write_dict_summaries(writer, "training", loss_metrics, tot_n_samples)
@@ -487,7 +493,7 @@ class Trainer:
         self,
         writer: Writer,
         batch_size: int,
-    ):
+    ) -> str:
         tot_n_samples = self.current_it
         steps_per_sec = 0.0
         if self.step_timer.num_steps() > 1:
@@ -528,7 +534,7 @@ class Trainer:
             memory_total = device_stats["global_total"]
             tools.write_dict_summaries(writer, "memory", device_stats, tot_n_samples)
 
-        self.info(
+        return (
             f"[Used {memory_used:.1f}/{memory_total:.1f} GB | {steps_per_sec:.1f} it/s]"
         )
 
@@ -672,9 +678,13 @@ class Trainer:
 
             # Log training metrics (loss, ...) and hardware usage
             if (it % self.conf.log_every_iter == 0) and self.rank == 0:
-                self.log_train(writer, it, train_loss_metrics)
+                time_and_mem_str = self.log_time_and_memory(
+                    writer, dataloader.batch_size
+                )
+                self.log_train(
+                    writer, it, train_loss_metrics, extra_str=time_and_mem_str
+                )
                 train_loss_metrics.clear()  # Reset training loss aggregators
-                self.log_time_and_memory(writer, dataloader.batch_size)
 
             # Make plots of training steps
             if self.conf.plot_every_iter is not None:
