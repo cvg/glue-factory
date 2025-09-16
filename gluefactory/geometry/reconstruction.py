@@ -541,11 +541,11 @@ class Reconstruction:
 
     def clone(self) -> "Reconstruction":
         return Reconstruction(
-            self.w_t_c.clone(),
-            self.cameras.clone(),
-            self.camera_idx.clone(),
-            self.registered.clone(),
+            w_t_c=self.w_t_c.clone(),
+            cameras=self.cameras.clone(),
+            camera_idx=self.camera_idx.clone(),
             image_names=self.image_names.copy(),
+            registered=self.registered.clone(),
         )
 
     def __repr__(self) -> str:
