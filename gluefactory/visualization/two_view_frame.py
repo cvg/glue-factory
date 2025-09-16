@@ -1,10 +1,11 @@
 import pprint
 
+import matplotlib.pyplot as plt
 import numpy as np
 
-from ..utils.misc import flatten
+from ..utils import misc
+from . import tools as vtools
 from . import viz2d
-from .tools import _COMMON, RadioHideTool, ToggleTool, __plot_dict__
 
 
 class FormatPrinter(pprint.PrettyPrinter):
@@ -24,7 +25,7 @@ class TwoViewFrame:
         "summary_visible": False,
     }
 
-    plot_dict = __plot_dict__
+    plot_dict = vtools.__plot_dict__
 
     childs = []
 
@@ -44,10 +45,10 @@ class TwoViewFrame:
         keys = None
         for _, pred in preds.items():
             if keys is None:
-                keys = set((flatten(pred)).keys())
+                keys = set((misc.flatten_dict(pred)).keys())
             else:
-                keys = keys.intersection(flatten(pred).keys())
-        keys = keys.union(flatten(data).keys())
+                keys = keys.intersection(misc.flatten_dict(pred).keys())
+        keys = keys.union(misc.flatten_dict(data).keys())
 
         self.options = [
             k for k, v in self.plot_dict.items() if set(v.required_keys).issubset(keys)
@@ -55,7 +56,7 @@ class TwoViewFrame:
         self.handle = None
         self.radios = self.fig.canvas.manager.toolmanager.add_tool(
             "switch plot",
-            RadioHideTool,
+            vtools.RadioHideTool,
             options=self.options,
             callback_fn=self.draw,
             active=conf.default,
@@ -65,7 +66,7 @@ class TwoViewFrame:
 
         self.toggle_summary = self.fig.canvas.manager.toolmanager.add_tool(
             "toggle summary",
-            ToggleTool,
+            vtools.ToggleTool,
             toggled=self.conf.summary_visible,
             callback_fn=self.set_summary_visible,
             keymap="t",
@@ -74,9 +75,9 @@ class TwoViewFrame:
 
         self.toggle_lines = self.fig.canvas.manager.toolmanager.add_tool(
             "show lines",
-            RadioHideTool,
+            vtools.RadioHideTool,
             options=["auto", "on", "off"],
-            active=_COMMON["DRAW_LINE_MODE"],
+            active=vtools._COMMON["DRAW_LINE_MODE"],
             callback_fn=self.toggle_lines,
             keymap="_",
             description="Toggle visibility of lines in the plot",
@@ -127,6 +128,7 @@ class TwoViewFrame:
                     va="bottom",
                     backgroundcolor=(0, 0, 0, 0.5),
                     visible=self.conf.summary_visible,
+                    fs=None,
                 )
                 for i, n in enumerate(self.names)
             ]
@@ -143,7 +145,7 @@ class TwoViewFrame:
 
     def toggle_lines(self, value):
         """toggle visibility of lines in the plot"""
-        _COMMON["DRAW_LINE_MODE"] = value
+        vtools._COMMON["DRAW_LINE_MODE"] = value
         return self.draw(self.conf.default)
 
     def clear(self):
@@ -175,3 +177,10 @@ class TwoViewFrame:
         self.conf.summary_visible = visible
         [s.set_visible(visible) for s in self.summary_arts]
         self.fig.canvas.draw_idle()
+
+    def close(self):
+        plt.close(self.fig)
+
+    def show(self):
+        """Show the frame"""
+        self.fig.show()

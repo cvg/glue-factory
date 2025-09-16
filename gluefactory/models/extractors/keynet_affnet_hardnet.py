@@ -1,8 +1,8 @@
 import kornia
 import torch
 
+from ...utils import misc
 from ..base_model import BaseModel
-from ..utils.misc import pad_to_length
 
 
 class KeyNetAffNetHardNet(BaseModel):
@@ -35,7 +35,7 @@ class KeyNetAffNetHardNet(BaseModel):
             if im_size is not None:
                 img_i = img_i[:, :, : im_size[i, 1], : im_size[i, 0]]
             laf, score, desc = self.model(img_i)
-            xn = pad_to_length(
+            xn = misc.pad_to_length(
                 kornia.feature.get_laf_center(laf),
                 self.conf.max_num_keypoints,
                 pad_dim=-2,
@@ -50,8 +50,8 @@ class KeyNetAffNetHardNet(BaseModel):
                 -3,
             )
             lafs.append(laf)
-            scores.append(pad_to_length(score, self.conf.max_num_keypoints, -1))
-            descs.append(pad_to_length(desc, self.conf.max_num_keypoints, -2))
+            scores.append(misc.pad_to_length(score, self.conf.max_num_keypoints, -1))
+            descs.append(misc.pad_to_length(desc, self.conf.max_num_keypoints, -2))
 
         lafs = torch.cat(lafs, 0)
         scores = torch.cat(scores, 0)

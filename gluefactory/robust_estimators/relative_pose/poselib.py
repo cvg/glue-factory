@@ -2,7 +2,7 @@ import poselib
 import torch
 from omegaconf import OmegaConf
 
-from ...geometry.wrappers import Pose
+from ...geometry import reconstruction
 from ..base_estimator import BaseEstimator
 
 
@@ -30,9 +30,11 @@ class PoseLibRelativePoseEstimator(BaseEstimator):
         )
         success = M is not None
         if success:
-            M = Pose.from_Rt(torch.tensor(M.R), torch.tensor(M.t)).to(pts0)
+            M = reconstruction.Pose.from_Rt(torch.tensor(M.R), torch.tensor(M.t)).to(
+                pts0
+            )
         else:
-            M = Pose.from_4x4mat(torch.eye(4)).to(pts0)
+            M = reconstruction.Pose.from_4x4mat(torch.eye(4)).to(pts0)
 
         estimation = {
             "success": success,

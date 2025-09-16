@@ -1,0 +1,3 @@
+name: extractors.aliked
+max_num_keypoints: 2048
+detection_threshold: 0.0

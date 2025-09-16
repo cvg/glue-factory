@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from .tensor import batch_to_device
+from . import misc
 
 
 @torch.no_grad()
@@ -23,14 +23,15 @@ def export_predictions(
     keys="*",
     callback_fn=None,
     optional_keys=[],
+    mode: str = "w",
 ):
     assert keys == "*" or isinstance(keys, (tuple, list))
     Path(output_file).parent.mkdir(exist_ok=True, parents=True)
-    hfile = h5py.File(str(output_file), "w")
+    hfile = h5py.File(str(output_file), mode)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device).eval()
     for data_ in tqdm(loader):
-        data = batch_to_device(data_, device, non_blocking=True)
+        data = misc.batch_to_device(data_, device, non_blocking=True)
         pred = model(data)
         if callback_fn is not None:
             pred = {**callback_fn(pred, data), **pred}
@@ -71,11 +72,30 @@ def export_predictions(
         try:
             name = data["name"][0]
             grp = hfile.create_group(name)
-            for k, v in pred.items():
-                grp.create_dataset(k, data=v)
+            dict_to_h5group(grp, pred)
         except RuntimeError:
             continue
 
         del pred
     hfile.close()
     return output_file
+
+
+def dict_to_h5group(h5grp, data):
+    """Write a nested dictionary to an h5 file."""
+    for k, v in data.items():
+        if isinstance(v, dict):
+            dict_to_h5group(h5grp.create_group(k), v)
+        elif isinstance(v, np.ndarray):
+            h5grp.create_dataset(k, data=v)
+        elif isinstance(v, torch.Tensor):
+            h5grp.create_dataset(k, data=v.cpu().numpy())
+        else:
+            h5grp.attrs[k] = v
+
+
+def dict_to_h5(file_path, data, modfe="w"):
+    """Write a nested dictionary to an h5 file."""
+    with h5py.File(file_path, modfe) as hfile:
+        dict_to_h5group(hfile, data)
+    return file_path

@@ -2,12 +2,8 @@ import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
 
-from .depth import project, sample_depth
-from .epipolar import T_to_E, sym_epipolar_distance_all
-from .homography import warp_points_torch
-
-IGNORE_FEATURE = -2
-UNMATCHED_FEATURE = -1
+from ..utils import types
+from . import depth, epipolar, homography
 
 
 @torch.no_grad()
@@ -34,13 +30,13 @@ def gt_matches_from_pose_depth(
     else:
         assert depth0 is not None
         assert depth1 is not None
-        d0, valid0 = sample_depth(kp0, depth0)
-        d1, valid1 = sample_depth(kp1, depth1)
+        d0, valid0 = depth.sample_depth(kp0, depth0)
+        d1, valid1 = depth.sample_depth(kp1, depth1)
 
-    kp0_1, visible0 = project(
+    kp0_1, visible0 = depth.project(
         kp0, d0, depth1, camera0, camera1, T_0to1, valid0, ccth=cc_th
     )
-    kp1_0, visible1 = project(
+    kp1_0, visible1 = depth.project(
         kp1, d1, depth0, camera1, camera0, T_1to0, valid1, ccth=cc_th
     )
     mask_visible = visible0.unsqueeze(-1) & visible1.unsqueeze(-2)
@@ -49,8 +45,7 @@ def gt_matches_from_pose_depth(
     dist0 = torch.sum((kp0_1.unsqueeze(-2) - kp1.unsqueeze(-3)) ** 2, -1)
     dist1 = torch.sum((kp0.unsqueeze(-2) - kp1_0.unsqueeze(-3)) ** 2, -1)
     dist = torch.max(dist0, dist1)
-    inf = dist.new_tensor(float("inf"))
-    dist = torch.where(mask_visible, dist, inf)
+    dist = torch.where(mask_visible, dist, torch.inf)
 
     min0 = dist.min(-1).indices
     min1 = dist.min(-2).indices
@@ -67,28 +62,28 @@ def gt_matches_from_pose_depth(
     # pack the indices of positive matches
     # if -1: unmatched point
     # if -2: ignore point
-    unmatched = min0.new_tensor(UNMATCHED_FEATURE)
-    ignore = min0.new_tensor(IGNORE_FEATURE)
-    m0 = torch.where(positive.any(-1), min0, ignore)
-    m1 = torch.where(positive.any(-2), min1, ignore)
-    m0 = torch.where(negative0, unmatched, m0)
-    m1 = torch.where(negative1, unmatched, m1)
+    m0 = torch.where(positive.any(-1), min0, types.IGNORE_FEATURE)
+    m1 = torch.where(positive.any(-2), min1, types.IGNORE_FEATURE)
+    m0 = torch.where(negative0, types.UNMATCHED_FEATURE, m0)
+    m1 = torch.where(negative1, types.UNMATCHED_FEATURE, m1)
 
     F = (
-        camera1.calibration_matrix().inverse().transpose(-1, -2)
-        @ T_to_E(T_0to1)
-        @ camera0.calibration_matrix().inverse()
+        torch.linalg.inv_ex(camera1.calibration_matrix())[0].transpose(-1, -2)
+        @ epipolar.T_to_E(T_0to1)
+        @ torch.linalg.inv_ex(camera0.calibration_matrix())[0]
     )
-    epi_dist = sym_epipolar_distance_all(kp0, kp1, F)
+    epi_dist = epipolar.sym_epipolar_distance_all(kp0, kp1, F)
 
     # Add some more unmatched points using epipolar geometry
     if epi_th is not None:
-        mask_ignore = (m0.unsqueeze(-1) == ignore) & (m1.unsqueeze(-2) == ignore)
-        epi_dist = torch.where(mask_ignore, epi_dist, inf)
+        mask_ignore = (m0.unsqueeze(-1) == types.IGNORE_FEATURE) & (
+            m1.unsqueeze(-2) == types.IGNORE_FEATURE
+        )
+        epi_dist = torch.where(mask_ignore, epi_dist, torch.inf)
         exclude0 = epi_dist.min(-1).values > neg_th
         exclude1 = epi_dist.min(-2).values > neg_th
-        m0 = torch.where((~valid0) & exclude0, ignore.new_tensor(-1), m0)
-        m1 = torch.where((~valid1) & exclude1, ignore.new_tensor(-1), m1)
+        m0 = torch.where((~valid0) & exclude0, types.UNMATCHED_FEATURE, m0)
+        m1 = torch.where((~valid1) & exclude1, types.UNMATCHED_FEATURE, m1)
 
     return {
         "assignment": positive,
@@ -117,8 +112,8 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
         m0 = -torch.ones_like(kp0[:, :, 0]).long()
         m1 = -torch.ones_like(kp1[:, :, 0]).long()
         return assignment, m0, m1
-    kp0_1 = warp_points_torch(kp0, H, inverse=False)
-    kp1_0 = warp_points_torch(kp1, H, inverse=True)
+    kp0_1 = homography.warp_points_torch(kp0, H, inverse=False)
+    kp1_0 = homography.warp_points_torch(kp1, H, inverse=True)
 
     # build a distance matrix of size [... x M x N]
     dist0 = torch.sum((kp0_1.unsqueeze(-2) - kp1.unsqueeze(-3)) ** 2, -1)
@@ -142,12 +137,10 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
     # pack the indices of positive matches
     # if -1: unmatched point
     # if -2: ignore point
-    unmatched = min0.new_tensor(UNMATCHED_FEATURE)
-    ignore = min0.new_tensor(IGNORE_FEATURE)
-    m0 = torch.where(positive.any(-1), min0, ignore)
-    m1 = torch.where(positive.any(-2), min1, ignore)
-    m0 = torch.where(negative0, unmatched, m0)
-    m1 = torch.where(negative1, unmatched, m1)
+    m0 = torch.where(positive.any(-1), min0, types.IGNORE_FEATURE)
+    m1 = torch.where(positive.any(-2), min1, types.IGNORE_FEATURE)
+    m0 = torch.where(negative0, types.UNMATCHED_FEATURE, m0)
+    m1 = torch.where(negative1, types.UNMATCHED_FEATURE, m1)
 
     return {
         "assignment": positive,
@@ -264,11 +257,11 @@ def gt_line_matches_from_pose_depth(
     pts1 = sample_pts(lines1, npts).reshape(b_size, n_lines1 * npts, 2)
 
     # Sample depth and valid points
-    d0, valid0_pts0 = sample_depth(pts0, data["view0"]["depth"])
-    d1, valid1_pts1 = sample_depth(pts1, data["view1"]["depth"])
+    d0, valid0_pts0 = depth.sample_depth(pts0, data["view0"]["depth"])
+    d1, valid1_pts1 = depth.sample_depth(pts1, data["view1"]["depth"])
 
     # Reproject to the other view
-    pts0_1, visible0 = project(
+    pts0_1, visible0 = depth.project(
         pts0,
         d0,
         data["view1"]["depth"],
@@ -277,7 +270,7 @@ def gt_line_matches_from_pose_depth(
         data["T_0to1"],
         valid0_pts0,
     )
-    pts1_0, visible1 = project(
+    pts1_0, visible1 = depth.project(
         pts1,
         d1,
         data["view0"]["depth"],
@@ -368,8 +361,8 @@ def gt_line_matches_from_pose_depth(
     )
     assignation = torch.tensor(assignation).to(num_close_pts)
     # Set ignore and unmatched labels
-    unmatched = assignation.new_tensor(UNMATCHED_FEATURE)
-    ignore = assignation.new_tensor(IGNORE_FEATURE)
+    unmatched = assignation.new_tensor(types.UNMATCHED_FEATURE)
+    ignore = assignation.new_tensor(types.IGNORE_FEATURE)
 
     positive = num_close_pts.new_zeros(num_close_pts.shape, dtype=torch.bool)
     all_in_batch = (
@@ -452,8 +445,8 @@ def gt_line_matches_from_homography(
     pts1 = sample_pts(lines1, npts).reshape(b_size, n_lines1 * npts, 2)
 
     # Project the points to the other image
-    pts0_1 = warp_points_torch(pts0, H, inverse=False)
-    pts1_0 = warp_points_torch(pts1, H, inverse=True)
+    pts0_1 = homography.warp_points_torch(pts0, H, inverse=False)
+    pts1_0 = homography.warp_points_torch(pts1, H, inverse=True)
     pts0_1 = pts0_1.reshape(b_size, n_lines0, npts, 2)
     pts1_0 = pts1_0.reshape(b_size, n_lines1, npts, 2)
 
@@ -518,8 +511,8 @@ def gt_line_matches_from_homography(
     assignation = torch.tensor(assignation).to(num_close_pts)
 
     # Set unmatched labels
-    unmatched = assignation.new_tensor(UNMATCHED_FEATURE)
-    ignore = assignation.new_tensor(IGNORE_FEATURE)
+    unmatched = assignation.new_tensor(types.UNMATCHED_FEATURE)
+    ignore = assignation.new_tensor(types.IGNORE_FEATURE)
 
     positive = num_close_pts.new_zeros(num_close_pts.shape, dtype=torch.bool)
     # TODO Do with a single and beautiful call

@@ -5,10 +5,8 @@ from pathlib import Path
 import torch
 from omegaconf import OmegaConf
 
-from ..datasets import get_dataset
-from ..models import get_model
-from ..settings import DATA_PATH
-from ..utils.export_predictions import export_predictions
+from .. import datasets, models, settings
+from ..utils.export import export_predictions
 
 resize = 1600
 
@@ -73,11 +71,11 @@ def run_export(feature_file, images, args):
     conf = OmegaConf.create(conf)
 
     keys = configs[args.method]["keys"]
-    dataset = get_dataset(conf.data.name)(conf.data)
+    dataset = datasets.get_dataset(conf.data.name)(conf.data)
     loader = dataset.get_data_loader(conf.split or "test")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = get_model(conf.model.name)(conf.model).eval().to(device)
+    model = models.get_model(conf.model.name)(conf.model).eval().to(device)
 
     export_predictions(loader, model, feature_file, as_half=True, keys=keys)
 
@@ -94,14 +92,16 @@ if __name__ == "__main__":
     export_name = configs[args.method]["name"]
 
     if args.dataset == "megadepth":
-        data_root = Path(DATA_PATH, "megadepth/Undistorted_SfM")
-        export_root = Path(DATA_PATH, "exports", "megadepth-undist-" + export_name)
+        data_root = Path(settings.DATA_PATH, "megadepth/Undistorted_SfM")
+        export_root = Path(
+            settings.DATA_PATH, "exports", "megadepth-undist-" + export_name
+        )
         export_root.mkdir(parents=True, exist_ok=True)
 
         if args.scenes is None:
             scenes = [p.name for p in data_root.iterdir() if p.is_dir()]
         else:
-            with open(DATA_PATH / "megadepth" / args.scenes, "r") as f:
+            with open(settings.DATA_PATH / "megadepth" / args.scenes, "r") as f:
                 scenes = f.read().split()
         for i, scene in enumerate(scenes):
             # print(f'{i} / {len(scenes)}', scene)
@@ -115,9 +115,9 @@ if __name__ == "__main__":
             logging.info(f"Export local features for scene {scene}")
             run_export(feature_file, data_root / scene / "images", args)
     else:
-        data_root = Path(DATA_PATH, args.dataset)
+        data_root = Path(settings.DATA_PATH, args.dataset)
         feature_file = Path(
-            DATA_PATH, "exports", args.export_prefix + export_name + ".h5"
+            settings.DATA_PATH, "exports", args.export_prefix + export_name + ".h5"
         )
         feature_file.parent.mkdir(exist_ok=True, parents=True)
         logging.info(

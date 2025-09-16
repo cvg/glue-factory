@@ -1,5 +1,5 @@
 """
-Simply load images from a folder or nested folders (does not have any split).
+Data loader for the HPatches dataset.
 """
 
 import argparse
@@ -12,10 +12,8 @@ import torch
 from omegaconf import OmegaConf
 
 from ..settings import DATA_PATH
-from ..utils.image import ImagePreprocessor, load_image
-from ..utils.tools import fork_rng
-from ..visualization.viz2d import plot_image_grid
-from .base_dataset import BaseDataset
+from ..utils import preprocess, tools
+from . import base_dataset
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +32,9 @@ def read_homography(path):
         return np.array(result).astype(float)
 
 
-class HPatches(BaseDataset, torch.utils.data.Dataset):
+class HPatches(base_dataset.BaseDataset, torch.utils.data.Dataset):
     default_conf = {
-        "preprocessing": ImagePreprocessor.default_conf,
+        "preprocessing": preprocess.ImagePreprocessor.default_conf,
         "data_dir": "hpatches-sequences-release",
         "subset": None,
         "ignore_large_images": True,
@@ -58,7 +56,7 @@ class HPatches(BaseDataset, torch.utils.data.Dataset):
 
     def _init(self, conf):
         assert conf.batch_size == 1
-        self.preprocessor = ImagePreprocessor(conf.preprocessing)
+        self.preprocessor = preprocess.ImagePreprocessor(conf.preprocessing)
 
         self.root = DATA_PATH / conf.data_dir
         if not self.root.exists():
@@ -87,12 +85,12 @@ class HPatches(BaseDataset, torch.utils.data.Dataset):
             zip_ref.extractall(data_dir)
         zip_path.unlink()  # Remove the zip file after extraction
 
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         assert split in ["val", "test"]
         return self
 
     def _read_image(self, seq: str, idx: int) -> dict:
-        img = load_image(self.root / seq / f"{idx}.ppm", self.conf.grayscale)
+        img = preprocess.load_image(self.root / seq / f"{idx}.ppm", self.conf.grayscale)
         return self.preprocessor(img)
 
     def __getitem__(self, idx):
@@ -116,6 +114,8 @@ class HPatches(BaseDataset, torch.utils.data.Dataset):
 
 
 def visualize(args):
+    from ..visualization import viz2d
+
     conf = {
         "batch_size": 1,
         "num_workers": 8,
@@ -126,13 +126,13 @@ def visualize(args):
     loader = dataset.get_data_loader("test")
     logger.info("The dataset has %d elements.", len(loader))
 
-    with fork_rng(seed=dataset.conf.seed):
+    with tools.fork_rng(seed=dataset.conf.seed):
         images = []
         for _, data in zip(range(args.num_items), loader):
             images.append(
                 [data[f"view{i}"]["image"][0].permute(1, 2, 0) for i in range(2)]
             )
-    plot_image_grid(images, dpi=args.dpi)
+    viz2d.plot_image_grid(images, dpi=args.dpi)
     plt.tight_layout()
     plt.show()
 

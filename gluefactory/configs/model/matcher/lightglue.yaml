@@ -1,0 +1,4 @@
+name: matchers.lightglue
+filter_threshold: 0.1
+flash: false
+checkpointed: true

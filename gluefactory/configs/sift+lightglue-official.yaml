@@ -1,15 +1,12 @@
+defaults:
+  - model: two_view_pipeline
+  - model@model.extractor: extractor/sift
+  - model@model.matcher: matcher/lightglue_pretrained
+  - _self_
+
 model:
-    name: two_view_pipeline
-    extractor:
-      name: extractors.sift
-      backend: pycolmap_cuda
-      max_num_keypoints: 4096
     matcher:
-      name: matchers.lightglue_pretrained
       features: sift
-      depth_confidence: -1
-      width_confidence: -1
-      filter_threshold: 0.1
 benchmarks:
     megadepth1500:
       data:
@@ -18,11 +15,9 @@ benchmarks:
           resize: 1600
       eval:
         estimator: opencv
-        ransac_th: 0.5
     hpatches:
       eval:
         estimator: opencv
-        ransac_th: 0.5
       model:
         extractor:
           max_num_keypoints: 1024  # overwrite config above

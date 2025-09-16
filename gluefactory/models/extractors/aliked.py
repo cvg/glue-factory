@@ -7,7 +7,7 @@ from torch import nn
 from torch.nn.modules.utils import _pair
 from torchvision.models import resnet
 
-from gluefactory.models.base_model import BaseModel
+from ..base_model import BaseModel
 
 # coordinates system
 #  ------------------------------>  [ x: range=-1.0~1.0; w: range=0~W ]

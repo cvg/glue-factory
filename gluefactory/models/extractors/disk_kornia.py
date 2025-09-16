@@ -1,8 +1,8 @@
 import kornia
 import torch
 
+from ...utils import misc
 from ..base_model import BaseModel
-from ..utils.misc import pad_and_stack
 
 
 class DISK(BaseModel):
@@ -78,7 +78,7 @@ class DISK(BaseModel):
         if self.conf.force_num_keypoints:
             # pad to target_length
             target_length = self.conf.max_num_keypoints
-            keypoints = pad_and_stack(
+            keypoints = misc.pad_and_stack(
                 keypoints,
                 target_length,
                 -2,
@@ -88,8 +88,10 @@ class DISK(BaseModel):
                     data.get("image_size", torch.tensor(image.shape[-2:])).min().item(),
                 ),
             )
-            scores = pad_and_stack(scores, target_length, -1, mode="zeros")
-            descriptors = pad_and_stack(descriptors, target_length, -2, mode="zeros")
+            scores = misc.pad_and_stack(scores, target_length, -1, mode="zeros")
+            descriptors = misc.pad_and_stack(
+                descriptors, target_length, -2, mode="zeros"
+            )
         else:
             keypoints = torch.stack(keypoints, 0)
             scores = torch.stack(scores, 0)

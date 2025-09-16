@@ -5,11 +5,9 @@ from pathlib import Path
 import torch
 from omegaconf import OmegaConf
 
-from ..datasets import get_dataset
-from ..geometry.depth import sample_depth
-from ..models import get_model
-from ..settings import DATA_PATH
-from ..utils.export_predictions import export_predictions
+from .. import datasets, models, settings
+from ..geometry import depth
+from ..utils.export import export_predictions
 
 resize = 1024
 n_kpts = 2048
@@ -98,7 +96,7 @@ configs = {
 
 
 def get_kp_depth(pred, data):
-    d, valid = sample_depth(pred["keypoints"], data["depth"])
+    d, valid = depth.sample_depth(pred["keypoints"], data["depth"])
     return {"depth_keypoints": d, "valid_depth_keypoints": valid}
 
 
@@ -125,11 +123,11 @@ def run_export(feature_file, scene, args):
     conf = OmegaConf.create(conf)
 
     keys = configs[args.method]["keys"]
-    dataset = get_dataset(conf.data.name)(conf.data)
+    dataset = datasets.get_dataset(conf.data.name)(conf.data)
     loader = dataset.get_data_loader(conf.split or "test")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = get_model(conf.model.name)(conf.model).eval().to(device)
+    model = models.get_model(conf.model.name)(conf.model).eval().to(device)
 
     if args.export_sparse_depth:
         callback_fn = get_kp_depth  # use this to store the depth of each keypoint
@@ -152,14 +150,16 @@ if __name__ == "__main__":
 
     export_name = configs[args.method]["name"]
 
-    data_root = Path(DATA_PATH, "megadepth/Undistorted_SfM")
-    export_root = Path(DATA_PATH, "exports", "megadepth-undist-depth-" + export_name)
+    data_root = Path(settings.DATA_PATH, "megadepth/Undistorted_SfM")
+    export_root = Path(
+        settings.DATA_PATH, "exports", "megadepth-undist-depth-" + export_name
+    )
     export_root.mkdir(parents=True, exist_ok=True)
 
     if args.scenes is None:
         scenes = [p.name for p in data_root.iterdir() if p.is_dir()]
     else:
-        with open(DATA_PATH / "megadepth" / args.scenes, "r") as f:
+        with open(settings.DATA_PATH / "megadepth" / args.scenes, "r") as f:
             scenes = f.read().split()
     for i, scene in enumerate(scenes):
         print(f"{i} / {len(scenes)}", scene)

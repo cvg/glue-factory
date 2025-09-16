@@ -1,0 +1,16 @@
+name: megadepth
+preprocessing:
+    resize: 1024
+    side: long
+    square_pad: True
+    antialias: False
+train_split: train_scenes_clean.txt
+train_num_per_scene: 300
+val_split: valid_scenes_clean.txt
+val_pairs: valid_pairs.txt
+min_overlap: 0.1
+max_overlap: 0.7
+num_overlap_bins: 3
+read_depth: true
+read_image: true
+num_workers: 14

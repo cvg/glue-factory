@@ -7,20 +7,8 @@ import torch
 from matplotlib.backend_tools import ToolToggleBase
 from matplotlib.widgets import RadioButtons, Slider
 
-from ..geometry.depth import symmetric_reprojection_error
-from ..geometry.epipolar import T_to_F, generalized_epi_dist
-from ..geometry.homography import sym_homography_error
-from ..visualization.viz2d import (
-    cm_ranking,
-    cm_RdGn,
-    draw_epipolar_line,
-    get_line,
-    plot_color_line_matches,
-    plot_heatmaps,
-    plot_keypoints,
-    plot_lines,
-    plot_matches,
-)
+from ..geometry import depth, epipolar, homography
+from . import viz2d
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
@@ -68,10 +56,12 @@ class RadioHideTool(ToolToggleBase):
         self.enabled = self.default_toggled
 
     def build_radios(self):
-        w = 0.2
-        self.radios_ax = self.figure.add_axes([1.0 - w, 0.7, w, 0.2], zorder=1)
+        w = 0.3
+        self.radios_ax = self.figure.add_axes([1.0 - w, 0.2, w, 0.7], zorder=1)
         # self.radios_ax = self.figure.add_axes([0.5-w/2, 1.0-0.2, w, 0.2], zorder=1)
         self.radios = RadioButtons(self.radios_ax, self.options, active=self.active)
+        for r in self.radios.labels:
+            r.set_fontsize(8)
         self.radios.on_clicked(self.on_radio_clicked)
 
     def enable(self, *args):
@@ -144,7 +134,9 @@ class KeypointPlot:
     def __init__(self, fig, axes, data, preds):
         for i, name in enumerate(preds):
             pred = preds[name]
-            plot_keypoints([pred["keypoints0"][0], pred["keypoints1"][0]], axes=axes[i])
+            viz2d.plot_keypoints(
+                [pred["keypoints0"][0], pred["keypoints1"][0]], axes=axes[i]
+            )
 
 
 class LinePlot:
@@ -154,7 +146,7 @@ class LinePlot:
     def __init__(self, fig, axes, data, preds):
         for i, name in enumerate(preds):
             pred = preds[name]
-            plot_lines([pred["lines0"][0], pred["lines1"][0]])
+            viz2d.plot_lines([pred["lines0"][0], pred["lines1"][0]])
 
 
 class KeypointRankingPlot:
@@ -167,8 +159,10 @@ class KeypointRankingPlot:
             kp0, kp1 = pred["keypoints0"][0], pred["keypoints1"][0]
             sc0, sc1 = pred["keypoint_scores0"][0], pred["keypoint_scores1"][0]
 
-            plot_keypoints(
-                [kp0, kp1], axes=axes[i], colors=[cm_ranking(sc0), cm_ranking(sc1)]
+            viz2d.plot_keypoints(
+                [kp0, kp1],
+                axes=axes[i],
+                colors=[viz2d.cm_ranking(sc0), viz2d.cm_ranking(sc1)],
             )
 
 
@@ -181,8 +175,10 @@ class KeypointScoresPlot:
             pred = preds[name]
             kp0, kp1 = pred["keypoints0"][0], pred["keypoints1"][0]
             sc0, sc1 = pred["keypoint_scores0"][0], pred["keypoint_scores1"][0]
-            plot_keypoints(
-                [kp0, kp1], axes=axes[i], colors=[cm_RdGn(sc0), cm_RdGn(sc1)]
+            viz2d.plot_keypoints(
+                [kp0, kp1],
+                axes=axes[i],
+                colors=[viz2d.cm_RdGn(sc0), viz2d.cm_RdGn(sc1)],
             )
 
 
@@ -196,7 +192,7 @@ class HeatmapPlot:
             pred = preds[name]
             heatmaps = [pred["heatmap0"][0, 0], pred["heatmap1"][0, 0]]
             heatmaps = [torch.sigmoid(h) if h.min() < 0.0 else h for h in heatmaps]
-            self.artists += plot_heatmaps(heatmaps, axes=axes[i], cmap="rainbow")
+            self.artists += viz2d.plot_heatmaps(heatmaps, axes=axes[i], cmap="rainbow")
 
     def clear(self):
         for x in self.artists:
@@ -205,7 +201,7 @@ class HeatmapPlot:
 
 class ImagePlot:
     plot_name = "images"
-    required_keys = ["view0", "view1"]
+    required_keys = []
 
     def __init__(self, fig, axes, data, preds):
         pass
@@ -231,7 +227,7 @@ class MatchesPlot:
             kpm0 = kp0[valid]
             kpm1 = kp1[m0[valid]]
             mscores = pred["matching_scores0"][0][valid]
-            plot_matches(
+            viz2d.plot_matches(
                 kpm0,
                 kpm1,
                 axes=axes[i],
@@ -255,7 +251,7 @@ class MatchScoresPlot:
 
         for i, name in enumerate(preds):
             pred = preds[name]
-            plot_keypoints(
+            viz2d.plot_keypoints(
                 [pred["keypoints0"][0], pred["keypoints1"][0]],
                 axes=axes[i],
                 colors="blue",
@@ -266,10 +262,10 @@ class MatchScoresPlot:
             kpm0 = kp0[valid]
             kpm1 = kp1[m0[valid]]
             mscores = pred["matching_scores0"][0][valid]
-            plot_matches(
+            viz2d.plot_matches(
                 kpm0,
                 kpm1,
-                color=cm_RdGn(mscores).tolist(),
+                color=viz2d.cm_RdGn(mscores).tolist(),
                 axes=axes[i],
                 labels=mscores,
                 lw=auto_linewidth(kpm0.shape[0]),
@@ -296,7 +292,7 @@ class LineMatchesPlot:
             valid = m0 > -1
             m_lines0 = lines0[valid]
             m_lines1 = lines1[m0[valid]]
-            plot_color_line_matches([m_lines0, m_lines1])
+            viz2d.plot_color_line_matches([m_lines0, m_lines1])
 
 
 class GtMatchesPlot:
@@ -313,7 +309,7 @@ class GtMatchesPlot:
 
         for i, name in enumerate(preds):
             pred = preds[name]
-            plot_keypoints(
+            viz2d.plot_keypoints(
                 [pred["keypoints0"][0], pred["keypoints1"][0]],
                 axes=axes[i],
                 colors="blue",
@@ -325,10 +321,10 @@ class GtMatchesPlot:
             kpm0 = kp0[valid]
             kpm1 = kp1[m0[valid]]
             correct = gtm0[valid] == m0[valid]
-            plot_matches(
+            viz2d.plot_matches(
                 kpm0,
                 kpm1,
-                color=cm_RdGn(correct).tolist(),
+                color=viz2d.cm_RdGn(correct).tolist(),
                 axes=axes[i],
                 labels=correct,
                 lw=auto_linewidth(kpm0.shape[0]),
@@ -356,7 +352,7 @@ class GtLineMatchesPlot:
             valid = (m0 > -1) & (gtm0 >= -1)
             m_lines0 = lines0[valid]
             m_lines1 = lines1[m0[valid]]
-            plot_color_line_matches([m_lines0, m_lines1])
+            viz2d.plot_color_line_matches([m_lines0, m_lines1])
 
 
 class HomographyMatchesPlot:
@@ -366,7 +362,7 @@ class HomographyMatchesPlot:
     def error_fn(self, kpm0, kpm1, data):
         """Calculate the reprojection error."""
         H_0to1 = data["H_0to1"][0]
-        return sym_homography_error(kpm0, kpm1, H_0to1), torch.ones(
+        return homography.sym_homography_error(kpm0, kpm1, H_0to1), torch.ones(
             kpm0.shape[0], dtype=torch.bool, device=kpm0.device
         )
 
@@ -395,7 +391,7 @@ class HomographyMatchesPlot:
 
         for i, name in enumerate(preds):
             pred = preds[name]
-            plot_keypoints(
+            viz2d.plot_keypoints(
                 [pred["keypoints0"][0], pred["keypoints1"][0]],
                 axes=axes[i],
                 colors="blue",
@@ -407,10 +403,10 @@ class HomographyMatchesPlot:
             kpm1 = kp1[m0[valid]]
             errors, valid_m = self.error_fn(kpm0, kpm1, data)
             errors, valid_m = errors.cpu().numpy(), valid_m.cpu().numpy()
-            plot_matches(
+            viz2d.plot_matches(
                 kpm0[valid_m],
                 kpm1[valid_m],
-                color=cm_RdGn(errors[valid_m] < self.range.val).tolist(),
+                color=viz2d.cm_RdGn(errors[valid_m] < self.range.val).tolist(),
                 axes=axes[i],
                 labels=errors[valid_m],
                 lw=auto_linewidth(kpm0[valid_m].shape[0]),
@@ -428,14 +424,14 @@ class HomographyMatchesPlot:
         # Update line colors.
         for line in self.fig.artists:
             label = line.get_label()
-            line.set_color(cm_RdGn([float(label) < threshold])[0])
+            line.set_color(viz2d.cm_RdGn([float(label) < threshold])[0])
         # Update match colors.
         for errors, axes in zip(self.errors, self.axes):
             for ax in axes:
                 for coll in ax.collections:
                     arr = coll.get_facecolors()
                     if arr is not None and arr.shape[0] == errors.shape[0]:
-                        coll.set_facecolors(cm_RdGn(errors < threshold).tolist())
+                        coll.set_facecolors(viz2d.cm_RdGn(errors < threshold).tolist())
 
 
 class ReprojectionMatchesPlot(HomographyMatchesPlot):
@@ -451,7 +447,7 @@ class ReprojectionMatchesPlot(HomographyMatchesPlot):
 
     def error_fn(self, kpm0, kpm1, data):
         """Calculate the reprojection error."""
-        reproj_error, valid = symmetric_reprojection_error(
+        reproj_error, valid = depth.symmetric_reprojection_error(
             kpm0[None],
             kpm1[None],
             data["view0"]["camera"],
@@ -505,7 +501,7 @@ class EpipolarMatchesPlot:
         self.errors = []
         for i, name in enumerate(preds):
             pred = preds[name]
-            plot_keypoints(
+            viz2d.plot_keypoints(
                 [pred["keypoints0"][0], pred["keypoints1"][0]],
                 axes=axes[i],
                 colors="blue",
@@ -516,7 +512,7 @@ class EpipolarMatchesPlot:
             kpm0 = kp0[valid]
             kpm1 = kp1[m0[valid]]
 
-            errors = generalized_epi_dist(
+            errors = epipolar.generalized_epi_dist(
                 kpm0,
                 kpm1,
                 camera0,
@@ -525,10 +521,10 @@ class EpipolarMatchesPlot:
                 all=False,
                 essential=False,
             )
-            plot_matches(
+            viz2d.plot_matches(
                 kpm0,
                 kpm1,
-                color=cm_RdGn(errors < self.range.val).tolist(),
+                color=viz2d.cm_RdGn(errors < self.range.val).tolist(),
                 axes=axes[i],
                 labels=errors.numpy(),
                 lw=auto_linewidth(kpm0.shape[0]),
@@ -537,7 +533,7 @@ class EpipolarMatchesPlot:
 
             self.errors.append(errors.numpy())
 
-        self.F = T_to_F(camera0, camera1, T_0to1)
+        self.F = epipolar.T_to_F(camera0, camera1, T_0to1)
 
     def clear(self):
         w, h = self.fig.get_size_inches()
@@ -550,14 +546,14 @@ class EpipolarMatchesPlot:
         for art in self.fig.artists:
             label = art.get_label()
             if label is not None:
-                art.set_color(cm_RdGn([float(label) < threshold])[0])
+                art.set_color(viz2d.cm_RdGn([float(label) < threshold])[0])
         # Update match colors.
         for errors, axes in zip(self.errors, self.axes):
             for ax in axes:
                 for coll in ax.collections:
                     arr = coll.get_facecolors()
                     if arr is not None and arr.shape[0] == errors.shape[0]:
-                        coll.set_facecolors(cm_RdGn(errors < threshold).tolist())
+                        coll.set_facecolors(viz2d.cm_RdGn(errors < threshold).tolist())
 
     def click_artist(self, event):
         art = event.artist
@@ -571,11 +567,11 @@ class EpipolarMatchesPlot:
             else:
                 xy1 = art.xy1
                 xy2 = art.xy2
-                line0 = get_line(self.F.transpose(0, 1), xy2)[:, 0]
-                line1 = get_line(self.F, xy1)[:, 0]
+                line0 = viz2d.get_line(self.F.transpose(0, 1), xy2)[:, 0]
+                line1 = viz2d.get_line(self.F, xy1)[:, 0]
                 art.epilines = [
-                    draw_epipolar_line(line0, art.axesA),
-                    draw_epipolar_line(line1, art.axesB),
+                    viz2d.draw_epipolar_line(line0, art.axesA),
+                    viz2d.draw_epipolar_line(line1, art.axesB),
                 ]
 
 

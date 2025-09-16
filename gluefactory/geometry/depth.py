@@ -1,14 +1,24 @@
 import kornia
 import torch
 
-from .utils import get_image_coords
-from .wrappers import Camera, Pose
+from ..utils import misc
+from . import reconstruction
+
+
+def shape_normalize(kpts, w, h):
+    """Normalize points to [-1, 1] range."""
+    kpts = kpts.clone()
+    kpts[..., 0] = kpts[..., 0] * 2 / w - 1
+    kpts[..., 1] = kpts[..., 1] * 2 / h - 1
+
+    kpts = kpts[:, None]
+    return kpts
 
 
 def sample_fmap(pts, fmap):
     h, w = fmap.shape[-2:]
     grid_sample = torch.nn.functional.grid_sample
-    pts = (pts / pts.new_tensor([[w, h]]) * 2 - 1)[:, None]
+    pts = shape_normalize(pts, w, h)
     # @TODO: This might still be a source of noise --> bilinear interpolation dangerous
     interp_lin = grid_sample(fmap, pts, align_corners=False, mode="bilinear")
     interp_nn = grid_sample(fmap, pts, align_corners=False, mode="nearest")
@@ -18,10 +28,15 @@ def sample_fmap(pts, fmap):
 
 
 def sample_depth(pts, depth_):
-    depth = torch.where(depth_ > 0, depth_, depth_.new_tensor(float("nan")))
+    depth = torch.where(depth_ > 0, depth_, torch.nan)
+    if depth_.dim() == 2:
+        depth = depth[None]
     depth = depth[:, None]
     interp = sample_fmap(pts, depth).squeeze(-1)
     valid = (~torch.isnan(interp)) & (interp > 0)
+    if depth_.dim() == 2:
+        interp = interp[0]
+        valid = valid[0]
     return interp, valid
 
 
@@ -72,11 +87,11 @@ def dense_warp_consistency(
     depthi: torch.Tensor,
     depthj: torch.Tensor,
     T_itoj: torch.Tensor,
-    camerai: Camera,
-    cameraj: Camera,
+    camerai: reconstruction.Camera,
+    cameraj: reconstruction.Camera,
     **kwargs,
 ):
-    kpi = get_image_coords(depthi).flatten(-3, -2)
+    kpi = misc.get_image_coords(depthi).flatten(-3, -2)
     di = depthi.flatten(
         -2,
     )
@@ -84,16 +99,16 @@ def dense_warp_consistency(
     kpir, validir = project(kpi, di, depthj, camerai, cameraj, T_itoj, validi, **kwargs)
 
     return kpir.unflatten(-2, depthi.shape[-2:]), validir.unflatten(
-        -1, (depthj.shape[-2:])
+        -1, (depthi.shape[-2:])
     )
 
 
 def symmetric_reprojection_error(
     pts0: torch.Tensor,  # B x N x 2
     pts1: torch.Tensor,  # B x N x 2
-    camera0: Camera,
-    camera1: Camera,
-    T_0to1: Pose,
+    camera0: reconstruction.Camera,
+    camera1: reconstruction.Camera,
+    T_0to1: reconstruction.Pose,
     depth0: torch.Tensor,
     depth1: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
