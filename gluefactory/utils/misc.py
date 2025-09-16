@@ -444,7 +444,7 @@ def get_pixel_grid(
         ),
         dim=-1,
     )
-    if fmap.ndim == 4:
+    if fmap is not None and fmap.ndim == 4:
         b = fmap.shape[0]
         grid = grid[None].expand(b, -1, -1, -1)
     grid += 0.5
