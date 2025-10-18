@@ -14,7 +14,7 @@ from omegaconf import OmegaConf
 
 from ..geometry.wrappers import Camera, Pose
 from ..models.cache_loader import CacheLoader
-from ..settings import DATA_PATH
+from ..settings import DATA_PATH_MEGA
 from ..utils.image import ImagePreprocessor, load_image
 from ..utils.tools import fork_rng
 from ..visualization.viz2d import plot_heatmaps, plot_image_grid
@@ -75,12 +75,12 @@ class MegaDepth(BaseDataset):
     }
 
     def _init(self, conf):
-        if not (DATA_PATH / conf.data_dir).exists():
+        if not (DATA_PATH_MEGA / conf.data_dir).exists():
             logger.info("Downloading the MegaDepth dataset.")
             self.download()
 
     def download(self):
-        data_dir = DATA_PATH / self.conf.data_dir
+        data_dir = DATA_PATH_MEGA / self.conf.data_dir
         tmp_dir = data_dir.parent / "megadepth_tmp"
         if tmp_dir.exists():  # The previous download failed.
             shutil.rmtree(tmp_dir)
@@ -109,7 +109,7 @@ class MegaDepth(BaseDataset):
 
 class _PairDataset(torch.utils.data.Dataset):
     def __init__(self, conf, split, load_sample=True):
-        self.root = DATA_PATH / conf.data_dir
+        self.root = DATA_PATH_MEGA / conf.data_dir
         assert self.root.exists(), self.root
         self.split = split
         self.conf = conf
@@ -373,7 +373,7 @@ class _TripletDataset(_PairDataset):
             if Path(self.conf[split + "_pairs"]).exists():
                 pairs_path = Path(self.conf[split + "_pairs"])
             else:
-                pairs_path = DATA_PATH / "configs" / self.conf[split + "_pairs"]
+                pairs_path = DATA_PATH_MEGA / "configs" / self.conf[split + "_pairs"]
             for line in pairs_path.read_text().rstrip("\n").split("\n"):
                 im0, im1, im2 = line.split(" ")
                 assert im0[:4] == im1[:4]
