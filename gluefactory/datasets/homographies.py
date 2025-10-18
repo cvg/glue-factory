@@ -24,7 +24,7 @@ from ..geometry.homography import (
     warp_points,
 )
 from ..models.cache_loader import CacheLoader, pad_local_features
-from ..settings import DATA_PATH
+from ..settings import DATA_PATH_HOMO
 from ..utils.image import read_image
 from ..utils.tools import fork_rng
 from ..visualization.viz2d import plot_image_grid
@@ -86,7 +86,7 @@ class HomographyDataset(BaseDataset):
     }
 
     def _init(self, conf):
-        data_dir = DATA_PATH / conf.data_dir
+        data_dir = DATA_PATH_HOMO / conf.data_dir
         if not data_dir.exists():
             if conf.data_dir == "revisitop1m":
                 logger.info("Downloading the revisitop1m dataset.")
@@ -129,7 +129,7 @@ class HomographyDataset(BaseDataset):
         self.images = {"train": train_images, "val": val_images}
 
     def download_revisitop1m(self):
-        data_dir = DATA_PATH / self.conf.data_dir
+        data_dir = DATA_PATH_HOMO / self.conf.data_dir
         tmp_dir = data_dir.parent / "revisitop1m_tmp"
         if tmp_dir.exists():  # The previous download failed.
             shutil.rmtree(tmp_dir)
@@ -157,7 +157,7 @@ class _Dataset(torch.utils.data.Dataset):
         self.conf = conf
         self.split = split
         self.image_names = np.array(image_names)
-        self.image_dir = DATA_PATH / conf.data_dir / conf.image_dir
+        self.image_dir = DATA_PATH_HOMO / conf.data_dir / conf.image_dir
 
         aug_conf = conf.photometric
         aug_name = aug_conf.name

@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-from ..settings import DATA_PATH
+from ..settings import DATA_PATH_HPAT
 from ..utils.image import ImagePreprocessor, load_image
 from ..utils.tools import fork_rng
 from ..visualization.viz2d import plot_image_grid
@@ -60,7 +60,7 @@ class HPatches(BaseDataset, torch.utils.data.Dataset):
         assert conf.batch_size == 1
         self.preprocessor = ImagePreprocessor(conf.preprocessing)
 
-        self.root = DATA_PATH / conf.data_dir
+        self.root = DATA_PATH_HPAT / conf.data_dir
         if not self.root.exists():
             logger.info("Downloading the HPatches dataset.")
             self.download()

@@ -21,6 +21,7 @@ except ModuleNotFoundError:
     print("No fused RMSNorm")
     from ..utils.rms_norm import RMSNorm
 
+
 FLASH_AVAILABLE = hasattr(F, "scaled_dot_product_attention")
 
 torch.backends.cudnn.deterministic = True
@@ -29,7 +30,7 @@ torch.backends.cudnn.deterministic = True
 AMP_CUSTOM_FWD_F32 = (
     torch.amp.custom_fwd(cast_inputs=torch.float32, device_type="cuda")
     if hasattr(torch.amp, "custom_fwd")
-    else torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
+    else torch.amp.custom_fwd(cast_inputs=torch.float32)
 )
 
 
@@ -46,6 +47,7 @@ def normalize_keypoints(
     scale = size.max(-1).values / 2
     kpts = (kpts - shift[..., None, :]) / scale[..., None, None]
     return kpts
+
 
 
 class LearnableFourierPositionalEncoding(nn.Module):
@@ -93,6 +95,16 @@ class TokenConfidence(nn.Module):
         ) / 2.0
 
 
+def rotate_half(x: torch.Tensor) -> torch.Tensor:
+    x = x.unflatten(-1, (-1, 2))
+    x1, x2 = x.unbind(dim=-1)
+    return torch.stack((-x2, x1), dim=-1).flatten(start_dim=-2)
+
+
+def apply_cached_rotary_emb(freqs: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    return (t * freqs[0]) + (rotate_half(t) * freqs[1])
+
+
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     """torch.repeat_interleave(x, dim=1, repeats=n_rep)"""
     bs, n_kv_heads, slen, head_dim = x.shape
@@ -106,32 +118,6 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
 
 def lambda_init_fn(depth):
     return 0.8 - 0.6 * math.exp(-0.3 * depth)
-
-
-def compute_rel_pos_for_flashdiff2(batch_size, seq_len, embed_dim, num_heads, device):
-    """
-    为 MultiheadFlashDiff2 计算合适的 rel_pos 参数
-    
-    参数:
-        batch_size: 批次大小
-        seq_len: 序列长度
-        embed_dim: 嵌入维度
-        num_heads: 头数
-        device: 设备类型
-    
-    返回:
-        rel_pos: (cos, sin) 元组，可直接传递给 forward 方法
-    """
-    # 在 FlashDiff2 中，head_dim = embed_dim // num_heads // 2
-    head_dim = embed_dim // num_heads // 2
-    
-    # rotary_dim 通常等于 head_dim，因为需要对整个 head_dim 应用旋转编码
-    rotary_dim = head_dim
-    
-    # 生成旋转位置编码
-    cos, sin = get_rotary_pos_embedding(seq_len, rotary_dim, device)
-    
-    return cos, sin
 
 
 class MultiheadFlashDiff2(nn.Module):
@@ -179,16 +165,16 @@ class MultiheadFlashDiff2(nn.Module):
     
     def forward(
         self,
-        q, k, v,
+        x,
         rel_pos,
         attn_mask=None,
     ):
-        bsz, _, tgt_len, _ = q.size()   # [B, 2*H, N, D], [B, 2*H, N, D], [B, H, N, 2*D]
+        bsz, tgt_len, embed_dim = x.size()
         src_len = tgt_len
 
-        # q = self.q_proj(x)
-        # k = self.k_proj(x)
-        # v = self.v_proj(x)
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
 
         q = q.view(bsz, tgt_len, 2 * self.num_heads, self.head_dim)
         k = k.view(bsz, src_len, 2 * self.num_kv_heads, self.head_dim)
@@ -225,51 +211,109 @@ class MultiheadFlashDiff2(nn.Module):
         return attn
 
 
-# class Attention(nn.Module):
-#     def __init__(self, allow_flash: bool) -> None:
-#         super().__init__()
-#         if allow_flash and not FLASH_AVAILABLE:
-#             warnings.warn(
-#                 "FlashAttention is not available. For optimal speed, "
-#                 "consider installing torch >= 2.0 or flash-attn.",
-#                 stacklevel=2,
-#             )
-#         self.enable_flash = allow_flash and FLASH_AVAILABLE
+class MultiheadDiffAttn(nn.Module):
+    def __init__(
+        self,
+        embed_dim,
+        depth, # current layer index
+        num_heads,
+        num_kv_heads=None,
+    ):
+        super().__init__()
+        self.embed_dim = embed_dim
+        
+        # arg num_heads set to half of baseline Transformer's num_heads
+        # for e.g., to compare with a baseline Transformer with 16 heads, pass in num_heads=8 for DIFF Transformer
+        self.num_heads = num_heads
+        
+        # arg num_kv_heads set to half of baseline Transformer's num_kv_heads if use GQA
+        # for e.g., to compare with a baseline Transformer with 16 heads and 8 kv_heads, 
+        # pass in num_heads=8, num_kv_heads=4 for DIFF Transformer
+        # if use MHA, pass in num_kv_heads=None
+        self.num_kv_heads = num_kv_heads if num_kv_heads is not None else num_heads
+        self.n_rep = self.num_heads // self.num_kv_heads
+        
+        self.head_dim = embed_dim // num_heads // 2
+        self.scaling = self.head_dim ** -0.5
+        
+        # self.q_proj = nn.Linear(embed_dim, embed_dim, bias=False)
+        # self.k_proj = nn.Linear(embed_dim, embed_dim // self.n_rep, bias=False)
+        # self.v_proj = nn.Linear(embed_dim, embed_dim // self.n_rep, bias=False)
+        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=False)
 
-#         if FLASH_AVAILABLE:
-#             torch.backends.cuda.enable_flash_sdp(allow_flash)
+        # depth means current layer index
+        self.lambda_init = lambda_init_fn(depth)
+        self.lambda_q1 = nn.Parameter(torch.zeros(self.head_dim, dtype=torch.float32).normal_(mean=0,std=0.1))
+        self.lambda_k1 = nn.Parameter(torch.zeros(self.head_dim, dtype=torch.float32).normal_(mean=0,std=0.1))
+        self.lambda_q2 = nn.Parameter(torch.zeros(self.head_dim, dtype=torch.float32).normal_(mean=0,std=0.1))
+        self.lambda_k2 = nn.Parameter(torch.zeros(self.head_dim, dtype=torch.float32).normal_(mean=0,std=0.1))
 
-#     def forward(self, q, k, v, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-#         if self.enable_flash and q.device.type == "cuda":
-#             # use torch 2.0 scaled_dot_product_attention with flash
-#             if FLASH_AVAILABLE:
-#                 args = [x.half().contiguous() for x in [q, k, v]]
-#                 v = F.scaled_dot_product_attention(*args, attn_mask=mask).to(q.dtype)
-#                 return v if mask is None else v.nan_to_num()
-#         elif FLASH_AVAILABLE:
-#             args = [x.contiguous() for x in [q, k, v]]
-#             v = F.scaled_dot_product_attention(*args, attn_mask=mask)
-#             return v if mask is None else v.nan_to_num()
-#         else:
-#             s = q.shape[-1] ** -0.5
-#             sim = torch.einsum("...id,...jd->...ij", q, k) * s
-#             if mask is not None:
-#                 sim.masked_fill(~mask, -float("inf"))
-#             attn = F.softmax(sim, -1)
-#             return torch.einsum("...ij,...jd->...id", attn, v)
+        self.subln = RMSNorm(2 * self.head_dim, eps=1e-5, elementwise_affine=True)
+    
+    def forward(
+        self,
+        q, k, v,
+        attn_mask=None,
+    ):
+        bsz, _, tgt_len, _ = q.size()   # [B, 2*H, N, D], [B, 2*H, N, D], [B, H, N, 2*D]
+        src_len = tgt_len
+
+        # q = q.view(bsz, tgt_len, 2 * self.num_heads, self.head_dim)         # [B, N, 2*H, D]
+        # k = k.view(bsz, src_len, 2 * self.num_kv_heads, self.head_dim)      # [B, N, 2*H, D]
+        # v = v.view(bsz, src_len, self.num_kv_heads, 2 * self.head_dim)      # [B, N, H, 2*D]
+
+        # # cos, sin = build_rotary_pos_emb_interleaved(seq_len=tgt_len,rotary_dim=self.head_dim//2,device='cuda')
+        # # rel_pos = (cos, sin)
+        # q = apply_cached_rotary_emb(encoding, q)
+        # k = apply_cached_rotary_emb(encoding, k)
+
+        offset = src_len - tgt_len
+        # q = q.transpose(1, 2)   # [B, 2*H, N, D]
+        k = repeat_kv(k, self.n_rep)    # [B, 2*H, N, D]
+        v = repeat_kv(v, self.n_rep)    # [B, H, N, 2*D]
+        q *= self.scaling
+        attn_weights = torch.matmul(q, k.transpose(-1, -2))    # [B, 2*H, N, N]
+        if attn_mask is None:
+            attn_mask = torch.triu(
+                torch.zeros([tgt_len, src_len])    # [N, N]
+                .float()
+                .fill_(float("-inf"))
+                .type_as(attn_weights),
+                1 + offset,
+            )
+        attn_weights = torch.nan_to_num(attn_weights)
+        attn_weights += attn_mask   
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).type_as(
+            attn_weights
+        )
+
+        lambda_1 = torch.exp(torch.sum(self.lambda_q1 * self.lambda_k1, dim=-1).float()).type_as(q)
+        lambda_2 = torch.exp(torch.sum(self.lambda_q2 * self.lambda_k2, dim=-1).float()).type_as(q)
+        lambda_full = lambda_1 - lambda_2 + self.lambda_init
+        attn_weights = attn_weights.view(bsz, self.num_heads, 2, tgt_len, src_len)
+        attn_weights = attn_weights[:, :, 0] - lambda_full * attn_weights[:, :, 1]
+        
+        attn = torch.matmul(attn_weights, v)
+        attn = self.subln(attn)
+        attn = attn * (1 - self.lambda_init)
+        attn = attn.transpose(1, 2).reshape(bsz, tgt_len, self.num_heads * 2 * self.head_dim)
+
+        attn = self.out_proj(attn)
+        return attn
 
 
 class SelfBlock(nn.Module):
     def __init__(
-        self, embed_dim: int, num_heads: int, flash: bool = False, bias: bool = True, num_kv_heads=None
+        self, embed_dim: int, num_heads: int, bias: bool = True, num_kv_heads=None,
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
         self.num_heads = num_heads
-        assert self.embed_dim % num_heads == 0
+        self.num_kv_heads = num_kv_heads if num_kv_heads is not None else num_heads
+        # assert self.embed_dim % num_heads == 0
         self.head_dim = self.embed_dim // num_heads // 2
         self.Wqkv = nn.Linear(embed_dim, 3 * embed_dim, bias=bias)
-        self.inner_attn = MultiheadFlashDiff2(embed_dim=embed_dim, depth=0, num_heads=num_heads, num_kv_heads=None)
+        self.inner_attn = MultiheadDiffAttn(embed_dim=embed_dim, depth=0, num_heads=num_heads, num_kv_heads=None)
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.ffn = nn.Sequential(
             nn.Linear(2 * embed_dim, 2 * embed_dim),
@@ -281,14 +325,13 @@ class SelfBlock(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        # encoding: torch.Tensor,
+        encoding: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        qkv = self.Wqkv(x)
-        qkv = qkv.unflatten(-1, (self.num_heads, -1, 3)).transpose(1, 2)
+        qkv = self.Wqkv(x)  # [B, N, 3*D]
+        qkv = qkv.unflatten(-1, (-1, 3))    # [B, N, D, 3]
         q, k, v = qkv[..., 0], qkv[..., 1], qkv[..., 2]
-        # q = apply_cached_rotary_emb(encoding, q)
-        # k = apply_cached_rotary_emb(encoding, k)
+
         bsz, tgt_len, _ = q.size()
         src_len = tgt_len
 
@@ -296,10 +339,13 @@ class SelfBlock(nn.Module):
         k = k.view(bsz, src_len, 2 * self.num_kv_heads, self.head_dim).transpose(1, 2)      # [B, 2*H, N, D]
         v = v.view(bsz, src_len, self.num_kv_heads, 2 * self.head_dim).transpose(1, 2)      # [B, H, N, 2*D]
 
-        cos, sin = compute_rel_pos_for_flashdiff2(bsz, tgt_len, head_dim, num_heads, device)
-        rel_pos = (cos, sin)
-        context = self.inner_attn(q, k, v, rel_pos, mask=mask)
-        message = self.out_proj(context)
+        # cos, sin = build_rotary_pos_emb_interleaved(seq_len=tgt_len,rotary_dim=self.head_dim//2,device='cuda')
+        # rel_pos = (cos, sin)
+        q = apply_cached_rotary_emb(encoding, q)    # [B, 2*H, N, D]
+        k = apply_cached_rotary_emb(encoding, k)
+
+        context = self.inner_attn(q, k, v, attn_mask=mask)  # [B, N, D]
+        message = self.out_proj(context)  # [B, N, D]
         return x + self.ffn(torch.cat([x, message], -1))
 
 
@@ -375,25 +421,25 @@ class TransformerLayer(nn.Module):
         self,
         desc0,
         desc1,
-        # encoding0,
-        # encoding1,
+        encoding0,
+        encoding1,
         mask0: Optional[torch.Tensor] = None,
         mask1: Optional[torch.Tensor] = None,
     ):
         if mask0 is not None and mask1 is not None:
             return self.masked_forward(desc0, desc1, encoding0, encoding1, mask0, mask1)
         else:
-            desc0 = self.self_attn(desc0)
-            desc1 = self.self_attn(desc1)
+            desc0 = self.self_attn(desc0, encoding0)
+            desc1 = self.self_attn(desc1, encoding1)
             return self.cross_attn(desc0, desc1)
 
     # This part is compiled and allows padding inputs
-    def masked_forward(self, desc0, desc1, mask0, mask1):
+    def masked_forward(self, desc0, desc1, encoding0, encoding1, mask0, mask1):
         mask = mask0 & mask1.transpose(-1, -2)
         mask0 = mask0 & mask0.transpose(-1, -2)
         mask1 = mask1 & mask1.transpose(-1, -2)
-        desc0 = self.self_attn(desc0, mask0)
-        desc1 = self.self_attn(desc1, mask1)
+        desc0 = self.self_attn(desc0, encoding0, mask0)
+        desc1 = self.self_attn(desc1, encoding1, mask1)
         return self.cross_attn(desc0, desc1, mask)
 
 
