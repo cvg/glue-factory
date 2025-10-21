@@ -121,7 +121,7 @@ class CacheLoader(BaseModel):
             pred = batch_to_device(pred, device)
             for k, v in pred.items():
                 for pattern in self.conf.scale:
-                    if k.startswith(pattern):
+                    if k.startswith(pattern) and not k.startswith("lines_junc"):
                         view_idx = k.replace(pattern, "")
                         scales = (
                             data["scales"]

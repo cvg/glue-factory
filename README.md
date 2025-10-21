@@ -104,6 +104,30 @@ Since we use points and lines to solve for the homography, we use a different ro
 
 </details>
 
+<details>
+<summary>[Evaluating LightGlueStick]</summary>
+
+To evaluate LightGlueStick on HPatches, run:
+```bash
+python -m gluefactory.eval.hpatches --conf superpoint+lsd+lightgluestick-official --overwrite
+```
+You should expect the following results
+```
+{'H_error_dlt@1px': 0.3725,
+ 'H_error_dlt@3px': 0.6803,
+ 'H_error_dlt@5px': 0.7806,
+ 'H_error_ransac@1px': 0.3907,
+ 'H_error_ransac@3px': 0.6973,
+ 'H_error_ransac@5px': 0.7947,
+ 'H_error_ransac_mAA': 0.6275666666666667,
+ 'mH_error_dlt': nan,
+ 'mH_error_ransac': 0.606,
+ 'mnum_keypoints': 2287.25,
+ 'mnum_matches': 1117.0,
+ 'mprec@1px': 0.281,
+ 'mprec@3px': 0.936}
+```
+</details>
 
 #### MegaDepth-1500
 
@@ -149,6 +173,19 @@ python -m gluefactory.eval.megadepth1500 --conf superpoint+lightglue-official \
 To evaluate the pre-trained SuperPoint+GlueStick model on MegaDepth-1500, run:
 ```bash
 python -m gluefactory.eval.megadepth1500 --conf gluefactory/configs/superpoint+lsd+gluestick.yaml
+```
+
+</details>
+
+<details>
+<summary>[Evaluating LightGlueStick]</summary>
+
+To evaluate the pre-trained SuperPoint+LightGlueStick model on MegaDepth-1500, run:
+```bash
+python -m gluefactory.eval.megadepth1500 --conf superpoint+lsd+lightgluestick-official
+# or the adaptive variant
+python -m gluefactory.eval.megadepth1500 --conf superpoint+lsd+lightgluestick-official \
+    model.matcher.depth_confidence=0.95
 ```
 
 </details>
@@ -210,6 +247,21 @@ You should expect the following results
 ```
 AP: 77.92
 AP_lines: 69.22
+```
+
+</details>
+
+<details>
+<summary>[Evaluating LightGlueStick]</summary>
+
+To evaluate LightGlueStick on ETH3D, run:
+```bash
+python -m gluefactory.eval.eth3d --conf superpoint+lsd+lightgluestick-official
+```
+You should expect the following results
+```
+AP: 78.13
+AP_lines: 74.62
 ```
 
 </details>
@@ -308,7 +360,36 @@ We then fine-tune the model on the MegaDepth dataset:
 ```bash
 python -m gluefactory.train gluestick_MD --conf gluefactory/configs/superpoint+lsd+gluestick-megadepth.yaml --distributed
 ```
+
 Note that we used the training splits `train_scenes.txt` and `valid_scenes.txt` to train the original model, which contains some overlap with the IMC challenge. The new default splits are now `train_scenes_clean.txt` and `valid_scenes_clean.txt`, without this overlap.
+
+</details>
+
+<details>
+<summary>[Training LightGlueStick]</summary>
+
+We first pre-train LightGlueStick on the homography dataset:
+```bash
+python -m gluefactory.train lightgluestick_H --conf gluefactory/configs/superpoint+lsd+lightgluestick_homography.yaml --distributed
+```
+Feel free to use any other experiment name. Configurations are managed by [OmegaConf](https://omegaconf.readthedocs.io/) so any entry can be overridden from the command line.
+
+We then fine-tune the model on the MegaDepth dataset:
+```bash
+python -m gluefactory.train lightgluestick_MD --conf gluefactory/configs/superpoint+lsd+lightgluestick_megadepth.yaml --distributed
+```
+
+To speed up training on MegaDepth, we suggest to cache the local features before training
+
+```bash
+# extract features
+python -m gluefactory.scripts.export_megadepth --method sp_lsd_wireframe --num_workers 8
+# run training with cached features (change the data.load_features.path depending on the export parameters). We cache 1500 keypoints and 512 lines.
+python -m gluefactory.train lightgluestick_MD \
+    --conf gluefactory/configs/superpoint+lsd+lightgluestick_megadepth.yaml \
+    train.load_experiment=lightgluestick_H \
+    data.load_features.do=True
+```
 
 </details>
 
@@ -318,6 +399,7 @@ Glue Factory supports training and evaluating the following deep matchers:
 | --------- | --------- | ----------- |
 | [LightGlue](https://github.com/cvg/LightGlue) | ✅         | ✅           |
 | [GlueStick](https://github.com/cvg/GlueStick) | ✅         | ✅           |
+| [LightGlueStick](https://github.com/aubingazhib/LightGlueStick) | ✅         | ✅           |
 | [SuperGlue](https://github.com/magicleap/SuperGluePretrainedNetwork) | ✅         | ✅           |
 | [LoFTR](https://github.com/zju3dv/LoFTR)     | ❌         | ✅           |
 

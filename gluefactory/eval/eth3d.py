@@ -97,12 +97,10 @@ class ETH3DPipeline(EvalPipeline):
         return pred_file
 
     def run_eval(self, loader, pred_file):
-        eval_conf = self.conf.eval
         r = eval_dataset(loader, pred_file)
         if self.conf.eval.eval_lines:
-            r.update(eval_dataset(loader, pred_file, conf=eval_conf, suffix="_lines"))
+            r.update(eval_dataset(loader, pred_file, suffix="_lines"))
         s = {}
-
         return s, {}, r
 
 
