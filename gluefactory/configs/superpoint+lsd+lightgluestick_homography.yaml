@@ -43,7 +43,7 @@ model:
     name: gluefactory.models.matchers.lightgluestick
     input_dim: 256
     descriptor_dim: 256
-    flash: false
+    flash: true
     filter_threshold: 0.1
     checkpointed: true
 train:

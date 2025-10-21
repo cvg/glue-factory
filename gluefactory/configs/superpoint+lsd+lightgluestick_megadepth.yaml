@@ -49,7 +49,7 @@ model:
         filter_threshold: 0.1
         input_dim: 256
         descriptor_dim: 256
-        flash: false
+        flash: true
         checkpointed: true
         freeze_epochs: 5
     ground_truth:

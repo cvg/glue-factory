@@ -63,15 +63,7 @@ class LSD(BaseModel):
 
         segs = batched_lsd(image)
 
-        if b_size == 1:
-            lines, line_scores, valid_lines = self.filter_lines(segs[0])
-            lines = [lines]
-            line_scores = [line_scores]
-            valid_lines = [valid_lines]
-        else:
-            lines, line_scores, valid_lines = zip(
-                *(self.filter_lines(seg) for seg in segs)
-            )
+        lines, line_scores, valid_lines = zip(*(self.filter_lines(seg) for seg in segs))
 
         # Batch if possible
         if b_size == 1 or self.conf.force_num_lines:
