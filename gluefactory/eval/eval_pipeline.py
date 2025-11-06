@@ -177,8 +177,6 @@ class RelativePosePipeline(EvalPipeline):
     export_keys = (
         "keypoints0",
         "keypoints1",
-        "keypoint_scores0",
-        "keypoint_scores1",
         "matches0",
         "matches1",
         "matching_scores0",
@@ -259,7 +257,9 @@ class RelativePosePipeline(EvalPipeline):
         """Run the eval on cached predictions"""
         conf = self.conf.eval
         results = collections.defaultdict(list)
-        cache_loader = CacheLoader({"path": str(pred_file), "collate": None}).eval()
+        cache_loader = CacheLoader(
+            {"path": str(pred_file), "collate": None, "check_valid": False}
+        ).eval()
         pose_results = []
 
         if conf.n_processes != 0:
