@@ -283,9 +283,9 @@ class Pose(tensor.TensorWrapper):
 
 class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
     eps: float = 1e-4
-    share_df: bool = True  # share fx, fy updates (global): has no impact outside BA
+    share_df: bool = False  # share fx, fy updates (global): has no impact outside BA
 
-    def __init__(self, data_: torch.Tensor, share_df: bool = True, eps: float = 1e-4):
+    def __init__(self, data_: torch.Tensor, share_df: bool = False, eps: float = 1e-4):
         assert data_.shape[-1] in {6, 8, 10}
         self.data_ = data_
         self.share_df = share_df
