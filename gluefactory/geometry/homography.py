@@ -42,6 +42,7 @@ def sample_homography_corners(
     n_angles=10,
     max_angle=90,
     min_convexity=0.05,
+    affine=False,
     rng=np.random,
 ):
     max_angle = max_angle / 180.0 * math.pi
@@ -54,7 +55,10 @@ def sample_homography_corners(
     found_valid = False
     cnt = -1
     while not found_valid:
-        offsets = rng.uniform(0.0, 1.0, size=(4, 2)) * scale
+        if affine:
+            offsets = rng.uniform(0.0, 1.0, size=(1, 1)) * scale
+        else:
+            offsets = rng.uniform(0.0, 1.0, size=(4, 2)) * scale
         pts1 = full + offsets
         found_valid = check_convex(pts1 / np.array(shape), min_convexity)
         cnt += 1
