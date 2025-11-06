@@ -20,6 +20,7 @@ class DepthMatcher(BaseModel):
         "line_perp_dist_th": 5,
         "overlap_th": 0.2,
         "min_visibility_th": 0.5,
+        "add_epi_outliers": True,
     }
 
     required_data_keys = ["view0", "view1", "T_0to1"]
@@ -62,6 +63,7 @@ class DepthMatcher(BaseModel):
                 epi_th=self.conf.th_epi,
                 cc_th=self.conf.th_consistency,
                 min_overlap=self.conf.min_overlap,
+                add_epi_outliers=self.conf.add_epi_outliers,
                 **kw,
             )
         if self.conf.use_lines:
