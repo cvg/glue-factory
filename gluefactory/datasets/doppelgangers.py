@@ -73,6 +73,7 @@ class DoppelgangersSplit(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         name0, name1, has_overlap, num_matches = self.items[idx].tolist()
+        has_overlap = int(has_overlap)
         data = {
             "name": "/".join([name0, name1]),
             "scene": name0.split("/")[0],
@@ -135,17 +136,12 @@ if __name__ == "__main__":
 
     dataset = DoppelgangersDataset(conf)
 
-    loader = dataset.get_data_loader("train")
+    loader = dataset.get_data_loader("test")
 
     images = []
     for i, data in tqdm(enumerate(loader)):
         print(data["has_overlap"])
-        images.append(
-            [
-                data[f"view{i}"]["image"][0].permute(1, 2, 0)
-                for i in range(data["nviews"][0])
-            ]
-        )
+        images.append([data[f"view{i}"]["image"][0].permute(1, 2, 0) for i in range(2)])
         if i > 3:
             print(misc.print_summary(data))
             break
