@@ -719,8 +719,12 @@ class Trainer:
                 if not self.conf.get("allow_nan", True):
                     raise RuntimeError("NaN detected in training.")
                 logger.warning("Detected NAN, skipping iteration..")
-                del pred, data, loss, losses
-                return None, None
+                if self.distributed:
+                    loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
+                    self.optimizer.zero_grad()
+                else:
+                    del pred, data, loss, losses
+                    return None, None
 
             do_backward = loss.requires_grad
             if self.distributed:
