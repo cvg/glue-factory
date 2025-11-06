@@ -785,7 +785,7 @@ class ALIKED(BaseModel):
             "score_map": score_map,  # Bx1xHxW
         }
         if self.conf.dense_outputs:
-            pred["image_features"] = feature_map  # BxDxHxW
+            pred["image_features_fine"] = feature_map  # BxDxHxW
         return pred
 
     def loss(self, pred, data):
