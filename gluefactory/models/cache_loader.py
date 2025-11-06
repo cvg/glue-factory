@@ -69,7 +69,7 @@ class CacheLoader(BaseModel):
         "padding_fn": None,
         "padding_length": None,  # required for batching!
         "numeric_type": "float32",  # [None, "float16", "float32", "float64"]
-        "check_valid": True,  # check if points are inside the image after scaling
+        "check_valid": False,  # check if points are inside the image after scaling
     }
 
     required_data_keys = ["name"]  # we need an identifier
