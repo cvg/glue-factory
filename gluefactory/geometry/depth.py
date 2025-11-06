@@ -169,6 +169,10 @@ def align_pointclouds(
     s0 = misc.wmean(pts_v0.square().sum(dim=-1), weights[:, 0]).sqrt()
     s1 = misc.wmean(pts_v1.square().sum(dim=-1), weights[:, 0]).sqrt()
 
+    # Set scale 1 if no weights (i.e. all invalid)
+    s0 = torch.where(weights.sum() > 0, s0, torch.tensor(1.0, device=s0.device))
+    s1 = torch.where(weights.sum() > 0, s1, torch.tensor(1.0, device=s1.device))
+
     pts_v0 = pts_v0 / s0
     pts_v1 = pts_v1 / s1
 
@@ -179,13 +183,18 @@ def align_pointclouds(
         R = torch.eye(3, dtype=t0.dtype, device=t0.device)
     else:
         try:
-            U, _, V = (pts_v0.T @ pts_v1).double().svd()
+            A = pts_v0.T @ pts_v1
+            U, _, V = A.double().svd()
             U: torch.Tensor = U
             V: torch.Tensor = V
         except:
             print("Procustes failed: SVD did not converge!")
             s = s0 / s1
-            return None, s, pts_v1
+            return (
+                reconstruction.Pose.identity(device=pts_v1.device).to_Rt(),
+                s,
+                pts_v1,
+            )
         # build rotation matrix
         R = (U @ V.T).float()
         R = torch.stack(
