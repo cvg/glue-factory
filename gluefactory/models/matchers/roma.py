@@ -104,6 +104,7 @@ class RoMa(base_model.BaseModel):
         "filter_threshold": 0.05,  # threshold for filtering matches
         "max_kp_error": 2.0,  # maximum distance for matching keypoints (px)
         "mutual_check": True,  # check mutual NN in keypoint matching
+        "sparse_to_dense": False,  # convert sparse keypoints to dense matches
     }
     required_data_keys = ["view0", "view1"]
 
@@ -171,6 +172,7 @@ class RoMa(base_model.BaseModel):
                     self.conf.max_kp_error,
                     self.conf.filter_threshold,
                     self.conf.mutual_check,
+                    sparse_to_dense=self.conf.sparse_to_dense,
                 )
             )
         return pred

@@ -874,7 +874,7 @@ def interpolate_matches(
     mutual_check: bool = True,
     max_kp_error: float = 3.0,  # pixels
     filter_threshold: float = 0.0,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     # Normalize to [-1, 1] for grid sampling
     kpts_q = normalize_coords(kpts_q, q_hw)
     kpts_q_to_t = grid_sample(warp.permute(0, 3, 1, 2), kpts_q[:, None])[
@@ -893,7 +893,12 @@ def interpolate_matches(
         mutual = indicesq == torch.min(dist, dim=-2).indices.gather(1, matches)
         valid = valid & mutual
     valid = valid & (scores > filter_threshold)
-    return torch.where(valid, matches, -1), torch.where(valid, scores, 0)
+    return (
+        kpts_q_to_t,
+        scores,
+        torch.where(valid, matches, -1),
+        torch.where(valid, scores, 0),
+    )
 
 
 def match_keypoints_dense(
@@ -902,6 +907,7 @@ def match_keypoints_dense(
     max_kp_error: float,
     filter_threshold: float,
     mutual_check: bool = True,
+    sparse_to_dense: bool = False,
 ) -> dict:
     """Match keypoints using dense correspondences."""
     kpts0 = data["keypoints0"]  # COLMAP coordinates
@@ -911,30 +917,52 @@ def match_keypoints_dense(
     img1 = data["view1"]["image"]
 
     mpred = {}
-    mpred["matches0"], mpred["matching_scores0"] = interpolate_matches(
-        kpts0,
-        kpts1,
-        pred["warp0"],
-        pred["certainty0"],
-        img0.shape[-2:],
-        img1.shape[-2:],
-        max_kp_error=max_kp_error,
-        mutual_check=mutual_check,
-        filter_threshold=filter_threshold,
+    pts0_i1, kp_scores0, mpred["matches0"], mpred["matching_scores0"] = (
+        interpolate_matches(
+            kpts0,
+            kpts1,
+            pred["warp0"],
+            pred["certainty0"],
+            img0.shape[-2:],
+            img1.shape[-2:],
+            max_kp_error=max_kp_error,
+            mutual_check=mutual_check,
+            filter_threshold=filter_threshold,
+        )
     )
-    mpred["matches1"], mpred["matching_scores1"] = interpolate_matches(
-        kpts1,
-        kpts0,
-        pred["warp1"],
-        pred["certainty1"],
-        img1.shape[-2:],
-        img0.shape[-2:],
-        max_kp_error=max_kp_error,
-        mutual_check=mutual_check,
-        filter_threshold=filter_threshold,
+    pts1_i0, kp_scores1, mpred["matches1"], mpred["matching_scores1"] = (
+        interpolate_matches(
+            kpts1,
+            kpts0,
+            pred["warp1"],
+            pred["certainty1"],
+            img1.shape[-2:],
+            img0.shape[-2:],
+            max_kp_error=max_kp_error,
+            mutual_check=mutual_check,
+            filter_threshold=filter_threshold,
+        )
     )
 
-    # Pipe the keypoints again
-    mpred["keypoints0"] = data["keypoints0"]
-    mpred["keypoints1"] = data["keypoints1"]
+    if sparse_to_dense:
+        keypoints0 = torch.cat([kpts0, pts1_i0], dim=-2)
+        keypoints1 = torch.cat([pts0_i1, kpts1], dim=-2)
+        scores = torch.cat([kp_scores0, kp_scores1], dim=-1)
+
+        matches = torch.arange(keypoints0.shape[-2], device=keypoints0.device)[
+            None
+        ].repeat(keypoints0.shape[-3], 1)
+
+        matches = torch.where(scores > filter_threshold, matches, -1)
+
+        mpred["keypoints0"] = keypoints0
+        mpred["keypoints1"] = keypoints1
+        mpred["matches0"] = matches
+        mpred["matches1"] = matches.clone()
+        mpred["matching_scores0"] = scores
+        mpred["matching_scores1"] = scores.clone()
+    else:
+        # Pipe the keypoints again
+        mpred["keypoints0"] = data["keypoints0"]
+        mpred["keypoints1"] = data["keypoints1"]
     return mpred

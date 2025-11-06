@@ -1,4 +1,5 @@
 model:
+    name: two_view_pipeline
     extractor:
         name: null # Set this for sparse matching
     matcher:
