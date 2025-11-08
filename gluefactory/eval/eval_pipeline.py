@@ -169,6 +169,7 @@ class RelativePosePipeline(EvalPipeline):
             "estimator": ["poselib", "opencv"],
             "ransac_th": -1.0,  # -1 runs a bunch of thresholds and selects the best
             "n_processes": None,  # 0 is sequential
+            "max_tasks": 500,  # max tasks in the pool
         },
     }
 
@@ -258,7 +259,12 @@ class RelativePosePipeline(EvalPipeline):
         conf = self.conf.eval
         results = collections.defaultdict(list)
         cache_loader = CacheLoader(
-            {"path": str(pred_file), "collate": None, "check_valid": False}
+            {
+                "path": str(pred_file),
+                "collate": None,
+                "check_valid": False,
+                "scale": ("keypoints",),
+            },
         ).eval()
         pose_results = []
 
@@ -267,6 +273,8 @@ class RelativePosePipeline(EvalPipeline):
             pool = ctx.Pool(processes=conf.n_processes)
 
         results = []
+        pose_results = []
+        pose_results_batch = []
         for i, data in enumerate(tqdm(loader, desc="Evaluation: ")):
             pred = cache_loader(data)
             # add custom evaluations here
@@ -282,25 +290,34 @@ class RelativePosePipeline(EvalPipeline):
             if "scene" in data.keys():
                 results_i["scenes"] = data["scene"][0]
 
-            if "overlap" in data.keys():
-                results_i["overlap"] = data["overlap"][0].item()
+            # if "overlap" in data.keys():
+            #     results_i["overlap"] = data["overlap"][0].item()
 
             if conf.n_processes == 0:
                 pose_results.append(self.evaluate_relative_pose(data, pred))
             else:
-                pose_results.append(
+                pose_results_batch.append(
                     pool.apply_async(
                         self.evaluate_relative_pose,
                         args=(data, pred),
                     )
                 )
+
+            if (
+                conf.n_processes != 0
+                and (i + 1) % conf.max_tasks == 0
+                or (i + 1) == len(loader)
+            ):
+                pose_results_batch = [
+                    p.get() for p in tqdm(pose_results_batch, desc="Pose Estimation: ")
+                ]
+                pose_results.extend(pose_results_batch)
+                pose_results_batch = []
+
             results.append(results_i)
 
         results = misc.pack_tree(results)
         if conf.n_processes != 0:
-            pose_results = [
-                p.get() for p in tqdm(pose_results, desc="Pose Estimation: ")
-            ]
             pool.close()
             pool.join()
             pool.terminate()
