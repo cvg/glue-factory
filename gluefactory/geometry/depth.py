@@ -4,8 +4,7 @@ import kornia
 import torch
 
 from ..utils import misc
-from . import reconstruction
-from . import transforms as gtr
+from . import epipolar, reconstruction
 
 
 def shape_normalize(kpts, w, h):
@@ -53,6 +52,7 @@ def sample_normals_from_depth(pts, depth, K):
     return interp, valid
 
 
+@misc.AMP_CUSTOM_FWD_F32
 def project(
     kpi,
     di,
@@ -63,6 +63,8 @@ def project(
     ccth=None,
     sample_depth_fun=sample_depth,
     sample_depth_kwargs=None,
+    max_rel_depth_error=None,
+    add_epi_outliers=False,
 ):
     if sample_depth_kwargs is None:
         sample_depth_kwargs = {}
@@ -71,19 +73,47 @@ def project(
     kpi_3d_i = kpi_3d_i * di[..., None]
     kpi_3d_j = T_itoj.transform(kpi_3d_i)
     kpi_j, valid = camera_j.cam2image(kpi_3d_j)
-    invalid = ~valid
+    invalid = ~valid & (di > 1.0e-3)
+    if add_epi_outliers:
+        i1_F_i0 = epipolar.T_to_F(camera_i, camera_j, T_itoj)
+
+        if i1_F_i0.ndim == 2 and kpi.ndim == 3 and kpi.shape[0] == 1:
+            evalid0 = epipolar.check_epipolar_intersection(
+                kpi[0], i1_F_i0, camera_j.size[..., 0], camera_j.size[..., 1]
+            )[None]
+        else:
+            evalid0 = torch.vmap(
+                epipolar.check_epipolar_intersection,
+            )(kpi, i1_F_i0, camera_j.size[..., 0], camera_j.size[..., 1])
+
+        invalid = invalid | (~evalid0)
     # di_j = kpi_3d_j[..., -1]
     if depthj is None or ccth is None:
         return kpi_j, valid, invalid
     else:
         # circle consistency
         dj, validj = sample_depth_fun(kpi_j, depthj, **sample_depth_kwargs)
+        validj = validj & (dj > 1.0e-3)
         kpi_j_3d_j = camera_j.image2cam(kpi_j) * dj[..., None]
-        kpi_j_i, validj_i = camera_i.cam2image(T_itoj.inv().transform(kpi_j_3d_j))
+        kpi_j_3d_i = T_itoj.inv().transform(kpi_j_3d_j)
+        dji = kpi_j_3d_i[..., -1]
+        if max_rel_depth_error is not None:
+            max_rel_depth = 1.0 + max_rel_depth_error
+            dij = kpi_3d_j[..., -1]
+            invalid = invalid | (
+                (di > 0)
+                & validj
+                & ~((dji < di * max_rel_depth) & (dji > di / max_rel_depth))
+                & ~((dij < dj * max_rel_depth) & (dij > dj / max_rel_depth))
+            )
+        kpi_j_i, validj_i = camera_i.cam2image(kpi_j_3d_i)
         reproj_error = ((kpi - kpi_j_i) ** 2).sum(-1)
         consistent = reproj_error < ccth**2
-        visible = valid & consistent & validj_i & validj
-        invalid = invalid | (validj & ((~validj_i) | (~consistent)))
+        inconsistent = reproj_error > ccth**2
+        visible = valid & consistent & validj_i & validj & ~invalid
+        invalid = invalid | (
+            (validj & ((~validj_i) | (inconsistent))) & valid & (di > 1.0e-3)
+        )
         # visible = validi
         return kpi_j, visible, invalid
 
@@ -101,11 +131,15 @@ def dense_warp_consistency(
         -2,
     )
     validi = di > 0
-    kpir, validir, _ = project(kpi, di, depthj, camerai, cameraj, T_itoj, **kwargs)
+    kpir, validir, invalid = project(
+        kpi, di, depthj, camerai, cameraj, T_itoj, **kwargs
+    )
     validir = validir & validi
 
-    return kpir.unflatten(-2, depthi.shape[-2:]), validir.unflatten(
-        -1, (depthi.shape[-2:])
+    return (
+        kpir.unflatten(-2, depthi.shape[-2:]),
+        validir.unflatten(-1, (depthi.shape[-2:])),
+        invalid.unflatten(-1, (depthi.shape[-2:])),
     )
 
 
@@ -117,22 +151,61 @@ def symmetric_reprojection_error(
     T_0to1: reconstruction.Pose,
     depth0: torch.Tensor,
     depth1: torch.Tensor,
+    ccth: float = 10,
+    agg: str = "mean",
 ) -> tuple[torch.Tensor, torch.Tensor]:
     T_1to0 = T_0to1.inv()
     d0, valid0 = sample_depth(pts0, depth0)
     d1, valid1 = sample_depth(pts1, depth1)
 
-    pts0_1, visible0, _ = project(pts0, d0, depth1, camera0, camera1, T_0to1, ccth=None)
+    pts0_1, visible0, _ = project(pts0, d0, depth1, camera0, camera1, T_0to1, ccth=ccth)
     visible0 = visible0 & valid0
-    pts1_0, visible1, _ = project(pts1, d1, depth0, camera1, camera0, T_1to0, ccth=None)
+    pts1_0, visible1, _ = project(pts1, d1, depth0, camera1, camera0, T_1to0, ccth=ccth)
     visible1 = visible1 & valid1
 
-    reprojection_errors_px = 0.5 * (
-        (pts0_1 - pts1).norm(dim=-1) + (pts1_0 - pts0).norm(dim=-1)
-    )
+    if agg == "mean":
+        reprojection_errors_px = 0.5 * (
+            (pts0_1 - pts1).norm(dim=-1) + (pts1_0 - pts0).norm(dim=-1)
+        )
+    elif agg == "max":
+        reprojection_errors_px = torch.max(
+            (pts0_1 - pts1).norm(dim=-1), (pts1_0 - pts0).norm(dim=-1)
+        )
+    elif agg == "min":
+        reprojection_errors_px = torch.min(
+            (pts0_1 - pts1).norm(dim=-1), (pts1_0 - pts0).norm(dim=-1)
+        )
+    else:
+        raise ValueError(f"Unknown agg method: {agg}")
 
     valid = valid0 & valid1
     return reprojection_errors_px, valid
+
+
+def symmetric_bias(
+    pts0: torch.Tensor,  # B x N x 2
+    pts1: torch.Tensor,  # B x N x 2
+    camera0: reconstruction.Camera,
+    camera1: reconstruction.Camera,
+    T_0to1: reconstruction.Pose,
+    depth0: torch.Tensor,
+    depth1: torch.Tensor,
+    ccth: float = 10,
+    agg: str = "mean",
+) -> tuple[torch.Tensor, torch.Tensor]:
+    T_1to0 = T_0to1.inv()
+    d0, valid0 = sample_depth(pts0, depth0)
+    d1, valid1 = sample_depth(pts1, depth1)
+
+    pts0_1, visible0, _ = project(pts0, d0, depth1, camera0, camera1, T_0to1, ccth=ccth)
+    visible0 = visible0 & valid0
+    pts1_0, visible1, _ = project(pts1, d1, depth0, camera1, camera0, T_1to0, ccth=ccth)
+    visible1 = visible1 & valid1
+
+    bias = 0.5 * ((pts0_1 - pts1) + (pts1_0 - pts0))
+
+    valid = valid0 & valid1
+    return bias, valid
 
 
 def align_pointclouds(
@@ -149,6 +222,9 @@ def align_pointclouds(
     """Estimate a similarity transformation (sim3) between two point clouds."""
     assert pts_v0.shape == pts_v1.shape, f"{pts_v0.shape} != {pts_v1.shape}"
     assert pts_v0.shape[-1] == 3 and len(pts_v0.shape) == 2, f"{pts_v0.shape}"
+    pts_v0, pts_v1 = pts_v0.float(), pts_v1.float()
+    if weights is not None:
+        weights = weights.float()
 
     pts_v1_in = pts_v1.clone()
     # estimate a sim3 transformation to align two point clouds
