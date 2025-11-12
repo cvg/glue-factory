@@ -5,9 +5,7 @@ Author: Philipp Lindenberger
 """
 
 import collections
-import os
 import signal
-from copy import deepcopy
 from pathlib import Path
 from typing import Any, TypeAlias
 
@@ -824,7 +822,12 @@ class Trainer:
             if "scene" in data:
                 for scene_id in data["scene"]:
                     scene_num_samples[scene_id] += 1
-            if self.rank == 0 and it == 0 and self.epoch == 0:
+            if (
+                self.rank == 0
+                and it == 0
+                and self.epoch == 0
+                and self.conf.get("print_batch", True)
+            ):
                 # Log a single batch of data
                 misc.print_summary(data)
             self.step_timer.measure("data")
@@ -1006,7 +1009,6 @@ class Trainer:
         )
         if writer is None:
             writer = self.get_writer(output_dir, full_conf)
-
         if self.conf.get("eval_init", False):
             self.run_eval(output_dir, dataset, writer)
             self.run_all_benchmarks(output_dir, writer, force=True)
@@ -1092,6 +1094,7 @@ def launch_training(output_dir: Path, conf: DictConfig, device: torch.device):
         logger.info(f"Finetuning: Loading model config from {pretrain_dir}.")
         pretrain_conf = OmegaConf.load(pretrain_dir / "config.yaml")
         conf.model = OmegaConf.merge(pretrain_conf.model, conf.model)
+        OmegaConf.save(conf, str(output_dir / "config.yaml"))
     model = models.get_model(conf.model.name)(conf.model).to(device)
     if conf.get("lazy_init", True):
         logger.info("Running dummy forward pass to initialize lazy modules.")
