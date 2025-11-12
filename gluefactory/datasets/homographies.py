@@ -19,9 +19,9 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from .. import settings
-from ..geometry import homography
+from ..geometry import homography, reconstruction
 from ..models import cache_loader
-from ..utils import preprocess, tools
+from ..utils import misc, preprocess, tools
 from . import augmentations, base_dataset
 
 logger = logging.getLogger(__name__)
@@ -61,12 +61,14 @@ class HomographyDataset(base_dataset.BaseDataset):
             "n_angles": 10,
             "patch_shape": [640, 480],
             "min_convexity": 0.05,
+            "affine": False,
         },
         "photometric": {
             "name": "dark",
             "p": 0.75,
             # 'difficulty': 1.0,  # currently unused
         },
+        "add_dummy_pose_depth": False,  # for compatibility with some pipelines
         # feature loading
         "load_features": {
             "do": False,
@@ -273,6 +275,33 @@ class _Dataset(torch.utils.data.Dataset):
                 **data,
             }
 
+        if self.conf.add_dummy_pose_depth:
+            assert not self.conf.triplet
+            # Unify it with other datasets by adding dummy pose and depth
+            for i in range(2):
+                data[f"view{i}"]["T_w2cam"] = reconstruction.Pose.identity()
+                data[f"view{i}"]["camera"] = reconstruction.Camera.from_image(
+                    torch.as_tensor(img).permute(2, 0, 1)
+                ).compose_image_transform(data[f"view{i}"].pop("H_"))
+
+                data[f"view{i}"]["depth"] = torch.ones_like(
+                    data[f"view{i}"]["image"][0]
+                )
+                data[f"view{i}"]["scene"] = name
+                del data[f"view{i}"]["coords"]
+
+            data["T_0to1"] = data["view1"]["T_w2cam"].compose(
+                data["view0"]["T_w2cam"].inv()
+            )
+            data["image"] = torch.as_tensor(img).permute(2, 0, 1)
+            data["T_1to0"] = data["T_0to1"].inv()
+            data["overlap_0to1"] = 1.0
+            data["overlap_1to0"] = 1.0
+
+            data["overlap"] = np.ones((2, 2), dtype=np.float32)
+            data["idx"] = idx
+            del data["H_0to1"]
+            del data["original_image_size"]
         return data
 
     def __len__(self):
