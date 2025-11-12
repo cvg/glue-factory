@@ -64,6 +64,8 @@ def eval_matches_epipolar(data: dict, pred: dict, essential: bool = False) -> di
         results["epi_prec@1px"] = (n_epi_err < 1).float().mean().nan_to_num()
         results["epi_prec@3px"] = (n_epi_err < 3).float().mean().nan_to_num()
         results["epi_prec@5px"] = (n_epi_err < 5).float().mean().nan_to_num()
+        results["epi_matches@1px"] = (n_epi_err < 1).float().sum().nan_to_num()
+        results["epi_matches@3px"] = (n_epi_err < 3).float().sum().nan_to_num()
 
     results["num_matches"] = pts0.shape[0]
     results["num_keypoints"] = (kp0.shape[0] + kp1.shape[0]) / 2.0
@@ -97,6 +99,7 @@ def eval_matches_depth(data: dict, pred: dict) -> dict:
         T_0to1,
         depth0,
         depth1,
+        ccth=None,
     )
     reproj_error, valid = reproj_error[0], valid[0]
 
@@ -105,6 +108,11 @@ def eval_matches_depth(data: dict, pred: dict) -> dict:
     results["reproj_prec@1px"] = (reproj_error < 1).float().mean().nan_to_num().item()
     results["reproj_prec@3px"] = (reproj_error < 3).float().mean().nan_to_num().item()
     results["reproj_prec@5px"] = (reproj_error < 5).float().mean().nan_to_num().item()
+    results["reproj_matches@1px"] = (reproj_error < 1).float().sum().nan_to_num().item()
+    results["reproj_matches@3px"] = (reproj_error < 3).float().sum().nan_to_num().item()
+    results["reproj_error"] = reproj_error.clip(max=10).mean().item()
+    results["reproj_error_median"] = reproj_error.clip(max=10).median().item()
+
     results["covisible"] = valid.float().sum().item()
     results["covisible_percent"] = valid.float().mean().item() * 100.0
 
