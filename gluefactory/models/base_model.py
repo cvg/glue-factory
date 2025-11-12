@@ -73,6 +73,7 @@ class BaseModel(nn.Module, metaclass=MetaModel):
     def __init__(self, conf):
         """Perform some logic and call the _init method of the child model."""
         super().__init__()
+        self.input_conf = conf
         default_conf = OmegaConf.merge(
             self.base_default_conf, OmegaConf.create(self.default_conf)
         )
