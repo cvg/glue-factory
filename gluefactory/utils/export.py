@@ -25,6 +25,7 @@ def export_predictions(
     optional_keys=[],
     mode: str = "w",
     store_directional: bool = False,
+    mixed_precision: bool = False,
 ):
     assert keys == "*" or isinstance(keys, (tuple, list))
     Path(output_file).parent.mkdir(exist_ok=True, parents=True)
@@ -32,78 +33,89 @@ def export_predictions(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device).eval()
     for data_ in tqdm(loader):
-        data = misc.batch_to_device(data_, device, non_blocking=True)
-        pred = model(data)
-        if callback_fn is not None:
-            pred = {**callback_fn(pred, data), **pred}
-        all_keys = set(pred.keys())
-        if keys != "*":
-            matched_keys = []
-            for pattern in keys:
-                found = False
+        with torch.autocast(
+            device_type=device,
+            enabled=mixed_precision,
+            dtype=torch.float16,
+        ):
+            data = misc.batch_to_device(data_, device, non_blocking=True)
+            pred = model(data)
+            if callback_fn is not None:
+                pred = {**callback_fn(pred, data), **pred}
+            all_keys = set(pred.keys())
+            if keys != "*":
+                matched_keys = []
+                for pattern in keys:
+                    found = False
+                    for key in all_keys - set(matched_keys):
+                        if pattern in key:
+                            matched_keys.append(key)
+                            found = True
+                    assert found, f"Pattern {pattern} not found in prediction keys."
+            else:
+                matched_keys = list(all_keys)
+            for pattern in optional_keys:
                 for key in all_keys - set(matched_keys):
                     if pattern in key:
                         matched_keys.append(key)
-                        found = True
-                assert found, f"Pattern {pattern} not found in prediction keys."
-        else:
-            matched_keys = list(all_keys)
-        for pattern in optional_keys:
-            for key in all_keys - set(matched_keys):
-                if pattern in key:
-                    matched_keys.append(key)
 
-        pred = {k: v for k, v in pred.items() if k in matched_keys}
-        assert len(pred) > 0
+            pred = {k: v for k, v in pred.items() if k in matched_keys}
+            assert len(pred) > 0
 
-        # renormalization
-        for k in pred.keys():
-            if k.startswith("keypoints"):
-                idx = k.replace("keypoints", "")
-                scales = 1.0 / (
-                    data["scales"] if len(idx) == 0 else data[f"view{idx}"]["scales"]
-                )
-                pred[k] = pred[k] * scales[None]
-            if k.startswith("lines"):
-                idx = k.replace("lines", "")
-                scales = 1.0 / (
-                    data["scales"] if len(idx) == 0 else data[f"view{idx}"]["scales"]
-                )
-                pred[k] = pred[k] * scales[None]
-            if k.startswith("orig_lines"):
-                idx = k.replace("orig_lines", "")
-                scales = 1.0 / (
-                    data["scales"] if len(idx) == 0 else data[f"view{idx}"]["scales"]
-                )
-                pred[k] = pred[k] * scales[None]
+            # renormalization
+            for k in pred.keys():
+                if k.startswith("keypoints"):
+                    idx = k.replace("keypoints", "")
+                    scales = 1.0 / (
+                        data["scales"]
+                        if len(idx) == 0
+                        else data[f"view{idx}"]["scales"]
+                    )
+                    pred[k] = pred[k] * scales[None]
+                if k.startswith("lines"):
+                    idx = k.replace("lines", "")
+                    scales = 1.0 / (
+                        data["scales"]
+                        if len(idx) == 0
+                        else data[f"view{idx}"]["scales"]
+                    )
+                    pred[k] = pred[k] * scales[None]
+                if k.startswith("orig_lines"):
+                    idx = k.replace("orig_lines", "")
+                    scales = 1.0 / (
+                        data["scales"]
+                        if len(idx) == 0
+                        else data[f"view{idx}"]["scales"]
+                    )
+                    pred[k] = pred[k] * scales[None]
 
-        pred = {k: v[0].cpu().numpy() for k, v in pred.items()}
+            pred = {k: v[0].cpu().numpy() for k, v in pred.items()}
 
-        if as_half:
-            for k in pred:
-                dt = pred[k].dtype
-                if (dt == np.float32) and (dt != np.float16):
-                    pred[k] = pred[k].astype(np.float16)
-        try:
-            name = data["name"][0]
-            if store_directional:
-                view_names = [x["name"][0] for x in misc.iterelements(data, "view")]
-                assert (
-                    len(view_names) == 2
-                ), "Can only store directional data for 2-view inputs."
-                pairs = [(0, 1), (1, 0)]
-                for k, (i, j) in enumerate(pairs):
-                    grpi = hfile.require_group(view_names[i])
-                    grpi_j = grpi.create_group(view_names[j])
-                    dict_to_h5group(grpi_j, misc.get_view(pred, str(k)))
-            else:
-                grp = hfile.create_group(name)
-                dict_to_h5group(grp, pred)
-        except RuntimeError:
-            print(f"Skipping {name} (already in file?)")
-            continue
+            if as_half:
+                for k in pred:
+                    dt = pred[k].dtype
+                    if (dt == np.float32) and (dt != np.float16):
+                        pred[k] = pred[k].astype(np.float16)
+            try:
+                name = data["name"][0]
+                if store_directional:
+                    view_names = [x["name"][0] for x in misc.iterelements(data, "view")]
+                    assert (
+                        len(view_names) == 2
+                    ), "Can only store directional data for 2-view inputs."
+                    pairs = [(0, 1), (1, 0)]
+                    for k, (i, j) in enumerate(pairs):
+                        grpi = hfile.require_group(view_names[i])
+                        grpi_j = grpi.create_group(view_names[j])
+                        dict_to_h5group(grpi_j, misc.get_view(pred, str(k)))
+                else:
+                    grp = hfile.create_group(name)
+                    dict_to_h5group(grp, pred)
+            except RuntimeError:
+                print(f"Skipping {name} (already in file?)")
+                continue
 
-        del pred
+            del pred
     hfile.close()
     return output_file
 
