@@ -15,7 +15,7 @@ if __name__ == "__main__":
     parser.add_argument("benchmark", type=str)
     parser.add_argument("--x", type=str, default=None)
     parser.add_argument("--y", type=str, default=None)
-    parser.add_argument("--backend", type=str, default=None)
+    parser.add_argument("--backend", type=str, default="WxAgg")
     parser.add_argument("--num_samples", type=int, default=None)
     parser.add_argument(
         "--default_plot", type=str, default=TwoViewFrame.default_conf["default"]
