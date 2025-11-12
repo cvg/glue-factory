@@ -24,8 +24,9 @@ class DoppelgangersPipeline(eval_pipeline.EvalPipeline):
             "root": "doppelgangerspp",
             "num_workers": 16,
             "preprocessing": {
-                "resize": 480,  # we also resize during eval to have comparable metrics
-                "side": "short",
+                "resize": 1024,  # we also resize during eval to have comparable metrics
+                "side": "long",
+                "crop_if_short_side": True,
             },
             "seed": 42,
         },
@@ -55,6 +56,8 @@ class DoppelgangersPipeline(eval_pipeline.EvalPipeline):
     optional_export_keys = (
         "matchability0",
         "matchability1",
+        "overlap_score0",
+        "overlap_score1",
     )
 
     def _init(self, conf):
@@ -127,12 +130,23 @@ class DoppelgangersPipeline(eval_pipeline.EvalPipeline):
                 best_idx = np.argmax(f1)
                 summaries[f"best_threshold{suffix}"] = ths[best_idx]
                 results[f"pred{suffix}"] = (v > ths[best_idx]).astype(np.float32)
+                results[f"discrepancy{suffix}"] = (
+                    results[f"pred{suffix}"] - results["label"]
+                )  # +1: False Positive, -1: False Negative
                 summaries[f"f1{suffix}"] = f1[best_idx]
                 summaries[f"precision{suffix}"] = precision[best_idx]
                 summaries[f"recall{suffix}"] = recall[best_idx]
                 summaries[f"ap{suffix}"] = skm.average_precision_score(
                     results["label"], v
                 )
+                is_positive = results[f"pred{suffix}"] > 0.5
+                gt_is_positive = np.array(results["label"]) > 0.5
+                summaries[f"false_positive{suffix}"] = (
+                    is_positive & ~gt_is_positive
+                ).mean()
+                summaries[f"false_negative{suffix}"] = (
+                    gt_is_positive & ~is_positive
+                ).mean()
                 summaries[f"auroc{suffix}"] = np.nan_to_num(
                     skm.roc_auc_score(results["label"], v), 0.0
                 )
