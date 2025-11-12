@@ -174,7 +174,11 @@ class SummaryWriter:
             step = 1 if step == 0 else step
             # @TODO: check if this works
             labels, preds = labels_preds
-            precision, recall, _ = precision_recall_curve(labels, preds)
+            try:
+                precision, recall, _ = precision_recall_curve(labels, preds)
+            except ValueError as e:
+                logger.warning(f"Could not compute {tag}/pr_curve at step {step}.")
+                return
             f1score = 2 * (precision * recall) / (precision + recall + 1e-8)
             best = np.argmax(f1score)
             self.add_scalar(f"{tag}/f1", f1score[best], step)
@@ -192,7 +196,11 @@ class SummaryWriter:
             self.add_scalar(f"{tag}/ap", ap, step)
 
         if self.use_tensorboard:
-            self.writer.add_pr_curve(tag, *labels_preds, global_step=step)
+            try:
+                self.writer.add_pr_curve(tag, *labels_preds, global_step=step)
+            except Exception as e:
+                logger.warning(f"Could not compute {tag}/pr_curve at step {step}.")
+                return
 
     def define_metric(self, name: str, summary: str | None = None):
         """Define a custom metric for wandb."""
