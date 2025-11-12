@@ -18,6 +18,8 @@ class DoppelgangersDataset(BaseDataset):
         "subset": None,
         "add_dummy_pose_depth": False,  # for compatibility with some pipelines
         "only_negatives": False,
+        "visym": False,
+        "add_visym_pairs": False,
     }
 
     def _init(self, conf):
@@ -36,13 +38,26 @@ class DoppelgangersSplit(torch.utils.data.Dataset):
 
     def __init__(self, conf, split: str, epoch: int = 0):
         self.conf = conf
-        pairs_name = {
-            "test": "pairs_metadata/test_pairs.npy",
-            "val": "pairs_metadata/test_pairs.npy",
-            "train": "pairs_metadata/train_pairs_flip.npy",
-        }[split]
+        if conf.visym:
+            pairs_name = {
+                "test": "pairs_metadata/test_pairs_visym.npy",
+                "val": "pairs_metadata/test_pairs_visym.npy",
+                "train": "pairs_metadata/train_pairs_visym_fix.npy",
+            }[split]
+        else:
+            pairs_name = {
+                "test": "pairs_metadata/test_pairs.npy",
+                "val": "pairs_metadata/test_pairs.npy",
+                "train": "pairs_metadata/train_pairs_flip.npy",
+            }[split]
         pair_f = settings.DATA_PATH / conf.root / pairs_name
         self.items = np.load(pair_f, allow_pickle=True)
+
+        if conf.add_visym_pairs and split == "train":
+            visym_pairs_name = "pairs_metadata/train_pairs_visym_fix.npy"
+            visym_pair_f = settings.DATA_PATH / conf.root / visym_pairs_name
+            visym_items = np.load(visym_pair_f, allow_pickle=True)
+            self.items = np.concatenate([self.items, visym_items], axis=0)
 
         self.items = np.array(
             [x for x in self.items if ".gif" not in x[0] and ".gif" not in x[1]]
@@ -63,9 +78,15 @@ class DoppelgangersSplit(torch.utils.data.Dataset):
             "train": "doppelgangers/images/train_set_flip/",
         }[split]
         self.image_dir = settings.DATA_PATH / conf.root / image_dir
+        # The training images of visym are stored with the test set
+        self.alt_image_dir = (
+            settings.DATA_PATH / conf.root / "doppelgangers/images/test_set/"
+        )
 
     def _read_view(self, name):
         path = self.image_dir / name
+        if not path.exists():
+            path = self.alt_image_dir / name
         img = preprocess.load_image(path)
         data = self.preprocessor(img)
         data["name"] = name
@@ -132,11 +153,12 @@ if __name__ == "__main__":
             "antialias": False,
         },
         "num_workers": 1,
+        "visym": True,
     }
 
     dataset = DoppelgangersDataset(conf)
 
-    loader = dataset.get_data_loader("test")
+    loader = dataset.get_data_loader("train")
 
     images = []
     for i, data in tqdm(enumerate(loader)):
