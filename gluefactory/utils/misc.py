@@ -421,6 +421,21 @@ def tree_summary(tree: types.Tree, flatten: bool = False) -> str:
     )
 
 
+def assert_tree_finite(tree: types.Tree) -> types.Tree:
+    """Check which tensors in a tree contain NaNs."""
+
+    def _is_nan(k, t):
+        if isinstance(t, torch.Tensor):
+            assert (
+                not torch.isnan(t).any().item()
+            ), f"NaN detected in tensor at key: {k}"
+            return not torch.isnan(t).any().item()
+        else:
+            return True
+
+    return flat_map(tree, _is_nan)  # type: ignore
+
+
 def print_summary(tree: types.Tree, flatten: bool = False):
     print(tree_summary(tree, flatten=flatten))
 
