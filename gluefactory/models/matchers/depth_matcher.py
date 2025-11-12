@@ -14,13 +14,15 @@ class DepthMatcher(BaseModel):
         "th_epi": None,  # add some more epi outliers
         "th_consistency": None,  # check for projection consistency in px
         "min_overlap": None,  # min overlap to consider a match
+        "add_epi_outliers": True,
+        "compute_assignment": True,
+        "max_rel_depth_error": None,
         # GT parameters for lines
         "use_lines": False,
         "n_line_sampled_pts": 50,
         "line_perp_dist_th": 5,
         "overlap_th": 0.2,
         "min_visibility_th": 0.5,
-        "add_epi_outliers": True,
     }
 
     required_data_keys = ["view0", "view1", "T_0to1"]
@@ -64,6 +66,8 @@ class DepthMatcher(BaseModel):
                 cc_th=self.conf.th_consistency,
                 min_overlap=self.conf.min_overlap,
                 add_epi_outliers=self.conf.add_epi_outliers,
+                compute_assignment=self.conf.compute_assignment,
+                max_rel_depth_error=self.conf.max_rel_depth_error,
                 **kw,
             )
         if self.conf.use_lines:
