@@ -82,7 +82,15 @@ def compose_cli_config(output_dir: Path, args) -> DictConfig:
     if args.restore:
         restore_conf = OmegaConf.load(output_dir / "config.yaml")
         conf = OmegaConf.merge(restore_conf, conf)
+        if conf.train.get("load_experiment") is not None and conf.train.get(
+            "reload_model", False
+        ):
+            pretrain_dir = settings.TRAINING_PATH / conf.train.load_experiment
+            logger.info(f"Finetuning: Loading model config from {pretrain_dir}.")
+            pretrain_conf = OmegaConf.load(pretrain_dir / "config.yaml")
+            conf.model = OmegaConf.merge(pretrain_conf.model, conf.model)
         conf.train.load_experiment = args.experiment
+        conf.train.reload_model = False
         conf.train.load_state = True
     else:
         if conf.train.seed is None:
