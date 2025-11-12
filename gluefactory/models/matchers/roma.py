@@ -283,7 +283,14 @@ class RoMa(base_model.BaseModel):
                 stack=False,
             )
         else:
-            raise NotImplementedError
+            dc_qtos = {
+                k: {ki: vi[0][None] for ki, vi in v.items()}
+                for k, v in dense_corresps.items()
+            }
+            dc_stoq = {
+                k: {ki: vi[1][None] for ki, vi in v.items()}
+                for k, v in dense_corresps.items()
+            }
 
         pred_qtos = flow_to_warp(
             dc_qtos[finest_scale]["flow"],
