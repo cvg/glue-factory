@@ -33,6 +33,8 @@ class ImagePreprocessor:
         "add_padding_mask": False,
         "crop_if_short_side": False,
         "crop_mode": "center",
+        "pad_value": 0.0,
+        "center_pad": False,
     }
 
     def __init__(self, conf) -> None:
@@ -72,6 +74,8 @@ class ImagePreprocessor:
             padding_data = square_pad(
                 img,
                 return_mask=self.conf.add_padding_mask,
+                fill_value=self.conf.get("pad_value", 0.0),
+                center=self.conf.get("center_pad", False),
             )
             data["image"] = padding_data["image"]
             data["corners_hw"] = padding_data["corners_hw"].numpy()
@@ -152,7 +156,7 @@ def square_pad(
     image: torch.Tensor,
     center: bool = False,
     return_mask: bool = False,
-    fill_value: float = 0.0,
+    fill_value: float | None = 0.0,
 ) -> dict[str, torch.Tensor]:
     """zero pad images to size x size"""
     h, w = image.shape[-2:]
@@ -167,6 +171,11 @@ def square_pad(
     else:
         ox, oy = 0, 0
         padded[..., :h, :w] = image
+        if fill_value is None:
+            if h < hw:
+                padded[..., h:, :w] = image[..., -1:, :]
+            elif w < hw:
+                padded[..., :h, w:] = image[..., :, -1:]
 
     pad_t_img = torch.eye(3, device=image.device)
     pad_t_img[:2, 2] = torch.tensor([ox, oy], device=image.device)
@@ -178,7 +187,7 @@ def square_pad(
         "transform": pad_t_img,
     }
     if return_mask:
-        valid = torch.full_like(padded, dtype=torch.bool, fill_value=fill_value)
+        valid = torch.full_like(padded, dtype=torch.bool, fill_value=0)
         if center:
             valid[..., oy : oy + h, ox : ox + w] = True
         else:
