@@ -211,9 +211,9 @@ class BaseDataset(metaclass=ABCMeta):
         except omegaconf.MissingMandatoryValue:
             batch_size = self.conf.batch_size
         if num_samples is not None:
-            dataset.items = np.random.default_rng(42).permutation(dataset.items)[
-                :num_samples
-            ]
+            idxs = np.random.default_rng(42).permutation(np.arange(len(dataset.items)))
+            idxs = idxs[:num_samples]
+            dataset.items = [dataset.items[i] for i in idxs.tolist()]
         max_num_workers = 0
         if hasattr(os, "sched_getaffinity"):
             max_num_workers = len(os.sched_getaffinity(0))
