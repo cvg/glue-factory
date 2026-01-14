@@ -26,7 +26,7 @@ AMP_CUSTOM_FWD_F32 = (
 
 @AMP_CUSTOM_FWD_F32
 def normalize_keypoints(
-    kpts: torch.Tensor, size: Optional[torch.Tensor] = None
+    kpts: torch.Tensor, size: Optional[torch.Tensor] = None, keep_aspect: bool = True
 ) -> torch.Tensor:
     if size is None:
         size = 1 + kpts.max(-2).values - kpts.min(-2).values
@@ -34,8 +34,11 @@ def normalize_keypoints(
         size = torch.tensor(size, device=kpts.device, dtype=kpts.dtype)
     size = size.to(kpts)
     shift = size / 2
-    scale = size.max(-1).values / 2
-    kpts = (kpts - shift[..., None, :]) / scale[..., None, None]
+    if keep_aspect:
+        scale = size.max(-1).values[..., None] / 2
+    else:
+        scale = size / 2
+    kpts = (kpts - shift[..., None, :]) / scale[..., None, :]
     return kpts
 
 
@@ -173,8 +176,9 @@ class SelfBlock(nn.Module):
         qkv = self.Wqkv(x)
         qkv = qkv.unflatten(-1, (self.num_heads, -1, 3)).transpose(1, 2)
         q, k, v = qkv[..., 0], qkv[..., 1], qkv[..., 2]
-        q = apply_cached_rotary_emb(encoding, q)
-        k = apply_cached_rotary_emb(encoding, k)
+        if encoding is not None:
+            q = apply_cached_rotary_emb(encoding, q)
+            k = apply_cached_rotary_emb(encoding, k)
         context = self.inner_attn(q, k, v, mask=mask)
         message = self.out_proj(context.transpose(1, 2).flatten(start_dim=-2))
         return x + self.dropout(self.ffn(torch.cat([x, message], -1)))
@@ -230,8 +234,9 @@ class CrossBlock(nn.Module):
             lambda t: t.unflatten(-1, (self.heads, -1)).transpose(1, 2),
             (qk0, qk1, v0, v1),
         )
-        if encoding0 is not None and encoding1 is not None:
+        if encoding0 is not None:
             qk0 = apply_cached_rotary_emb(encoding0, qk0)
+        if encoding1 is not None:
             qk1 = apply_cached_rotary_emb(encoding1, qk1)
         if self.flash is not None and qk0.device.type == "cuda":
             m0 = self.flash(qk0, qk1, v1, mask)
@@ -305,8 +310,9 @@ class UniCrossBlock(nn.Module):
             lambda t: t.unflatten(-1, (self.heads, -1)).transpose(1, 2),
             (q, k, v),
         )
-        if encoding0 is not None and encoding1 is not None:
+        if encoding0 is not None:
             q = apply_cached_rotary_emb(encoding0, q)
+        if encoding1 is not None:
             k = apply_cached_rotary_emb(encoding1, k)
         if self.flash is not None and q.device.type == "cuda":
             m0 = self.flash(q, k, v, mask)
