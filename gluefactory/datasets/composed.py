@@ -21,12 +21,17 @@ class ComposedDataset(BaseDataset):
         "preprocessing": preprocess.ImagePreprocessor.default_conf,
         "weights": None,
         "target_length": "min",  # min, max, <dataset_name>, number
+        "sample_from": None,  # list of dataset names to sample from, None means all
         "photometric": {"name": "identity", "p": 0.75},
     }
 
     def _init(self, conf):
         child_confs = conf.childs
-        self.datasets = [get_dataset(name)(c) for name, c in child_confs.items()]
+        self.datasets = {
+            name: get_dataset(name)(c)
+            for name, c in child_confs.items()
+            if name in (conf.sample_from or child_confs.keys())
+        }
 
     def get_dataset(self, split: str, epoch: int = 0):
         return ComposedSplit(self.conf, self.datasets, split, epoch)
@@ -35,15 +40,20 @@ class ComposedDataset(BaseDataset):
 class ComposedSplit(torch.utils.data.Dataset):
     def __init__(self, conf, datasets, split: str, epoch: int = 0):
         self.conf = conf
-        self.datasets = [d.get_dataset(split, epoch) for d in datasets]
+
+        self.dataset_names = conf.get(f"{split}_split") or list(datasets.keys())
+        self.datasets = [
+            datasets[name].get_dataset(split, epoch) for name in self.dataset_names
+        ]
         self.sizes = np.array([len(d) for d in self.datasets])
 
-        self.dataset_names = [name for name in conf.childs.keys()]
-        logger.info("Composed dataset with datasets: %s", self.dataset_names)
+        logger.info(
+            "[%s] Composed dataset with datasets: %s", split, self.dataset_names
+        )
 
         self.weights = [
-            c.get(f"{split}_weight", c.get("weight", None))
-            for c in conf.childs.values()
+            d.conf.get(f"{split}_weight", d.conf.get("weight", None))
+            for d in self.datasets
         ]
         if all(w is None for w in self.weights):
             self.weights = None
@@ -91,6 +101,9 @@ class ComposedSplit(torch.utils.data.Dataset):
                     idxs = np.arange(len(dataset))
                 self.sample_idxs.append(idxs)
             self.sizes = actual_sizes
+        for name, size in zip(self.dataset_names, self.sizes):
+            logger.info(f"[{split}] Dataset {name}: {size} samples")
+        logger.info(f"[{split}] Total: {self.sizes.sum()} samples")
         self.cum_sizes = np.cumsum([0] + self.sizes.tolist())
 
     def get_idxs(self, idx):
