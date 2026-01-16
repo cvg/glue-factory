@@ -151,7 +151,7 @@ class Trainer:
         "log_every_iter": 200,  # interval for logging the loss to the console
         "log_grad_every_iter": None,  # interval for logging gradient hists
         "test_every_epoch": 1,  # interval for evaluation on the test benchmarks
-        "keep_last_checkpoints": 3,  # keep only the last X checkpoints
+        "keep_last_checkpoints": 1,  # keep only the last X checkpoints
         "load_experiment": None,  # initialize the model from a previous experiment
         "median_metrics": [],  # add the median of some metrics
         "recall_metrics": {},  # add the recall of some metrics
