@@ -280,9 +280,11 @@ class _Dataset(torch.utils.data.Dataset):
             # Unify it with other datasets by adding dummy pose and depth
             for i in range(2):
                 data[f"view{i}"]["T_w2cam"] = reconstruction.Pose.identity()
-                data[f"view{i}"]["camera"] = reconstruction.Camera.from_image(
-                    torch.as_tensor(img).permute(2, 0, 1)
-                ).compose_image_transform(data[f"view{i}"].pop("H_"))
+                data[f"view{i}"]["camera"] = (
+                    reconstruction.PerspectiveCamera.from_image(
+                        torch.as_tensor(img).permute(2, 0, 1)
+                    ).compose_image_transform(data[f"view{i}"].pop("H_"))
+                )
 
                 data[f"view{i}"]["depth"] = torch.ones_like(
                     data[f"view{i}"]["image"][0]
@@ -293,10 +295,9 @@ class _Dataset(torch.utils.data.Dataset):
             data["T_0to1"] = data["view1"]["T_w2cam"].compose(
                 data["view0"]["T_w2cam"].inv()
             )
-            data["image"] = torch.as_tensor(img).permute(2, 0, 1)
             data["T_1to0"] = data["T_0to1"].inv()
-            data["overlap_0to1"] = 1.0
-            data["overlap_1to0"] = 1.0
+            data["overlap_0to1"] = 1.0  # @TODO: compute actual overlap
+            data["overlap_1to0"] = 1.0  # @TODO: compute actual overlap
 
             data["overlap"] = np.ones((2, 2), dtype=np.float32)
             data["idx"] = idx
