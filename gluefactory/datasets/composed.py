@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from gluefactory.utils import misc, preprocess
-
+from ..geometry.reconstruction import PerspectiveCamera
+from ..utils import misc, preprocess
 from . import get_dataset
 from .augmentations import augmentations
 from .base_dataset import BaseDataset
@@ -23,6 +23,7 @@ class ComposedDataset(BaseDataset):
         "target_length": "min",  # min, max, <dataset_name>, number
         "sample_from": None,  # list of dataset names to sample from, None means all
         "photometric": {"name": "identity", "p": 0.75},
+        "force_perspective_camera": False,
     }
 
     def _init(self, conf):
@@ -134,6 +135,10 @@ class ComposedSplit(torch.utils.data.Dataset):
                     mode="nearest",
                 )[0]
             if "camera" in view:
+                if self.conf.force_perspective_camera and not isinstance(
+                    view["camera"], PerspectiveCamera
+                ):
+                    view["camera"] = PerspectiveCamera.from_pinhole(view["camera"])
                 element[f"view{i}"]["camera"] = view["camera"].compose_image_transform(
                     element[f"view{i}"]["transform"]
                 )
