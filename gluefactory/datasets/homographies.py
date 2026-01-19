@@ -275,6 +275,10 @@ class _Dataset(torch.utils.data.Dataset):
                 **data,
             }
 
+        for view in misc.iterelements(data):
+            view["name"] = name
+        data["scene"] = name
+
         if self.conf.add_dummy_pose_depth:
             assert not self.conf.triplet
             # Unify it with other datasets by adding dummy pose and depth
