@@ -19,9 +19,9 @@ class ComposedDataset(BaseDataset):
     default_conf = {
         "childs": {},  # dict of dataset configurations
         "preprocessing": preprocess.ImagePreprocessor.default_conf,
-        "weights": None,
         "target_length": "min",  # min, max, <dataset_name>, number
         "sample_from": None,  # list of dataset names to sample from, None means all
+        "weights": None,  # Same order and length as sample_from
         "photometric": {"name": "identity", "p": 0.75},
         "force_perspective_camera": False,
     }
@@ -42,7 +42,9 @@ class ComposedSplit(torch.utils.data.Dataset):
     def __init__(self, conf, datasets, split: str, epoch: int = 0):
         self.conf = conf
 
-        self.dataset_names = conf.get(f"{split}_split") or list(datasets.keys())
+        self.dataset_names = (
+            conf.get(f"{split}_split") or conf.sample_from or list(datasets.keys())
+        )
         self.datasets = [
             datasets[name].get_dataset(split, epoch) for name in self.dataset_names
         ]
@@ -52,10 +54,23 @@ class ComposedSplit(torch.utils.data.Dataset):
             "[%s] Composed dataset with datasets: %s", split, self.dataset_names
         )
 
-        self.weights = [
-            d.conf.get(f"{split}_weight", d.conf.get("weight", None))
-            for d in self.datasets
-        ]
+        if conf.weights is not None:
+            assert conf.sample_from is not None, "sample_from required to use weights."
+            assert len(conf.weights) == len(
+                conf.sample_from
+            ), "Number of weights must match number of datasets in sample_from."
+            self.weights = conf.weights
+            # Reorder weights to match dataset_names
+            self.weights = [
+                self.weights[conf.sample_from.index(name)]
+                for name in self.dataset_names
+            ]
+        else:
+            # Alternative, use weight per dataset in its config
+            self.weights = [
+                d.conf.get(f"{split}_weight", d.conf.get("weight", None))
+                for d in self.datasets
+            ]
         if all(w is None for w in self.weights):
             self.weights = None
         else:
@@ -192,7 +207,6 @@ if __name__ == "__main__":
                 "test_num_per_scene": 10,
             },
         },
-        "weights": [0.9, 0.1],
         "target_length": 50,
         "seed": 42,
         "batch_size": 4,
