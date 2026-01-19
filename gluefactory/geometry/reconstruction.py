@@ -600,6 +600,14 @@ class PerspectiveCamera(Camera):
         return cls(torch.from_numpy(data_))
 
     @classmethod
+    def from_pinhole(cls, pinhole_cam: Camera):
+        K = pinhole_cam.calibration_matrix()
+        data = cls.data_from_K(K)
+        if pinhole_cam.dist.shape[-1] > 0:
+            data = torch.cat([data, pinhole_cam.dist], -1)
+        return cls(data)
+
+    @classmethod
     def data_from_K(cls, K: torch.Tensor):
         cx, cy = K[..., 0, 2], K[..., 1, 2]
         data = torch.concat([2 * cx[..., None], 2 * cy[..., None], K.flatten(-2)], -1)
