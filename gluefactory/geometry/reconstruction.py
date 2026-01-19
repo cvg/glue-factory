@@ -283,7 +283,7 @@ class Pose(tensor.TensorWrapper):
 
 class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
     eps: float = 1e-4
-    share_df: bool = False  # share fx, fy updates (global): has no impact outside BA
+    share_df: bool = True  # share fx, fy updates (global): has no impact outside BA
 
     def __init__(self, data_: torch.Tensor, share_df: bool = False, eps: float = 1e-4):
         assert data_.shape[-1] in {6, 8, 10}
@@ -338,7 +338,7 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
     @classmethod
     @tensor.autocast
     def from_calibration_matrix(cls, K: torch.Tensor):
-        return cls(Camera.data_from_K(K))
+        return cls(cls.data_from_K(K))
 
     @classmethod
     def from_image(cls, img: torch.Tensor):
@@ -410,13 +410,14 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
         """
         K = self.calibration_matrix()
         new_K = new_t_img.to(K) @ K
-        newdata_ = Camera.data_from_K(new_K)
+        cls = self.__class__
+        newdata_ = cls.data_from_K(new_K)
 
         alldata_ = torch.cat([newdata_, self.dist], -1)
         if inplace:
             self.data_ = alldata_
             return self
-        return Camera(alldata_)
+        return cls(alldata_)
 
     def empty_image(self, rgb: bool = False) -> torch.Tensor:  # H X W or 3 X H X W
         """Create an empty image with the camera size."""
@@ -461,14 +462,6 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
         z = z.clamp(min=self.eps)
         return p3d[..., :-1] / z, valid[..., 0]
 
-    def J_project(self, p3d: torch.Tensor):
-        x, y, z = p3d[..., 0], p3d[..., 1], p3d[..., 2]
-        zero = torch.zeros_like(z)
-        z = z.clamp(min=self.eps)
-        J = torch.stack([1 / z, zero, -x / z**2, zero, 1 / z, -y / z**2], dim=-1)
-        J = J.reshape(p3d.shape[:-1] + (2, 3))
-        return J  # N x 2 x 3
-
     @tensor.autocast
     @tensor.autovmap
     def distort(self, pts: torch.Tensor) -> Tuple[torch.Tensor]:
@@ -478,9 +471,6 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
         assert pts.shape[-1] == 2
         # assert pts.shape[:-2] == self.shape  # allow broadcasting
         return gtr.distort_points(pts, self.dist)
-
-    def J_distort(self, pts: torch.Tensor):
-        return gtr.J_distort_points(pts, self.dist)  # N x 2 x 2
 
     @tensor.autocast
     @tensor.autovmap
@@ -494,9 +484,6 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
         """Convert normalized 2D coordinates into pixel coordinates."""
         return (p2d - self.c) / self.f
 
-    def J_denormalize(self):
-        return torch.diag_embed(self.f).unsqueeze(-3)  # 1 x 2 x 2
-
     @tensor.autocast
     @tensor.autovmap
     def cam2image(self, p3d: torch.Tensor) -> Tuple[torch.Tensor]:
@@ -506,11 +493,6 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
         p2d = self.denormalize(p2d)
         valid = visible & mask & self.in_image(p2d)
         return p2d, valid
-
-    def J_world2image(self, p3d: torch.Tensor):
-        p2d_dist, valid = self.project(p3d)
-        J = self.J_denormalize() @ self.J_distort(p2d_dist) @ self.J_project(p3d)
-        return J, valid
 
     def image2cam(self, p2d: torch.Tensor, homogeneous: bool = True) -> torch.Tensor:
         """Convert 2D pixel corrdinates to 3D points with z=1"""
@@ -578,6 +560,120 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
 
     def __repr__(self):
         return f"Camera {self.shape} {self.dtype} {self.device}"
+
+
+class PerspectiveCamera(Camera):
+    # data: w,h, k00, k01, k02, k10, k11, k12, k20, k21, k22, params
+
+    @classmethod
+    def from_colmap(cls, camera: Union[Dict, NamedTuple]):
+        if isinstance(camera, tuple):
+            camera = camera._asdict()
+
+        model = camera["model"]
+        params = camera["params"]
+
+        if model in ["OPENCV", "PINHOLE", "RADIAL"]:
+            (fx, fy, cx, cy), params = np.split(params, [4])
+        elif model in ["SIMPLE_PINHOLE", "SIMPLE_RADIAL"]:
+            (f, cx, cy), params = np.split(params, [3])
+            fx = fy = f
+            if model == "SIMPLE_RADIAL":
+                params = np.r_[params, 0.0]
+        else:
+            raise NotImplementedError(model)
+
+        data_ = np.r_[
+            camera["width"],
+            camera["height"],
+            fx,
+            0.0,
+            cx,
+            0.0,
+            fy,
+            cy,
+            0.0,
+            0.0,
+            1.0,
+            params,
+        ]
+        return cls(torch.from_numpy(data_))
+
+    @classmethod
+    def data_from_K(cls, K: torch.Tensor):
+        cx, cy = K[..., 0, 2], K[..., 1, 2]
+        data = torch.concat([2 * cx[..., None], 2 * cy[..., None], K.flatten(-2)], -1)
+        return data
+
+    @classmethod
+    def from_image(cls, img):
+        h, w = img.shape[-2:]
+        cx, cy = w / 2, h / 2
+        fx = fy = 0.5 * max(w, h)
+        data = torch.tensor(
+            [w, h, fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
+            device=img.device,
+            dtype=img.dtype,
+        )
+        return cls(data)
+
+    @tensor.autocast
+    def calibration_matrix(self):
+        return self.data_[..., 2:11].reshape(self.data_.shape[:-1] + (3, 3))
+
+    @property
+    def f(self) -> torch.Tensor:
+        """Focal lengths (fx, fy) with shape (..., 2)."""
+        return self.data_[..., (2, 6)]
+
+    @property
+    def c(self) -> torch.Tensor:
+        """Principal points (cx, cy) with shape (..., 2)."""
+        return self.data_[..., (4, 7)]
+
+    @tensor.autocast
+    def scale(self, scales):
+        size = self.size * scales
+        K = self.calibration_matrix() @ torch.diag_embed(gtr.to_homogeneous(scales))
+        data = torch.cat([size, K.flatten(-2), self.dist], -1)
+        return self.__class__(data)
+
+    @tensor.autocast
+    @tensor.autovmap
+    def project(self, p3d: torch.Tensor) -> Tuple[torch.Tensor]:
+        return super().project(p3d)
+
+    @tensor.autocast
+    @tensor.autovmap
+    def denormalize(self, p2d: torch.Tensor) -> torch.Tensor:
+        """Convert normalized 2D coordinates into pixel coordinates."""
+        return gtr.from_homogeneous(
+            gtr.to_homogeneous(p2d) @ self.calibration_matrix().transpose(-1, -2)
+        )
+
+    @tensor.autocast
+    @tensor.autovmap
+    def normalize(self, p2d: torch.Tensor) -> torch.Tensor:
+        """Convert normalized 2D coordinates into pixel coordinates."""
+        return gtr.from_homogeneous(
+            gtr.to_homogeneous(p2d)
+            @ self.calibration_matrix().inverse().transpose(-1, -2)
+        )
+
+    @property
+    def params(self) -> torch.Tensor:
+        return self.data_[..., 2:]
+
+    @property
+    def dist(self) -> torch.Tensor:
+        """Distortion parameters, with shape (..., {0, 2, 4})."""
+        return self.data_[..., 11:]
+
+    def to_cameradict(self, camera_model=None):
+        raise NotImplementedError("PerspectiveCamera does not support to_cameradict.")
+
+    def __repr__(self):
+        return f"PerspectiveCamera {self.shape} {self.dtype} {self.device}"
 
 
 @dataclasses.dataclass
