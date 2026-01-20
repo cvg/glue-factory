@@ -9,6 +9,7 @@ import torch
 from omegaconf import OmegaConf
 from torch import nn
 
+from ..geometry import homography
 from ..geometry import transforms as gtr
 from . import misc
 
@@ -35,12 +36,18 @@ class ImagePreprocessor:
         "crop_mode": "center",
         "pad_value": 0.0,
         "center_pad": False,
+        "homography": {
+            "p": 0.0,
+            "difficulty": 0.7,
+            "max_angle": 0.0,
+        },  # homography augmentation config
     }
 
     def __init__(self, conf) -> None:
         super().__init__()
         default_conf = OmegaConf.create(self.default_conf)
         OmegaConf.set_struct(default_conf, True)
+        OmegaConf.set_struct(default_conf.homography, False)
         self.conf = OmegaConf.merge(default_conf, conf)
 
     def __call__(self, img: torch.Tensor, interpolation: Optional[str] = None) -> dict:
@@ -62,9 +69,21 @@ class ImagePreprocessor:
         scale = torch.Tensor([img.shape[-1] / w, img.shape[-2] / h]).to(img)
         r_t_img = np.diag([scale[0], scale[1], 1])
 
+        # Apply random homography (optional)
+        if isinstance(self.conf.resize, int):
+            target_hw = (self.conf.resize, self.conf.resize)
+        else:
+            target_hw = self.conf.resize
+
+        img, w_t_r = self.apply_homography(
+            img,
+            target_hw=target_hw,
+            mode=interpolation,
+        )
+        r_t_img = w_t_r @ r_t_img
         data = {
             "scales": scale,
-            "image_size": np.array(size[::-1]),
+            "image_size": np.array(img.shape[-2:][::-1]),  # w, h
             "transform": r_t_img,
             "original_image_size": np.array([w, h]),
         }
@@ -150,6 +169,26 @@ class ImagePreprocessor:
             df = self.conf.edge_divisible_by
             size = list(map(lambda x: int(x // df * df), size))
         return size
+
+    def apply_homography(
+        self, img: torch.Tensor, target_hw: Tuple[int, int], **kwargs
+    ) -> tuple[torch.Tensor, np.ndarray]:
+        """Sample a random homography matrix and apply it to the image."""
+        conf = OmegaConf.to_container(self.conf.get("homography", {}))
+        prob = conf.pop("p", 0.0)
+        if prob > 0.0:
+            warp_H_i, _, _, _ = homography.sample_homography_corners(
+                img.shape[-2:][::-1], target_hw, **conf
+            )
+            warped_img = kornia.geometry.warp_perspective(
+                img[None],
+                torch.as_tensor(warp_H_i, device=img.device, dtype=torch.float32)[None],
+                dsize=target_hw[::-1],
+                **kwargs,
+            )[0]
+            return warped_img, warp_H_i
+        else:
+            return img, np.eye(3)
 
 
 def square_pad(
