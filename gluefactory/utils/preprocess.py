@@ -38,8 +38,8 @@ class ImagePreprocessor:
         "center_pad": False,
         "homography": {
             "p": 0.0,
-            "difficulty": 0.7,
-            "max_angle": 0.0,
+            "difficulty": 0.5,
+            "max_angle": 20.0,
         },  # homography augmentation config
     }
 
@@ -176,7 +176,8 @@ class ImagePreprocessor:
         """Sample a random homography matrix and apply it to the image."""
         conf = OmegaConf.to_container(self.conf.get("homography", {}))
         prob = conf.pop("p", 0.0)
-        if prob > 0.0:
+        if np.random.rand() < prob:
+            # Apply homography
             warp_H_i, _, _, _ = homography.sample_homography_corners(
                 img.shape[-2:][::-1], target_hw, **conf
             )
