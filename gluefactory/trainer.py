@@ -496,6 +496,8 @@ class Trainer:
             "float16": torch.float16,
             "bfloat16": torch.bfloat16,
             None: torch.float32,  # we disable it anyway
+            "float32": torch.float32,
+            False: torch.float32,
         }[mixed_precision]
 
         return use_mp
