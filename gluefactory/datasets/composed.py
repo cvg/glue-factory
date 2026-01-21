@@ -1,10 +1,12 @@
 """Composed dataset that combines multiple datasets."""
 
+import copy
 import logging
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from omegaconf import OmegaConf
 
 from ..geometry.reconstruction import PerspectiveCamera
 from ..utils import misc, preprocess
@@ -40,7 +42,12 @@ class ComposedDataset(BaseDataset):
 
 class ComposedSplit(torch.utils.data.Dataset):
     def __init__(self, conf, datasets, split: str, epoch: int = 0):
-        self.conf = conf
+        self.conf = conf = copy.deepcopy(conf)
+        if split != "train":
+            OmegaConf.set_readonly(self.conf.preprocessing, False)
+            # Only perform homography augmentation during training
+            self.conf.preprocessing.homography.p = 0.0
+            OmegaConf.set_readonly(self.conf.preprocessing, True)
 
         self.dataset_names = (
             conf.get(f"{split}_split") or conf.sample_from or list(datasets.keys())
