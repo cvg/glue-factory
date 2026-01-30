@@ -11,6 +11,8 @@ import torch
 from omegaconf import OmegaConf
 from torch import nn
 
+from gluefactory.utils import misc
+
 logger = logging.getLogger(__name__)
 
 
@@ -64,6 +66,7 @@ class BaseModel(nn.Module, metaclass=MetaModel):
         "compile": True,  # compile the model for faster inference
         "compile_loss": True,  # compile losses for faster inference
         "run_loss_in_forward": False,  # compute losses inside forward
+        "force_f32": False,
     }
     required_data_keys = []
     strict_conf = False
@@ -120,7 +123,10 @@ class BaseModel(nn.Module, metaclass=MetaModel):
                     recursive_key_check(expected[key], given[key])
 
         recursive_key_check(self.required_data_keys, data)
-        pred = self._forward(data)
+        if self.conf.force_f32:
+            pred = misc.force_f32(self._forward)(data)
+        else:
+            pred = self._forward(data)
 
         if self.conf.run_loss_in_forward:
             pred["loss"] = self.loss(pred, data)
