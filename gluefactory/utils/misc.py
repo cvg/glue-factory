@@ -25,6 +25,20 @@ AMP_CUSTOM_FWD_F32 = (
     else torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
 )
 
+AMP_CUSTOM_F32 = torch.autocast(device_type="cuda", dtype=torch.float32, enabled=True)
+
+
+def force_f32(fn: Callable) -> Callable:
+    """Decorator to force function to run in float32 autocast context."""
+    cast_f32 = functools.partial(tree_cast, dtype=torch.float32)
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with torch.autocast(device_type="cuda", enabled=True, dtype=torch.float32):
+            return fn(*map(cast_f32, args), **cast_f32(kwargs))
+
+    return wrapper
+
 
 def filter_batch_for_jit(
     fn: Callable[[Any], Any], exclude_cls: Sequence[Any] = (list, tuple, str, bytes)
@@ -192,7 +206,7 @@ def unstack_twoviews(data, B, indices=["0to1", "0to2", "1to2"]):
 def iterelements(data: dict, pattern="view{i}") -> Iterable[Any]:
     i = 0
     while True:
-        view = data.get(pattern.format(i), None)
+        view = data.get(pattern.format(i=i), None)
         if view is None:
             break
         yield view
@@ -208,7 +222,7 @@ def concat_elements(data, pattern="view{i}"):
 
 
 def pack_tree(
-    trees: Iterable[types.Tree],
+    trees: Iterable[types.Tree | Any],
     check: bool = False,
     fn: Callable[[Sequence[Any]], Any] = lambda x: x,
     sep: str | None = ".",
@@ -218,6 +232,9 @@ def pack_tree(
         return {}
 
     trees = list(trees)
+    if not isinstance(trees[0], Mapping):
+        # leaf node
+        return fn(trees)
     flat_trees = [flatten_dict(batch, sep=sep) for batch in trees]
     keys = set(flat_trees[0].keys())
     if check:
@@ -364,12 +381,14 @@ def filter_tree(
 
 
 def tree_map(
-    input_: types.Tree,
+    input_: types.Tree | Any,
     func: Callable[[types.Value], types.Value],
     sep: str | None = None,
     unflatten: bool = True,
-) -> types.Tree:
+) -> types.Tree | Any:
     """Apply a function to each item in a flattened dictionary."""
+    if not isinstance(input_, Mapping):
+        return func(input_)
     return flat_map(input_, func=lambda k, v: func(v), sep=sep, unflatten=unflatten)
 
 
@@ -386,6 +405,11 @@ def tree_tensormap(
         sep=sep,
         unflatten=unflatten,
     )
+
+
+def tree_cast(tree: types.Tree | Any, dtype: torch.dtype) -> types.Tree | Any:
+    """Cast all tensors in a tree to a specific dtype."""
+    return tree_map(tree, lambda v: v.to(dtype) if hasattr(v, "to") else v)
 
 
 def tree_all_gather(tree: types.Tree) -> types.Tree:
