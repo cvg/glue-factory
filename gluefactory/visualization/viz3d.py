@@ -158,6 +158,9 @@ def plot_points(
     colorscale: Optional[str] = None,
     name: Optional[str] = None,
     edge_filter: float | None = None,
+    cmin: float | None = None,
+    cmax: float | None = None,
+    **kwargs,
 ):
     """Plot a set of 3D points."""
 
@@ -180,6 +183,9 @@ def plot_points(
             line_width=0.0,
             colorscale=colorscale,
             colorbar=colorbar,
+            cmin=cmin,
+            cmax=cmax,
         ),
+        **kwargs,
     )
     fig.add_trace(tr)
