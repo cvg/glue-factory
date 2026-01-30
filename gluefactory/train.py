@@ -69,7 +69,21 @@ def create_training_dir(experiment_name: str, args) -> Path:
 
 
 def compose_cli_config(output_dir: Path, args) -> DictConfig:
-    conf = OmegaConf.from_cli(args.dotlist)
+    # Separate +config overrides from regular dotlist items
+    extra_configs = []
+    dotlist_items = []
+    for item in args.dotlist:
+        if item.startswith("+") and "=" not in item:
+            extra_configs.append(item[1:])  # Remove the + prefix
+        else:
+            dotlist_items.append(item)
+
+    conf = OmegaConf.from_cli(dotlist_items)
+    # Merge extra configs (e.g., +debug) with order: debug1 < debug2 < cli
+    for extra_name in reversed(extra_configs):
+        extra_path = experiments.parse_config_path(extra_name)
+        extra_conf = OmegaConf.load(extra_path)
+        conf = OmegaConf.merge(extra_conf, conf)
     OmegaConf.save(conf, str(output_dir / "cli_config.yaml"))
     if args.conf:
         conf_path, raw_conf = experiments.compose_config(
