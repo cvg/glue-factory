@@ -151,6 +151,24 @@ def save_code_snapshot(
             shutil.copytree(mod_dir, output_dir / module, dirs_exist_ok=True)
 
 
+def launch_tensorboard(logdir: Path):
+    """Launch TensorBoard and log the URL."""
+    import re
+    import subprocess
+
+    proc = subprocess.Popen(
+        ["tensorboard", "--logdir", str(logdir)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    for line in proc.stdout:
+        match = re.search(r"http://localhost:\d+", line)
+        if match:
+            logger.info(f"TensorBoard launched at {match.group()}")
+            break
+
+
 def parse_args():
     """Parse command line arguments and return them."""
     parser = argparse.ArgumentParser()
@@ -199,6 +217,9 @@ def parse_args():
         "--distributed", action="store_true", help="Run in distributed mode"
     )
     parser.add_argument("--strict", action="store_true", help="Strict config merge")
+    parser.add_argument(
+        "--launch_tensorboard", "-ltb", action="store_true", help="Launch TensorBoard"
+    )
     parser.add_argument("dotlist", nargs="*")
     args = parser.parse_intermixed_args()
     return args
@@ -217,6 +238,10 @@ if __name__ == "__main__":
         conf.train.get("submodules", ()),
         compression=args.compress_snapshot,
     )
+
+    # Launch TensorBoard if requested
+    if args.launch_tensorboard:
+        launch_tensorboard(settings.TRAINING_PATH / args.experiment)
 
     # Start actual training
     if args.distributed and conf.train.num_devices < 1:
