@@ -170,7 +170,7 @@ class SelfBlock(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        encoding: torch.Tensor,
+        encoding: torch.Tensor | None = None,
         mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         qkv = self.Wqkv(x)
