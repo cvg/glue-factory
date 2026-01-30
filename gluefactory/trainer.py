@@ -726,59 +726,57 @@ class Trainer:
                     del pred, data, loss, losses
                     return None, None
 
-            do_backward = loss.requires_grad
-            if self.distributed:
-                do_backward = torch.tensor(do_backward).float().to(self.device)
-                torch.distributed.all_reduce(
-                    do_backward, torch.distributed.ReduceOp.PRODUCT
-                )
-                do_backward = do_backward > 0
-            if do_backward:
-                self.scaler.scale(loss).backward()
-                self.step_timer.measure("backward")
+        do_backward = loss.requires_grad
+        if self.distributed:
+            do_backward = torch.tensor(do_backward).float().to(self.device)
+            torch.distributed.all_reduce(
+                do_backward, torch.distributed.ReduceOp.PRODUCT
+            )
+            do_backward = do_backward > 0
+        if do_backward:
+            self.scaler.scale(loss).backward()
+            self.step_timer.measure("backward")
 
-                if self.conf.detect_anomaly:
-                    # Check for params without any gradient which causes
-                    # problems in distributed training with checkpointing
-                    detected_anomaly = False
-                    for name, param in self.model.named_parameters():
-                        if param.grad is None and param.requires_grad:
-                            logger.warning(f"param {name} has no gradient.")
-                            detected_anomaly = True
-                    if detected_anomaly:
-                        raise RuntimeError("Detected anomaly in training.")
-                if do_update:
-                    self.scaler.unscale_(self.optimizer)
-                    if self.conf.get("clip_grad", None):
-                        try:
-                            torch.nn.utils.clip_grad_norm_(
-                                self.model.parameters(),
-                                max_norm=self.conf.clip_grad,
-                                error_if_nonfinite=True,
-                            )
-                            if log_grad_norm:
-                                loss_metrics["l2/grad_norm"] = torch.Tensor(
-                                    [misc.grad_norm(self.model.parameters())]
-                                )
-                            self.scaler.step(self.optimizer)
-                        except RuntimeError:
-                            logger.warning(
-                                "NaN detected in gradients. Skipping iteration."
-                            )
-                        self.scaler.update()
-                    else:
+            if self.conf.detect_anomaly:
+                # Check for params without any gradient which causes
+                # problems in distributed training with checkpointing
+                detected_anomaly = False
+                for name, param in self.model.named_parameters():
+                    if param.grad is None and param.requires_grad:
+                        logger.warning(f"param {name} has no gradient.")
+                        detected_anomaly = True
+                if detected_anomaly:
+                    raise RuntimeError("Detected anomaly in training.")
+            if do_update:
+                self.scaler.unscale_(self.optimizer)
+                if self.conf.get("clip_grad", None):
+                    try:
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.parameters(),
+                            max_norm=self.conf.clip_grad,
+                            error_if_nonfinite=True,
+                        )
                         if log_grad_norm:
                             loss_metrics["l2/grad_norm"] = torch.Tensor(
                                 [misc.grad_norm(self.model.parameters())]
                             )
                         self.scaler.step(self.optimizer)
-                        self.scaler.update()
-                    self.optimizer.zero_grad()
-                self.step_timer.measure("step")
-                if not self.conf.lr_schedule.on_epoch:
-                    self.learning_rate_step()
-            else:
-                self.warn("Skip iteration due to detach.")
+                    except RuntimeError:
+                        logger.warning("NaN detected in gradients. Skipping iteration.")
+                    self.scaler.update()
+                else:
+                    if log_grad_norm:
+                        loss_metrics["l2/grad_norm"] = torch.Tensor(
+                            [misc.grad_norm(self.model.parameters())]
+                        )
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                self.optimizer.zero_grad()
+            self.step_timer.measure("step")
+            if not self.conf.lr_schedule.on_epoch:
+                self.learning_rate_step()
+        else:
+            self.warn("Skip iteration due to detach.")
         return pred, loss_metrics
 
     def eval_step(self, data: Batch) -> tuple[Predictions, LossMetrics]:
