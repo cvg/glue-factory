@@ -81,7 +81,7 @@ class TwoViewPipeline(BaseModel):
         num_views = len([k for k in data.keys() if k.startswith("view")])
         if self.conf.get("extract_parallel", False) and self.training:
             bs = data["view0"]["image"].shape[0]
-            vdata = misc.concat_tree(misc.iterelements(data, pattern="view"))
+            vdata = misc.concat_tree(misc.iterelements(data, pattern="view{i}"))
             vpred = self.extract_view(vdata)
             preds = misc.split_tree(vpred, bs, num_views)
         else:

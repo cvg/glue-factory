@@ -189,21 +189,21 @@ def unstack_twoviews(data, B, indices=["0to1", "0to2", "1to2"]):
     return out
 
 
-def iterelements(data: dict, pattern="view") -> Iterable[Any]:
+def iterelements(data: dict, pattern="view{i}") -> Iterable[Any]:
     i = 0
     while True:
-        view = data.get(f"{pattern}{i}", None)
+        view = data.get(pattern.format(i), None)
         if view is None:
             break
         yield view
         i += 1
 
 
-def pack_elements(data, pattern="view"):
+def pack_elements(data, pattern="view{i}"):
     return pack_tree(iterelements(data, pattern=pattern))
 
 
-def concat_elements(data, pattern="view"):
+def concat_elements(data, pattern="view{i}"):
     return concat_tree(iterelements(data, pattern=pattern))
 
 

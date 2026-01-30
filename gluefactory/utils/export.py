@@ -99,7 +99,9 @@ def export_predictions(
             try:
                 name = data["name"][0]
                 if store_directional:
-                    view_names = [x["name"][0] for x in misc.iterelements(data, "view")]
+                    view_names = [
+                        x["name"][0] for x in misc.iterelements(data, "view{i}")
+                    ]
                     assert (
                         len(view_names) == 2
                     ), "Can only store directional data for 2-view inputs."
