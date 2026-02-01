@@ -196,3 +196,80 @@ def check_epipolar_intersection(
     check_h = mask_h & (((x0 >= 0) & (x0 <= width1)) | ((xH >= 0) & (xH <= width1)))
 
     return (check_v | check_h).squeeze(-1)
+
+
+def rays_to_plucker(c_t_w: reconstruction.Pose, rays_cam: torch.Tensor) -> torch.Tensor:
+    """Convert camera rays to Plücker coordinates in world frame.
+
+    Args:
+        c_t_w: Pose in camera-from-world convention, shape (...).
+        rays_cam: Ray directions in camera coordinates, shape (..., N, 3).
+
+    Returns:
+        Plücker coordinates (direction, moment) in world frame, shape (..., N, 6).
+    """
+    # Get world-from-camera transform
+    w_t_c = c_t_w.inv()
+
+    # Camera center in world coordinates
+    cam_center = w_t_c.t  # (..., 3)
+
+    # Transform ray directions to world frame
+    rays_world = (w_t_c.R @ rays_cam.unsqueeze(-1)).squeeze(-1)  # (..., N, 3)
+
+    # Compute moment: m = origin × direction
+    # Broadcast camera center to match rays shape
+    moment = torch.cross(
+        cam_center.unsqueeze(-2).expand_as(rays_world),
+        rays_world,
+        dim=-1,
+    )  # (..., N, 3)
+
+    # Stack into Plücker coordinates: (direction, moment)
+    plucker = torch.cat([rays_world, moment], dim=-1)  # (..., N, 6)
+    return plucker
+
+
+def triangulate_from_plucker(
+    plucker1: torch.Tensor, plucker2: torch.Tensor
+) -> torch.Tensor:
+    """Triangulate 3D point from two Plücker rays.
+
+    Finds the midpoint of the closest points on each ray.
+
+    Args:
+        plucker1: Plücker coordinates (direction, moment), shape (..., 6).
+        plucker2: Plücker coordinates (direction, moment), shape (..., 6).
+
+    Returns:
+        3D point (midpoint of closest points), shape (..., 3).
+    """
+    d1, m1 = plucker1[..., :3], plucker1[..., 3:]
+    d2, m2 = plucker2[..., :3], plucker2[..., 3:]
+
+    # Recover point on each line: p = (d × m) / ||d||²
+    d1_sq = (d1 * d1).sum(-1, keepdim=True)
+    d2_sq = (d2 * d2).sum(-1, keepdim=True)
+    o1 = torch.cross(d1, m1, dim=-1) / d1_sq
+    o2 = torch.cross(d2, m2, dim=-1) / d2_sq
+
+    # Find closest points between two lines
+    w = o1 - o2
+    a = (d1 * d1).sum(-1)
+    b = (d1 * d2).sum(-1)
+    c = (d2 * d2).sum(-1)
+    d = (d1 * w).sum(-1)
+    e = (d2 * w).sum(-1)
+
+    denom = a * c - b * b + 1e-8  # avoid division by zero for parallel rays
+    t1 = (b * e - c * d) / denom
+    t2 = (a * e - b * d) / denom
+
+    # Closest points on each ray
+    p1 = o1 + t1[..., None] * d1
+    p2 = o2 + t2[..., None] * d2
+
+    # Return midpoint
+    # You can also return t1, t2 if you need depth values,
+    # or (p1 - p2).norm(dim=-1) as a confidence measure (smaller distance = more reliable intersection).
+    return (p1 + p2) / 2
