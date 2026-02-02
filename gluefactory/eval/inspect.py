@@ -21,6 +21,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--default_plot", type=str, default=TwoViewFrame.default_conf["default"]
     )
+    parser.add_argument("--show_plot", type=int, default=None)
 
     parser.add_argument("dotlist", nargs="*")
     args = parser.parse_intermixed_args()
@@ -81,4 +82,8 @@ if __name__ == "__main__":
         child_frame=TwoViewFrame,
     )
     frame.draw()
+    print("Visualization done.")
+    if args.show_plot is not None:
+        print("Spawn child frame for detailed view...")
+        frame.spawn_child(args.dotlist[0], args.show_plot, event=1)
     plt.show()
