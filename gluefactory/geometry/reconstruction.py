@@ -937,6 +937,39 @@ class Reconstruction:
         return fig
 
 
+def rays_to_plucker(c_t_w: Pose, rays_cam: torch.Tensor) -> torch.Tensor:
+    """Convert camera rays to Plücker coordinates in world frame.
+
+    Args:
+        c_t_w: Pose in camera-from-world convention, shape (...).
+        rays_cam: Ray directions in camera coordinates, shape (..., N, 3).
+
+    Returns:
+        Plücker coordinates (direction, moment) in world frame, shape (..., N, 6).
+    """
+    # Get world-from-camera transform
+    w_t_c = c_t_w.inv()
+
+    # Camera center in world coordinates
+    cam_center = w_t_c.t  # (..., 3)
+
+    # Transform ray directions to world frame
+    rays_world = (w_t_c.R @ rays_cam.unsqueeze(-1)).squeeze(-1)  # (..., N, 3)
+
+    # Compute moment: m = origin × direction
+    # Broadcast camera center to match rays shape
+    moment = torch.cross(
+        cam_center.unsqueeze(-2).expand_as(rays_world),
+        rays_world,
+        dim=-1,
+    )  # (..., N, 3)
+
+    # Stack into Plücker coordinates: (direction, moment)
+    plucker = torch.cat([rays_world, moment], dim=-1)  # (..., N, 6)
+
+    return plucker
+
+
 if __name__ == "__main__":
 
     # import torch._C._functorch as cft  # type: ignore
