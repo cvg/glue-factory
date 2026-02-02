@@ -16,11 +16,13 @@ import pycolmap
 import torch
 
 
-def init_figure(height: int = 800, projection: str = "orthographic") -> go.Figure:
+def init_figure(
+    height: int = 800, projection: str = "orthographic", show_axes: bool = False
+) -> go.Figure:
     """Initialize a 3D figure."""
     fig = go.Figure()
     axes = dict(
-        visible=False,
+        visible=show_axes,
         showbackground=False,
         showgrid=False,
         showline=False,
@@ -176,7 +178,7 @@ def plot_points(
         z=z,
         mode="markers",
         name=name,
-        legendgroup=name,
+        legendgroup=name if "legendgroup" not in kwargs else kwargs.pop("legendgroup"),
         marker=dict(
             size=ps,
             color=color,
