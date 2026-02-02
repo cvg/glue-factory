@@ -4,6 +4,7 @@ from pprint import pprint
 
 import matplotlib
 import matplotlib.pyplot as plt
+from omegaconf import OmegaConf
 
 from .. import settings
 from ..visualization.global_frame import GlobalFrame
@@ -32,11 +33,7 @@ if __name__ == "__main__":
     if args.backend:
         matplotlib.use(args.backend)
 
-    bm = get_benchmark(args.benchmark)
-    if args.num_samples is not None:
-        bm.num_samples = args.num_samples
-    dataset = bm.get_dataset()
-
+    num_samples = args.num_samples
     for name in args.dotlist:
         possible_paths = [
             settings.EVAL_PATH / args.benchmark / name,  # Preferred
@@ -58,8 +55,17 @@ if __name__ == "__main__":
         for k, v in s.items():
             summaries[k][name] = v
 
+        config = OmegaConf.load(experiment_dir / "conf.yaml")
+        if config.get("num_samples") is not None and args.num_samples is None:
+            num_samples = min(num_samples or 1e8, config.num_samples)
+
     pprint(summaries)
     plt.close("all")
+
+    bm = get_benchmark(args.benchmark)
+    if num_samples is not None:
+        bm.num_samples = num_samples
+    dataset = bm.get_dataset()
 
     argvars = vars(args)
     if args.x is None:
