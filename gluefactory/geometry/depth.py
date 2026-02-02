@@ -4,7 +4,7 @@ import kornia
 import torch
 
 from ..utils import misc
-from . import epipolar, reconstruction
+from . import absolute_pose, epipolar, reconstruction
 
 
 def shape_normalize(kpts, w, h):
@@ -286,19 +286,89 @@ def align_pointclouds(
         return c0_t_c1, s, pts1_v0
 
 
+def align_pointclouds_robust(
+    pts_v0: torch.Tensor,
+    pts_v1: torch.Tensor,
+    weights: torch.Tensor = None,
+    return_Rt: bool = False,
+    scale_only: bool = False,
+    num_iters: int = 5,
+    robust_fn: str = "huber",
+    robust_scale: float = 0.1,
+) -> tuple[
+    reconstruction.Pose | None | tuple[torch.Tensor, torch.Tensor],
+    torch.Tensor,
+    torch.Tensor,
+]:
+    if weights is None:
+        weights = torch.ones_like(pts_v0[..., 0])
+
+    rweights = 1.0
+
+    for _ in range(num_iters):
+        pose, s, pts1_aligned = align_pointclouds(
+            pts_v0, pts_v1, rweights * weights, return_Rt=False, scale_only=scale_only
+        )
+
+        # Compute residuals
+        residuals = (pts_v0 - pts1_aligned).norm(dim=-1)
+
+        # Update weights using robust kernel derivative
+        if robust_fn == "huber":
+            rweights = torch.where(
+                residuals < robust_scale,
+                torch.ones_like(residuals),
+                robust_scale / residuals.clamp(min=1e-8),
+            )
+        elif robust_fn == "cauchy":
+            rweights = 1 / (1 + (residuals / robust_scale) ** 2)
+        elif robust_fn == "geman_mcclure":
+            rweights = 1 / (1 + (residuals / robust_scale) ** 2) ** 2
+        else:
+            raise ValueError(f"Unknown robust function: {robust_fn}")
+
+    # Final pass with converged weights
+    return align_pointclouds(pts_v0, pts_v1, rweights * weights, return_Rt, scale_only)
+
+
 def batch_align_pointclouds(
     pts_v0: torch.Tensor,
     pts_v1: torch.Tensor,
     weights: torch.Tensor = None,
     scale_only: bool = False,
+    num_iters: int = 0,
+    **kwargs,
 ) -> tuple[reconstruction.Pose | None, torch.Tensor, torch.Tensor]:
 
     in_dims = (0, 0, 0) if weights is not None else (0, 0)
 
     c0_Rt_c1, scales, pts1_v0 = torch.vmap(
-        functools.partial(align_pointclouds, return_Rt=True, scale_only=scale_only),
+        functools.partial(
+            align_pointclouds_robust,
+            return_Rt=True,
+            scale_only=scale_only,
+            num_iters=num_iters,
+            **kwargs,
+        ),
         in_dims=in_dims,
         out_dims=0,
     )(pts_v0, pts_v1, weights)
 
     return reconstruction.Pose.from_Rt(*c0_Rt_c1), scales, pts1_v0
+
+
+def conormalize_pointclouds(
+    xyz_gt: torch.Tensor,  # To estimate scale and translation
+    *xyz_preds: torch.Tensor,  # To be transformed
+    valid: torch.Tensor | None = None,  # On which to compute the normalization
+) -> tuple[torch.Tensor, ...] | torch.Tensor:
+    """Normalize point clouds to have zero mean and isotropic unit scale."""
+    if valid is None:
+        valid = torch.ones_like(xyz_gt[..., 0])
+    xyz_gt_n, n_t_gt = absolute_pose._mean_isotropic_scale_normalize(
+        xyz_gt, weights=valid, return_pose=True
+    )
+    xyz_preds_n = [n_t_gt.transform(xyz_pred) for xyz_pred in xyz_preds]
+    if len(xyz_preds_n) == 0:
+        return xyz_gt_n
+    return xyz_gt_n, *xyz_preds_n
