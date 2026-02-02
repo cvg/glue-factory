@@ -294,7 +294,7 @@ def align_pointclouds_robust(
     scale_only: bool = False,
     num_iters: int = 5,
     robust_fn: str = "huber",
-    robust_scale: float = 0.1,
+    robust_scale: float | None = None,  # None is automatic estimation
 ) -> tuple[
     reconstruction.Pose | None | tuple[torch.Tensor, torch.Tensor],
     torch.Tensor,
@@ -305,13 +305,28 @@ def align_pointclouds_robust(
 
     rweights = 1.0
 
+    estimate_robust_scale = robust_scale is None
+    if not estimate_robust_scale:
+        robust_scale = torch.tensor(
+            robust_scale, device=pts_v0.device, dtype=pts_v0.dtype
+        )
+        robust_scale = robust_scale[None, None]
+    valid = weights > 1.0e-6
+
     for _ in range(num_iters):
-        pose, s, pts1_aligned = align_pointclouds(
+        _, _, pts1_aligned = align_pointclouds(
             pts_v0, pts_v1, rweights * weights, return_Rt=False, scale_only=scale_only
         )
 
         # Compute residuals
         residuals = (pts_v0 - pts1_aligned).norm(dim=-1)
+
+        if estimate_robust_scale:
+            # Estimate robust scale using median absolute deviation
+            med_residual = misc.masked_median(residuals, valid, dim=-1, keepdim=True)
+            robust_scale = 1.4826 * misc.masked_median(
+                torch.abs(residuals - med_residual), valid, dim=-1, keepdim=True
+            )
 
         # Update weights using robust kernel derivative
         if robust_fn == "huber":
@@ -337,12 +352,23 @@ def batch_align_pointclouds(
     weights: torch.Tensor = None,
     scale_only: bool = False,
     num_iters: int = 0,
+    align_normalized: bool = False,
     **kwargs,
 ) -> tuple[reconstruction.Pose | None, torch.Tensor, torch.Tensor]:
 
     in_dims = (0, 0, 0) if weights is not None else (0, 0)
 
-    c0_Rt_c1, scales, pts1_v0 = torch.vmap(
+    if align_normalized:
+        pts_v0n, c0n_t_c0 = absolute_pose._mean_isotropic_scale_normalize(
+            pts_v0, return_pose=True
+        )
+        c0n_t_c0, norm_scale = c0n_t_c0.normalize_rotation()
+    else:
+        pts_v0n = pts_v0
+        c0n_t_c0 = reconstruction.Pose.identity(device=pts_v0.device)[None]
+        norm_scale = torch.ones(pts_v0.shape[0], device=pts_v0.device)
+
+    c0n_Rt_c1, scales, pts1_v0n = torch.vmap(
         functools.partial(
             align_pointclouds_robust,
             return_Rt=True,
@@ -352,9 +378,21 @@ def batch_align_pointclouds(
         ),
         in_dims=in_dims,
         out_dims=0,
-    )(pts_v0, pts_v1, weights)
+    )(pts_v0n, pts_v1, weights)
 
-    return reconstruction.Pose.from_Rt(*c0_Rt_c1), scales, pts1_v0
+    # Scale c0n_t_c1's translation to match normalized frame convention
+    R_n, t_n = c0n_Rt_c1
+    t_n_scaled = t_n / norm_scale[..., None]
+    c0n_t_c1 = reconstruction.Pose.from_Rt(R_n, t_n_scaled)
+    c0_t_c1 = c0n_t_c0.inv() @ c0n_t_c1
+
+    # Correct scale: undo normalization scaling
+    scales = scales / norm_scale
+
+    # Correct points: scale back to original frame
+    pts1_v0 = c0n_t_c0.inv().transform(pts1_v0n) / norm_scale[..., None, None]
+
+    return c0_t_c1, scales, pts1_v0
 
 
 def conormalize_pointclouds(
