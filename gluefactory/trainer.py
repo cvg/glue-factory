@@ -7,7 +7,7 @@ Author: Philipp Lindenberger
 import collections
 import signal
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any, Callable, TypeAlias
 
 import numpy as np
 import torch
@@ -1083,11 +1083,12 @@ def scale_by_device_count(
     return data_conf
 
 
-def launch_training(output_dir: Path, conf: DictConfig, device: torch.device):
-    tools.set_seed(conf.train.seed)
-    dataset = datasets.get_dataset(conf.data.name)(
-        scale_by_device_count(conf.data, conf.train.num_devices or 1)
-    )
+def init_trainer(
+    output_dir: Path,
+    conf: DictConfig,
+    device: torch.device,
+    dummy_batch_fn: Callable[[], Batch] | None = None,
+) -> Trainer:
     if conf.train.get("reload_model"):
         assert conf.train.load_experiment is not None
         pretrain_dir = settings.TRAINING_PATH / conf.train.load_experiment
@@ -1098,7 +1099,10 @@ def launch_training(output_dir: Path, conf: DictConfig, device: torch.device):
     model = models.get_model(conf.model.name)(conf.model).to(device)
     if conf.get("lazy_init", True):
         logger.info("Running dummy forward pass to initialize lazy modules.")
-        dummy_batch = dataset.get_dummy_batch()
+        assert (
+            dummy_batch_fn is not None
+        ), "dummy_batch_fn must be provided for lazy_init"
+        dummy_batch = dummy_batch_fn()
         dummy_batch = misc.batch_to_device(dummy_batch, device, non_blocking=False)
         with torch.no_grad():
             model(dummy_batch)
@@ -1121,6 +1125,16 @@ def launch_training(output_dir: Path, conf: DictConfig, device: torch.device):
         trainer.register_benchmark(bench_name, bench_conf, every_epoch=every_epoch)
     # Maybe load experiment
     trainer.maybe_load_checkpoint()
+    return trainer
 
+
+def launch_training(output_dir: Path, conf: DictConfig, device: torch.device):
+    tools.set_seed(conf.train.seed)
+    dataset = datasets.get_dataset(conf.data.name)(
+        scale_by_device_count(conf.data, conf.train.num_devices or 1)
+    )
+    trainer = init_trainer(
+        output_dir, conf, device, dummy_batch_fn=dataset.get_dummy_batch
+    )
     # Run actual training loop
     trainer.train_loop(output_dir, dataset)
