@@ -171,6 +171,7 @@ def plot_keypoints(kpts, colors="lime", ps=4, axes=None, a=1.0, **kwargs):
         colors: string, or list of list of tuples (one for each keypoints).
         ps: size of the keypoints as float.
     """
+    artists = []
     if not isinstance(colors, list):
         colors = [colors] * len(kpts)
     if not isinstance(a, list):
@@ -180,7 +181,10 @@ def plot_keypoints(kpts, colors="lime", ps=4, axes=None, a=1.0, **kwargs):
     for ax, k, c, alpha in zip(axes, kpts, colors, a):
         if isinstance(k, torch.Tensor):
             k = k.detach().cpu().numpy()
-        ax.scatter(k[:, 0], k[:, 1], c=c, s=ps, linewidths=0, alpha=alpha, **kwargs)
+        artists.append(
+            ax.scatter(k[:, 0], k[:, 1], c=c, s=ps, linewidths=0, alpha=alpha, **kwargs)
+        )
+    return artists
 
 
 def plot_matches(kpts0, kpts1, color=None, lw=1.5, ps=4, a=1.0, labels=None, axes=None):
