@@ -63,8 +63,11 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
         name = args.conf
     elif checkpoint_name:
         name = checkpoint_name
-    if len(args.dotlist) > 0 and not args.tag:
-        name = name + "_" + ":".join(args.dotlist)
+
+    cli_args = [k for k in args.dotlist if not k.startswith("num_samples=")]
+    if len(cli_args) > 0 and not args.tag:
+        # Append CLI args to name except num_samples
+        name = name + "_" + ":".join(cli_args)
 
     if not name:
         raise ValueError("No tag provided. Please provide a tag with --tag or --conf.")
