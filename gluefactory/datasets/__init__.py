@@ -1,11 +1,12 @@
 import importlib.util
 
+from ..settings import SUBMODULES
 from ..utils.tools import get_class
 from .base_dataset import BaseDataset
 
 
 def get_dataset(name):
-    import_paths = [name, f"{__name__}.{name}"]
+    import_paths = [name, f"{__name__}.{name}"] + [f"{sm}.{name}" for sm in SUBMODULES]
     for path in import_paths:
         try:
             spec = importlib.util.find_spec(path)
