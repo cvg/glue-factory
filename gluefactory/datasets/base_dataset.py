@@ -264,7 +264,7 @@ class BaseDataset(metaclass=ABCMeta):
         """
         assert split in ["train", "val", "test"]
         with tools.fork_rng(self.conf.seed):
-            dummy_loader = self.get_dummy_loader("train", batch_size=None)
+            dummy_loader = self.get_dummy_loader(split, batch_size=None)
 
             class DummyDataset(torch.utils.data.Dataset):
                 def __init__(self, dummy_loader):
@@ -272,7 +272,7 @@ class BaseDataset(metaclass=ABCMeta):
                     self.batch = next(iter(dummy_loader))
 
                 def __len__(self):
-                    return len(self.dummy_loader) if split == "train" else 1
+                    return len(self.dummy_loader)
 
                 def __getitem__(self, idx):
                     return self.batch
