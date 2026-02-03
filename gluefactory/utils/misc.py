@@ -217,8 +217,12 @@ def pack_elements(data, pattern="view{i}"):
     return pack_tree(iterelements(data, pattern=pattern))
 
 
-def concat_elements(data, pattern="view{i}"):
-    return concat_tree(iterelements(data, pattern=pattern))
+def concat_elements(data, pattern="view{i}", dim: int = 0):
+    return concat_tree(iterelements(data, pattern=pattern), dim=dim)
+
+
+def cat_elements(data, pattern="view{i}", dim=0):
+    return concat_elements(data, pattern=pattern, dim=dim)
 
 
 def pack_tree(
@@ -245,19 +249,24 @@ def pack_tree(
     return unflatten_dict(joined_tree, sep=sep)
 
 
-def concat_tree(trees: Iterable[types.Tree], check: bool = False) -> types.Tree:
+def concat_tree(
+    trees: Iterable[types.Tree], check: bool = False, dim: int = 0
+) -> types.Tree:
     """Concatenate a list of trees into a single batch"""
 
     def combine(val_list: Sequence[Any]) -> Any:
         if isinstance(val_list[0], (torch.Tensor, tensor.TensorWrapper)):
-            return torch.cat(val_list)
+            return torch.cat(val_list, dim=dim)
         elif isinstance(val_list[0], tuple):
+            assert dim == 0, "Cannot concat tuples along non-zero dim"
             return tuple(
                 [combine([v[i] for v in val_list]) for i in range(len(val_list[0]))]
             )
         elif isinstance(val_list[0], Sequence):
+            assert dim == 0, "Cannot concat lists along non-zero dim"
             return sum(val_list, start=[])
         elif isinstance(val_list[0], (int, float)):
+            assert dim == 0, "Cannot concat scalars along non-zero dim"
             return val_list
         else:
             raise TypeError(f"Cannot combine values of type {type(val_list[0])}")
@@ -1005,3 +1014,15 @@ def match_keypoints_dense(
         mpred["keypoints0"] = data["keypoints0"]
         mpred["keypoints1"] = data["keypoints1"]
     return mpred
+
+
+def masked_median(
+    tensor: torch.Tensor,
+    mask: torch.BoolTensor,
+    dim: int | None = None,
+    keepdim: bool = False,
+) -> torch.Tensor:
+    assert tensor.ndim == mask.ndim, (tensor.shape, mask.shape)
+    masked_tensor = torch.where(mask, tensor, torch.nan)
+    median_tensor = torch.nanmedian(masked_tensor, dim=dim, keepdim=keepdim)
+    return median_tensor.values
