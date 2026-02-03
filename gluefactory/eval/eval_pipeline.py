@@ -75,6 +75,7 @@ class EvalPipeline:
     num_samples: int | None = None  # Number of samples to run eval on (None=all)
 
     main_metric = "???"  # You need to define this.
+    default_plot: str | None = None  # Default plot for inspection
 
     def __init__(self, conf):
         """Assumes"""
@@ -174,6 +175,7 @@ class RelativePosePipeline(EvalPipeline):
     }
 
     main_metric = "rel_pose_error_mAA"
+    default_plot = "epipolar_matches"
 
     export_keys = (
         "keypoints0",

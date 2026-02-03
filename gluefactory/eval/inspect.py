@@ -4,6 +4,7 @@ from pprint import pprint
 
 import matplotlib
 import matplotlib.pyplot as plt
+import plotly.io as pio
 from omegaconf import OmegaConf
 
 from .. import settings
@@ -18,10 +19,9 @@ if __name__ == "__main__":
     parser.add_argument("--y", type=str, default=None)
     parser.add_argument("--backend", type=str, default="WxAgg")
     parser.add_argument("--num_samples", type=int, default=None)
-    parser.add_argument(
-        "--default_plot", type=str, default=TwoViewFrame.default_conf["default"]
-    )
+    parser.add_argument("--default_plot", type=str, default=None)
     parser.add_argument("--show_plot", type=int, default=None)
+    parser.add_argument("--renderer", type=str, default="firefox")
 
     parser.add_argument("dotlist", nargs="*")
     args = parser.parse_intermixed_args()
@@ -33,6 +33,7 @@ if __name__ == "__main__":
 
     if args.backend:
         matplotlib.use(args.backend)
+    pio.renderers.default = args.renderer
 
     num_samples = args.num_samples
     for name in args.dotlist:
@@ -74,8 +75,14 @@ if __name__ == "__main__":
     if args.y is None:
         argvars["y"] = bm.default_y
 
+    default_plot = args.default_plot
+    if default_plot is None:
+        default_plot = bm.default_plot
+    if default_plot is None:
+        default_plot = TwoViewFrame.default_conf["default"]
+
     frame = GlobalFrame(
-        {"child": {"default": args.default_plot}, **argvars},
+        {"child": {"default": default_plot}, **argvars},
         results,
         dataset,
         predictions,
