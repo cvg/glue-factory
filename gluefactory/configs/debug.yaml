@@ -1,0 +1,20 @@
+# Debug configuration - apply with +debug
+# Overrides for fast iteration during development
+
+data:
+  batch_size: 4
+  sample_from: [megadepth_dense]
+  childs:
+    megadepth:
+      train_split: valid_scenes_clean.txt
+
+train:
+  compile: null
+  writer: tensorboard
+  log_every_iter: 10
+  record_memory: null
+  profile: null
+  eval_every_epoch: 20
+  train_split: val
+  print_arch: false
+  print_batch: false
