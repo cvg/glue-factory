@@ -213,6 +213,17 @@ class Pose(tensor.TensorWrapper):
         dt = torch.norm(self.t, dim=-1)
         return dr, dt
 
+    def normalize_rotation(self) -> tuple["Pose", torch.Tensor]:
+        """Normalize the rotation matrix and extract scale.
+
+        Decomposes a Sim3 transform p' = (s*R) @ p + t into an SE3 pose and scale s,
+        such that composing with other normalized poses works correctly.
+        Both R and t are divided by scale.
+        """
+        scale = self.R.det() ** (1 / 3)
+        R_normalized = self.R / scale[..., None, None]
+        return Pose.from_Rt(R_normalized, self.t / scale[..., None]), scale
+
     def norm(self) -> tuple[torch.Tensor, torch.Tensor]:
         return self.magnitude()
 
@@ -265,7 +276,7 @@ class Pose(tensor.TensorWrapper):
             delta = torch.zeros_like(self.data_[..., :6])
         return delta
 
-    def update(self, delta: torch.Tensor | Self, inplace: bool = False) -> "Pose":
+    def plus(self, delta: torch.Tensor | Self, inplace: bool = False) -> "Pose":
         delta = delta.to(self.dtype).to(self.device)
         if not isinstance(delta, self.__class__):
             delta = Pose.exp(delta)
@@ -521,7 +532,7 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
             return torch.zeros_like(self.params)
         return delta
 
-    def update(self, delta: torch.Tensor | Self, inplace=False) -> "Camera":
+    def plus(self, delta: torch.Tensor | Self, inplace=False) -> "Camera":
         delta = delta.to(self.dtype).to(self.device)
         if isinstance(delta, self.__class__):
             delta = delta.params
