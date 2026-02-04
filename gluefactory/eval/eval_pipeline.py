@@ -53,7 +53,7 @@ def save_eval(dir, summaries, figures, results):
         json.dump(s, f, indent=4)
 
     for fig_name, fig in figures.items():
-        fig.savefig(dir / f"{fig_name}.png")
+        fig.savefig(dir / f"{fig_name}.png", bbox_inches="tight")
 
 
 def exists_eval(dir):
