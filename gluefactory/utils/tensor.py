@@ -103,3 +103,12 @@ class TensorWrapper(TensorClass, tensor_only=True):
         if func == torch.where:
             func = cls.where
         return getattr(cls, func.__name__)(*args, **(kwargs or {}))
+
+    def to_h5(self, grp, key: str, **kwargs) -> None:
+        """Serialize to h5 dataset with _type attribute."""
+        raise NotImplementedError(f"{self.__class__.__name__}.to_h5 not implemented")
+
+    @classmethod
+    def from_h5(cls, ds) -> "TensorWrapper":
+        """Deserialize from h5 dataset."""
+        raise NotImplementedError(f"{cls.__name__}.from_h5 not implemented")

@@ -249,6 +249,15 @@ class Pose(tensor.TensorWrapper):
             "dt": lambda x: x[..., 1],
         }[agg](self.angular_drdt(other, stack=True))
 
+    def rotation_error(self, other: "Pose") -> torch.Tensor:
+        return (self @ other.inv()).magnitude()[0]
+
+    def translation_error(
+        self, other: "Pose", scale: torch.Tensor | int = 1.0
+    ) -> torch.Tensor:
+        dt = self.t * scale - other.t
+        return dt.norm(dim=-1)
+
     def _opening_angle(self, return_cos: bool = False) -> float:
         v0 = torch.zeros_like(self.t)
         v0[..., -1] = 1.0
@@ -290,6 +299,16 @@ class Pose(tensor.TensorWrapper):
 
     def __repr__(self):
         return f"Pose: {self.shape} {self.dtype} {self.device}"
+
+    def to_h5(self, grp, key: str, **kwargs) -> None:
+        """Serialize Pose to h5 dataset."""
+        ds = grp.create_dataset(key, data=self.data_.cpu().numpy(), **kwargs)
+        ds.attrs["_type"] = "Pose"
+
+    @classmethod
+    def from_h5(cls, ds) -> "Pose":
+        """Deserialize Pose from h5 dataset."""
+        return cls(torch.from_numpy(ds[:]))
 
 
 class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
@@ -572,6 +591,16 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
     def __repr__(self):
         return f"Camera {self.shape} {self.dtype} {self.device}"
 
+    def to_h5(self, grp, key: str, **kwargs) -> None:
+        """Serialize Camera to h5 dataset."""
+        ds = grp.create_dataset(key, data=self.data_.cpu().numpy(), **kwargs)
+        ds.attrs["_type"] = "Camera"
+
+    @classmethod
+    def from_h5(cls, ds) -> "Camera":
+        """Deserialize Camera from h5 dataset."""
+        return cls(torch.from_numpy(ds[:]))
+
 
 class PerspectiveCamera(Camera):
     # data: w,h, k00, k01, k02, k10, k11, k12, k20, k21, k22, params
@@ -690,6 +719,16 @@ class PerspectiveCamera(Camera):
 
     def to_cameradict(self, camera_model=None):
         raise NotImplementedError("PerspectiveCamera does not support to_cameradict.")
+
+    def to_h5(self, grp, key: str, **kwargs) -> None:
+        """Serialize PerspectiveCamera to h5 dataset."""
+        ds = grp.create_dataset(key, data=self.data_.cpu().numpy(), **kwargs)
+        ds.attrs["_type"] = "PerspectiveCamera"
+
+    @classmethod
+    def from_h5(cls, ds) -> "PerspectiveCamera":
+        """Deserialize PerspectiveCamera from h5 dataset."""
+        return cls(torch.from_numpy(ds[:]))
 
     def __repr__(self):
         return f"PerspectiveCamera {self.shape} {self.dtype} {self.device}"
