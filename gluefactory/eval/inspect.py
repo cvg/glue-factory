@@ -1,16 +1,21 @@
 import argparse
+import pprint
 from collections import defaultdict
-from pprint import pprint
 
 import matplotlib
 import matplotlib.pyplot as plt
 import plotly.io as pio
 from omegaconf import OmegaConf
 
+import gluefactory
+
 from .. import settings
 from ..visualization.global_frame import GlobalFrame
 from ..visualization.two_view_frame import TwoViewFrame
 from . import eval_pipeline, get_benchmark
+from .io import format_summaries
+
+logger = gluefactory.logger
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -30,6 +35,7 @@ if __name__ == "__main__":
     summaries = defaultdict(dict)
 
     predictions = {}
+    eval_predictions = {}
 
     if args.backend:
         matplotlib.use(args.backend)
@@ -52,8 +58,12 @@ if __name__ == "__main__":
                 f" Checked: {possible_paths}"
             )
         pred_file = experiment_dir / "predictions.h5"
+        eval_pred_file = experiment_dir / "eval_predictions.h5"
         s, results[name] = eval_pipeline.load_eval(experiment_dir)
+        s = format_summaries(s)
         predictions[name] = pred_file
+        if eval_pred_file.exists():
+            eval_predictions[name] = eval_pred_file
         for k, v in s.items():
             summaries[k][name] = v
 
@@ -61,7 +71,7 @@ if __name__ == "__main__":
         if config.get("num_samples") is not None and args.num_samples is None:
             num_samples = min(num_samples or 1e8, config.num_samples)
 
-    pprint(summaries)
+    logger.info("Aggregated evaluation summaries:\n%s", pprint.pformat(dict(summaries)))
     plt.close("all")
 
     bm = get_benchmark(args.benchmark)
@@ -86,6 +96,7 @@ if __name__ == "__main__":
         results,
         dataset,
         predictions,
+        eval_predictions=eval_predictions,
         child_frame=TwoViewFrame,
     )
     frame.draw()

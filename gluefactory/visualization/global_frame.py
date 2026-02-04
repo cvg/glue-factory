@@ -32,7 +32,8 @@ class GlobalFrame:
     scatters = {}
 
     def __init__(
-        self, conf, results, dataset, predictions, title=None, child_frame=None
+        self, conf, results, dataset, predictions, title=None, child_frame=None,
+        eval_predictions=None,
     ):
         self.child_frame = child_frame
         if self.child_frame is not None:
@@ -43,6 +44,7 @@ class GlobalFrame:
         self.results = results
         self.dataset = dataset
         self.predictions = predictions
+        self.eval_predictions = eval_predictions or {}
         self.metrics = set()
         for k, v in results.items():
             self.metrics.update(v.keys())
@@ -215,6 +217,12 @@ class GlobalFrame:
             preds[name] = CacheLoader({"path": str(pfile), "add_data_path": False})(
                 data
             )
+            # Merge eval_predictions if available
+            if name in self.eval_predictions:
+                eval_pred = CacheLoader(
+                    {"path": str(self.eval_predictions[name]), "add_data_path": False}
+                )(data)
+                preds[name].update(eval_pred)
         summaries_i = {
             name: {k: v[ind] for k, v in res.items() if k != "names"}
             for name, res in self.results.items()
