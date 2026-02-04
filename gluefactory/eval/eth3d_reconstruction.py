@@ -151,7 +151,7 @@ class ETH3DReconstructionPipeline(eval_pipeline.EvalPipeline):
                 scene, experiment_dir, model, data["reconstruction"]
             )
             all_preds[scene] = pred
-        export.dict_to_h5(predictions_file, all_preds)
+        export.write_tree_h5(predictions_file, all_preds)
         return predictions_file
 
     def eval_scene(
