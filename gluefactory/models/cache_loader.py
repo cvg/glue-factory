@@ -46,15 +46,40 @@ def pad_line_features(pred, seq_l: int = None):
     raise NotImplementedError
 
 
+# Registry of TensorWrapper types for h5 deserialization
+H5_TYPE_REGISTRY = {
+    "Pose": "gluefactory.geometry.reconstruction.Pose",
+    "Camera": "gluefactory.geometry.reconstruction.Camera",
+    "PerspectiveCamera": "gluefactory.geometry.reconstruction.PerspectiveCamera",
+}
+
+
+def _load_from_type(ds):
+    """Load a dataset with a _type attribute as a TensorWrapper."""
+    type_name = ds.attrs["_type"]
+    if type_name not in H5_TYPE_REGISTRY:
+        raise ValueError(f"Unknown h5 type: {type_name}")
+    import importlib
+
+    module_path, class_name = H5_TYPE_REGISTRY[type_name].rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    cls = getattr(module, class_name)
+    return cls.from_h5(ds)
+
+
 def recursive_load(grp, pkeys):
-    return {
-        k: (
-            (torch.from_numpy(grp[k].__array__()) if k in grp else grp.attrs[k])
-            if k not in grp or isinstance(grp[k], h5py.Dataset)
-            else recursive_load(grp[k], list(grp.keys()))
-        )
-        for k in pkeys
-    }
+    result = {}
+    for k in pkeys:
+        if k not in grp:
+            result[k] = grp.attrs[k]
+        elif isinstance(grp[k], h5py.Dataset):
+            if "_type" in grp[k].attrs:
+                result[k] = _load_from_type(grp[k])
+            else:
+                result[k] = torch.from_numpy(grp[k].__array__())
+        else:
+            result[k] = recursive_load(grp[k], list(grp[k].keys()))
+    return result
 
 
 class CacheLoader(BaseModel):
