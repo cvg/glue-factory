@@ -1,7 +1,9 @@
 import argparse
 import logging
+import re
+from collections import defaultdict
 from pathlib import Path
-from pprint import pprint
+import pprint
 
 from matplotlib import pyplot as plt
 from omegaconf import OmegaConf
@@ -11,6 +13,34 @@ from ..models import get_model
 from ..utils import experiments
 
 logger = logging.getLogger(__name__)
+
+
+def format_summaries(summaries: dict) -> dict:
+    """Format summaries, grouping keys that differ only by a number.
+
+    Returns a dict with grouped keys like 'metric<[1,5,10]px' mapping to lists of values.
+    """
+    grouped = defaultdict(dict)
+    standalone = {}
+    # Match base@number, base<number, base>number, base_pN patterns
+    pattern = re.compile(r"^(.+?)([@<>]|_p)(\d+(?:\.\d+)?)(.*?)$")
+
+    for k, v in summaries.items():
+        match = pattern.match(k)
+        if match:
+            base, sep, num, suffix = match.groups()
+            grouped[(base, sep, suffix)][float(num)] = v
+        else:
+            standalone[k] = v
+
+    result = {}
+    for (base, sep, suffix), values in sorted(grouped.items()):
+        nums = sorted(values.keys())
+        nums_str = ",".join(str(int(n) if n == int(n) else n) for n in nums)
+        key = f"{base}{sep}[{nums_str}]{suffix}"
+        result[key] = [values[n] for n in nums]
+    result.update(standalone)
+    return result
 
 
 def extract_benchmark_conf(conf, benchmark):
@@ -74,7 +104,7 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
     logger.info("Running benchmark: %s", benchmark)
     logger.info("Experiment tag: %s", name)
     logger.info("Config:")
-    pprint(OmegaConf.to_container(conf))
+    pprint.pprint(OmegaConf.to_container(conf))
     return name, conf
 
 
@@ -132,7 +162,7 @@ def run_cli(eval_cls, name: str, parser: argparse.ArgumentParser | None = None):
         overwrite_eval=args.overwrite_eval,
     )
 
-    pprint(s)
+    logger.info("Evaluation summaries:\n%s", pprint.pformat(format_summaries(s)))
 
     if args.plot:
         for name, fig in f.items():
