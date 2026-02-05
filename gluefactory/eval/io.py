@@ -140,6 +140,7 @@ def run_cli(eval_cls, name: str, parser: argparse.ArgumentParser | None = None):
     args = parser.parse_intermixed_args()
 
     default_conf = OmegaConf.create(eval_cls.default_conf)
+    benchmark = name
 
     # mingle paths
     output_dir = Path(settings.EVAL_PATH, name)
@@ -165,8 +166,10 @@ def run_cli(eval_cls, name: str, parser: argparse.ArgumentParser | None = None):
     logger.info("Evaluation summaries:\n%s", pprint.pformat(format_summaries(s)))
 
     if args.plot:
-        for name, fig in f.items():
-            fig.canvas.manager.set_window_title(name)
+        for fig_name, fig in f.items():
+            fig.canvas.manager.set_window_title(fig_name)
         plt.show()
+
+    logger.info(f"To inspect results: python -m gluefactory.eval.inspect {benchmark} {name}")
 
     return s, f, r
