@@ -71,7 +71,7 @@ def export_predictions(
                         if len(idx) == 0
                         else data[f"view{idx}"]["scales"]
                     )
-                    pred[k] = pred[k] * scales[None]
+                    pred[k] = pred[k] * scales[:, None]
                 if k.startswith("lines"):
                     idx = k.replace("lines", "")
                     scales = 1.0 / (
@@ -79,7 +79,7 @@ def export_predictions(
                         if len(idx) == 0
                         else data[f"view{idx}"]["scales"]
                     )
-                    pred[k] = pred[k] * scales[None]
+                    pred[k] = pred[k] * scales[:, None]
                 if k.startswith("orig_lines"):
                     idx = k.replace("orig_lines", "")
                     scales = 1.0 / (
@@ -87,7 +87,7 @@ def export_predictions(
                         if len(idx) == 0
                         else data[f"view{idx}"]["scales"]
                     )
-                    pred[k] = pred[k] * scales[None]
+                    pred[k] = pred[k] * scales[:, None]
 
             pred = {k: v[0].cpu() for k, v in pred.items()}
 
