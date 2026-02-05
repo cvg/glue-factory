@@ -199,6 +199,7 @@ class BaseDataset(metaclass=ABCMeta):
         epoch: int = 0,
         overfit: bool = False,
         num_samples: int | None = None,
+        num_workers: int | None = None,
     ):
         """Return a data loader for a given split."""
         assert split in ["train", "val", "test"]
@@ -219,11 +220,12 @@ class BaseDataset(metaclass=ABCMeta):
             max_num_workers = len(os.sched_getaffinity(0))
         elif os.cpu_count() is not None:
             max_num_workers = os.cpu_count()
-        if distributed:
+        if distributed or dist.is_initialized():
             # limit num_workers per process in distributed training
             max_num_workers = max_num_workers // dist.get_world_size()
 
-        num_workers = self.conf.get("num_workers", max_num_workers)
+        if num_workers is None:
+            num_workers = self.conf.get("num_workers", max_num_workers)
         if num_workers is None or num_workers < 0:
             num_workers = max_num_workers
         num_workers = min(num_workers, max_num_workers)
