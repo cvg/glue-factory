@@ -62,6 +62,9 @@ class RadioHideTool(ToolToggleBase):
         self.radios = RadioButtons(self.radios_ax, self.options, active=self.active)
         for r in self.radios.labels:
             r.set_fontsize(8)
+        radius = max(0.02, 0.5 / len(self.options))
+        for circle in self.radios.circles:
+            circle.set_radius(radius)
         self.radios.on_clicked(self.on_radio_clicked)
 
     def enable(self, *args):
