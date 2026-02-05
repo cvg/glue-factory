@@ -878,13 +878,16 @@ class Trainer:
                 pr_metrics.clear()  # Reset PR metrics
 
             # Make plots of training steps
-            if self.conf.plot_every_iter is not None:
-                if it % self.conf.plot_every_iter == 0 and self.rank == 0:
-                    with torch.no_grad():
-                        figures = self.model.visualize(pred, data)
-                    tools.write_image_summaries(
-                        writer, "training", figures, self.current_it
-                    )
+            should_plot = it == 0 or (
+                self.conf.plot_every_iter is not None
+                and it % self.conf.plot_every_iter == 0
+            )
+            if should_plot and self.rank == 0:
+                with torch.no_grad():
+                    figures = self.model.visualize(pred, data)
+                tools.write_image_summaries(
+                    writer, "training", figures, self.current_it
+                )
 
             # Log gradients
             if self.conf.log_grad_every_iter is not None:
