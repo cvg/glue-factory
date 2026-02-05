@@ -28,7 +28,7 @@ def select_backend(preferred: str | None = None) -> str:
     has_display = os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
     if has_display:
         # Try backends in order of preference
-        for backend in ["QtAgg", "Qt5Agg", "TkAgg", "GTK3Agg", "WxAgg"]:
+        for backend in ["WxAgg", "QtAgg", "Qt5Agg", "TkAgg", "GTK3Agg"]:
             try:
                 matplotlib.use(backend)
                 return backend
