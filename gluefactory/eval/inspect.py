@@ -1,4 +1,5 @@
 import argparse
+import os
 import pprint
 from collections import defaultdict
 
@@ -17,12 +18,32 @@ from .io import format_summaries
 
 logger = gluefactory.logger
 
+
+def select_backend(preferred: str | None = None) -> str:
+    """Select matplotlib backend, preferring local display, falling back to webagg."""
+    if preferred:
+        matplotlib.use(preferred)
+        return preferred
+    # Check if local display is available
+    has_display = os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    if has_display:
+        # Try backends in order of preference
+        for backend in ["QtAgg", "Qt5Agg", "TkAgg", "GTK3Agg", "WxAgg"]:
+            try:
+                matplotlib.use(backend)
+                return backend
+            except ImportError:
+                continue
+    matplotlib.use("webagg")
+    return "webagg"
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("benchmark", type=str)
     parser.add_argument("--x", type=str, default=None)
     parser.add_argument("--y", type=str, default=None)
-    parser.add_argument("--backend", type=str, default="WxAgg")
+    parser.add_argument("--backend", type=str, default=None)
     parser.add_argument("--num_samples", type=int, default=None)
     parser.add_argument("--default_plot", type=str, default=None)
     parser.add_argument("--show_plot", type=int, default=None)
@@ -37,8 +58,8 @@ if __name__ == "__main__":
     predictions = {}
     eval_predictions = {}
 
-    if args.backend:
-        matplotlib.use(args.backend)
+    backend = select_backend(args.backend)
+    logger.info(f"Using matplotlib backend: {backend}")
     pio.renderers.default = args.renderer
 
     num_samples = args.num_samples
