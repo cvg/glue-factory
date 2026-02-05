@@ -1,9 +1,9 @@
 import argparse
 import logging
+import pprint
 import re
 from collections import defaultdict
 from pathlib import Path
-import pprint
 
 from matplotlib import pyplot as plt
 from omegaconf import OmegaConf
@@ -104,7 +104,7 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
     logger.info("Running benchmark: %s", benchmark)
     logger.info("Experiment tag: %s", name)
     logger.info("Config:")
-    pprint.pprint(OmegaConf.to_container(conf))
+    logger.info(pprint.pformat(OmegaConf.to_container(conf)))
     return name, conf
 
 
@@ -170,6 +170,8 @@ def run_cli(eval_cls, name: str, parser: argparse.ArgumentParser | None = None):
             fig.canvas.manager.set_window_title(fig_name)
         plt.show()
 
-    logger.info(f"To inspect results: python -m gluefactory.eval.inspect {benchmark} {name}")
+    logger.info(
+        f"To inspect results: python -m gluefactory.eval.inspect {benchmark} {name}"
+    )
 
     return s, f, r
