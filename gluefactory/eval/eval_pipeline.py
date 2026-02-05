@@ -170,7 +170,7 @@ class RelativePosePipeline(EvalPipeline):
             "estimator": ["poselib", "opencv"],
             "ransac_th": -1.0,  # -1 runs a bunch of thresholds and selects the best
             "n_processes": None,  # 0 is sequential
-            "max_tasks": 500,  # max tasks in the pool
+            "max_tasks": 100,  # max tasks in the pool
         },
     }
 
@@ -310,9 +310,12 @@ class RelativePosePipeline(EvalPipeline):
                 and (i + 1) % conf.max_tasks == 0
                 or (i + 1) == len(loader)
             ):
-                pose_results_batch = [
-                    p.get() for p in tqdm(pose_results_batch, desc="Pose Estimation: ")
-                ]
+                logger.info(
+                    "Processing pose results batch %d / %d...",
+                    (i + 1) // conf.max_tasks,
+                    len(loader) // conf.max_tasks,
+                )
+                pose_results_batch = [p.get() for p in pose_results_batch]
                 pose_results.extend(pose_results_batch)
                 pose_results_batch = []
 
