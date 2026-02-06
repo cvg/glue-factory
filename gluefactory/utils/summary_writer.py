@@ -102,11 +102,18 @@ class SummaryWriter:
                 **wandb_kwargs,
             )
 
+    def wandb_log(self, *args, **kwargs):
+        """Save a wandb log entry."""
+        try:
+            wandb.log(*args, **kwargs)
+        except Exception as e:
+            logger.warning(f"Could not log to wandb: {e}")
+
     def add_scalar(self, tag: str, value: float, step: int | None = None):
         """Log a scalar value to tensorboard or wandb."""
         if self.use_wandb:
             step = 1 if step == 0 else step
-            wandb.log({tag: value}, step=step)
+            self.wandb_log({tag: value}, step=step)
 
         if self.use_tensorboard:
             self.writer.add_scalar(tag, value, step)
@@ -115,7 +122,7 @@ class SummaryWriter:
         """Log a figure to tensorboard or wandb."""
         if self.use_wandb:
             step = 1 if step == 0 else step
-            wandb.log({tag: wandb.Image(figure)}, step=step)
+            self.wandb_log({tag: wandb.Image(figure)}, step=step)
         if self.use_tensorboard:
             self.writer.add_figure(tag, figure, step, close=True)
 
@@ -138,7 +145,7 @@ class SummaryWriter:
         if self.use_wandb:
             if isinstance(vertices, torch.Tensor):
                 vertices = vertices.detach().cpu().numpy()
-            wandb.log(
+            self.wandb_log(
                 {tag: wandb.Object3D.from_numpy(vertices)},
                 step=step,
             )
