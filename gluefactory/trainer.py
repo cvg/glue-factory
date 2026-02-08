@@ -1081,8 +1081,12 @@ def scale_by_device_count(
         data_conf.batch_size * num_gpus,
         data_conf.batch_size,
     )
-    if "train_batch_size" in data_conf and not batch_size_per_gpu:
-        data_conf.train_batch_size = int(data_conf.train_batch_size / num_gpus)
+    for split in ["train", "val", "test"]:
+        split_batch_size_key = f"{split}_batch_size"
+        if split_batch_size_key in data_conf and not batch_size_per_gpu:
+            data_conf[split_batch_size_key] = int(
+                data_conf[split_batch_size_key] / num_gpus
+            )
     return data_conf
 
 
@@ -1114,6 +1118,7 @@ def init_trainer(
     trainer = Trainer.init(conf.train, model, device=device)
 
     # Register benchmarks (e.g. MegaDepth1500)
+    num_samples = conf.get("eval", {}).pop("num_samples", None)
     for bench in conf.train.get("run_benchmarks", ()):
         bench_name, every_epoch = (bench, None) if isinstance(bench, str) else bench
         eval.get_benchmark(bench_name)  # Check if benchmark exists
@@ -1123,7 +1128,11 @@ def init_trainer(
             else conf.benchmarks.get(bench_name, {})
         )
         bench_conf = OmegaConf.merge(
-            {"eval": conf.get("eval", {})}, OmegaConf.create(bench_conf)
+            {
+                "eval": conf.get("eval", {}),
+                "num_samples": num_samples,
+            },
+            OmegaConf.create(bench_conf),
         )
         trainer.register_benchmark(bench_name, bench_conf, every_epoch=every_epoch)
     # Maybe load experiment
