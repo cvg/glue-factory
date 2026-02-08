@@ -1,5 +1,6 @@
 import importlib
-import inspect
+
+from gluefactory.settings import SUBMODULES
 
 from ..utils.tools import get_class
 from .base_estimator import BaseEstimator
@@ -10,6 +11,8 @@ def load_estimator(type, estimator):
         estimator,
         f"{__name__}.{type}.{estimator}",
     ]
+    import_paths += [f"{sm}.{type}.{estimator}" for sm in SUBMODULES]
+    import_paths += [f"{sm}.robust_estimators.{type}.{estimator}" for sm in SUBMODULES]
     for path in import_paths:
         try:
             spec = importlib.util.find_spec(path)
