@@ -95,7 +95,7 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
         name = checkpoint_name
 
     cli_args = [k for k in args.dotlist if not k.startswith("num_samples=")]
-    if len(cli_args) > 0 and not args.tag:
+    if len(cli_args) > 0 and not args.tag and not args.short_name:
         # Append CLI args to name except num_samples
         name = name + "_" + ":".join(cli_args)
 
@@ -130,6 +130,7 @@ def get_eval_parser(parser: argparse.ArgumentParser | None = None):
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--overwrite_eval", action="store_true")
     parser.add_argument("--plot", action="store_true")
+    parser.add_argument("--short_name", "-sn", action="store_true")
     parser.add_argument("dotlist", nargs="*")
     return parser
 
