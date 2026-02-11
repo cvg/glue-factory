@@ -174,6 +174,11 @@ class Pose(tensor.TensorWrapper):
         sc = 1.0 if p3d.shape[-1] == 3 else p3d[..., -1:]
         return self.R @ p3d[..., :3] + self.t * sc
 
+    @tensor.autovmap
+    def scale(self, s: torch.Tensor) -> "Pose":
+        """Scale the translation part of the pose."""
+        return self.__class__.from_Rt(self.R, self.t * s)
+
     def __mul__(self, p3D: torch.Tensor) -> torch.Tensor:
         """Transform a set of 3D points: T_A2B * p3D_A -> p3D_B."""
         return self.transform(p3D)
