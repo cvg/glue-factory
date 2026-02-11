@@ -54,7 +54,7 @@ def apply_cached_rotary_emb(freqs: torch.Tensor, t: torch.Tensor) -> torch.Tenso
 
 class LearnableFourierPositionalEncoding(nn.Module):
     def __init__(
-        self, M: int, F_dim, hidden_dim: int = None, gamma: float = 1.0
+        self, M: int | None, F_dim, hidden_dim: int = None, gamma: float = 1.0
     ) -> None:
         super().__init__()
         self.gamma = gamma
@@ -62,8 +62,12 @@ class LearnableFourierPositionalEncoding(nn.Module):
             self.Wh = nn.Identity()
             hidden_dim = M
         else:
-            self.Wh = nn.Linear(M, hidden_dim, bias=False)
+            if M is not None:
+                self.Wh = nn.Linear(M, hidden_dim, bias=False)
+            else:
+                self.Wh = nn.LazyLinear(hidden_dim, bias=False)
             nn.init.normal_(self.Wh.weight.data, mean=0, std=self.gamma**-2)
+
         self.Wr = nn.Linear(hidden_dim, F_dim // 2, bias=False)
         nn.init.normal_(self.Wr.weight.data, mean=0, std=self.gamma**-2)
 
