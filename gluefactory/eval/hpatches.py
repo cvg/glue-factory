@@ -89,7 +89,11 @@ class HPatchesPipeline(eval_pipeline.EvalPipeline):
         conf = self.conf.eval
 
         test_thresholds = (
-            ([conf.ransac_th] if conf.ransac_th > 0 else [0.5, 1.0, 1.5, 2.0, 2.5, 3.0])
+            (
+                [conf.ransac_th]
+                if conf.ransac_th > 0
+                else [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 7.0, 10.0, 15.0]
+            )
             if not isinstance(conf.ransac_th, Iterable)
             else conf.ransac_th
         )
