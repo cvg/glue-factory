@@ -365,7 +365,9 @@ def batch_align_pointclouds(
         c0n_t_c0, norm_scale = c0n_t_c0.normalize_rotation()
     else:
         pts_v0n = pts_v0
-        c0n_t_c0 = reconstruction.Pose.identity(device=pts_v0.device)[None]
+        c0n_t_c0 = reconstruction.Pose.identity(device=pts_v0.device)[None].expand(
+            pts_v0.shape[0]
+        )
         norm_scale = torch.ones(pts_v0.shape[0], device=pts_v0.device)
 
     c0n_Rt_c1, scales, pts1_v0n = torch.vmap(
@@ -393,6 +395,278 @@ def batch_align_pointclouds(
     pts1_v0 = c0n_t_c0.inv().transform(pts1_v0n) / norm_scale[..., None, None]
 
     return c0_t_c1, scales, pts1_v0
+
+
+def relative_pose_reprojection_residual(
+    p3d_w: torch.Tensor,
+    p2d_i0: torch.Tensor,
+    p2d_i1: torch.Tensor,
+    camera0: reconstruction.Camera,
+    camera1: reconstruction.Camera,
+    c1_tgt_c0: reconstruction.Pose,
+    weights: torch.Tensor | None = None,
+    num_align_iters: int = 0,
+    **align_kwargs,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, reconstruction.Pose]:
+    """Per-point reprojection residual w.r.t. the GT relative pose.
+
+    Finds the Sim(3) alignment of p3d_w that minimizes reprojection error
+    in both views, where the views are related by the GT relative pose
+    c1_tgt_c0 (cam0 -> cam1, with unknown translation scale).
+
+    Internally solves for per-point depths in cam0 from the GT relative pose
+    constraint on bearing vectors, then aligns predicted points via Procrustes.
+
+    Args:
+        p3d_w: (B, N, 3) predicted 3D points in arbitrary frame.
+        p2d_i0: (B, N, 2) pixel coordinates in image 0.
+        p2d_i1: (B, N, 2) pixel coordinates in image 1.
+        camera0, camera1: Camera intrinsics.
+        c1_tgt_c0: GT relative pose cam0 -> cam1 (translation scale arbitrary).
+        weights: (B, N) optional point weights for alignment.
+        num_align_iters: robust alignment iterations (0 = L2 Procrustes).
+        **align_kwargs: passed to batch_align_pointclouds.
+
+    Returns:
+        reproj_i0: (B, N) reprojection error in image 0 (pixels).
+        reproj_i1: (B, N) reprojection error in image 1 (pixels).
+        p3d_c0: (B, N, 3) predicted points aligned to cam0 frame.
+        c1_tgt_c0_w: GT relative pose with translation scaled to world frame.
+    """
+    # Bearing vectors (homogeneous camera coordinates)
+    p2d_c0 = camera0.image2cam(p2d_i0)  # (B, N, 3), z=1
+    p2d_c1 = camera1.image2cam(p2d_i1)
+
+    c1_R_c0 = c1_tgt_c0.R  # (..., 3, 3)
+    c1_tt_c0 = c1_tgt_c0.t  # (..., 3)
+
+    # Relative pose constraint: d1*p2d_c1 = d0*c1_R_c0@p2d_c0 + s*c1_tt_c0
+    # Cross with p2d_c1 to eliminate d1:
+    #   d0 * (p2d_c1 x c1_R_c0@p2d_c0) + s * (p2d_c1 x c1_tt_c0) = 0
+    # Set s=1 (Procrustes absorbs scale), solve for d0 per point:
+    #   d0_i = -(a_i . b_i) / ||a_i||^2
+    p2d0_c1 = (c1_R_c0[..., None, :, :] @ p2d_c0[..., None]).squeeze(-1)
+    c1_tt_c0_exp = c1_tt_c0[..., None, :].expand_as(p2d_c1)
+    a = torch.cross(p2d_c1, p2d0_c1, dim=-1)  # (B, N, 3)
+    b = torch.cross(p2d_c1, c1_tt_c0_exp, dim=-1)  # (B, N, 3)
+    d0 = -(a * b).sum(-1) / (a * a).sum(-1).clamp(min=1e-8)  # (B, N)
+
+    # Reference points in cam0 frame (reprojection-consistent with GT pose)
+    p3d_ref_c0 = d0[..., None] * p2d_c0  # (B, N, 3)
+
+    # Sim(3) align predicted points to reference
+    _, scale, p3d_c0 = batch_align_pointclouds(
+        p3d_ref_c0,
+        p3d_w,
+        weights=weights,
+        num_iters=num_align_iters,
+        **align_kwargs,
+    )
+
+    # Reprojection in image 0
+    p2d_i0_proj, _ = camera0.cam2image(p3d_c0)
+    reproj_i0 = (p2d_i0_proj - p2d_i0).norm(dim=-1)
+
+    # Reprojection in image 1 (using GT relative pose, s=1 matches reference)
+    p3d_c1 = c1_tgt_c0.transform(p3d_c0)
+    p2d_i1_proj, _ = camera1.cam2image(p3d_c1)
+    reproj_i1 = (p2d_i1_proj - p2d_i1).norm(dim=-1)
+
+    # GT relative pose scaled to world frame units
+    c1_tgt_c0_w = reconstruction.Pose.from_Rt(c1_R_c0, c1_tt_c0 / scale[..., None])
+
+    return reproj_i0, reproj_i1, p3d_c0, c1_tgt_c0_w
+
+
+def _essential_matrix_8pt(
+    b0: torch.Tensor,
+    b1: torch.Tensor,
+    weights: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Normalised 8-point algorithm for the essential matrix.
+
+    Args:
+        b0: (B, N, 3) bearing vectors in cam 0 (from image2cam, z=1).
+        b1: (B, N, 3) bearing vectors in cam 1.
+        weights: (B, N) optional per-point weights.
+
+    Returns:
+        E: (B, 3, 3) essential matrix satisfying b1^T E b0 = 0.
+    """
+    from . import transforms as gtr
+
+    B, N, _ = b0.shape
+
+    # Hartley normalisation on the 2-D parts
+    p0_norm, T0 = absolute_pose._mean_isotropic_scale_normalize(b0[..., :2])
+    p1_norm, T1 = absolute_pose._mean_isotropic_scale_normalize(b1[..., :2])
+    h0 = gtr.to_homogeneous(p0_norm)  # (B, N, 3)
+    h1 = gtr.to_homogeneous(p1_norm)
+
+    # Constraint matrix: (b1 ⊗ b0).vec(E) = 0  →  (B, N, 9)
+    A = torch.einsum("bni,bnj->bnij", h1, h0).reshape(B, N, 9)
+    if weights is not None:
+        A = A * weights[..., None]
+
+    # Solve via SVD
+    _, _, Vh = torch.linalg.svd(A)
+    E = Vh[..., -1, :].reshape(B, 3, 3)
+
+    # Enforce rank-2 + equal singular values
+    U, S, Vh = torch.linalg.svd(E)
+    s_mean = (S[..., 0] + S[..., 1]) / 2
+    S_new = torch.stack([s_mean, s_mean, torch.zeros_like(s_mean)], dim=-1)
+    E = U @ torch.diag_embed(S_new) @ Vh
+
+    # Denormalise: E_orig = T1^T @ E_norm @ T0
+    E = T1.transpose(-1, -2) @ E @ T0
+    return E
+
+
+@misc.AMP_CUSTOM_FWD_F32
+def relative_pnp(
+    p3d_w: torch.Tensor,
+    p2d_i0: torch.Tensor,
+    p2d_i1: torch.Tensor,
+    camera0: reconstruction.Camera,
+    camera1: reconstruction.Camera,
+    weights: torch.Tensor | None = None,
+) -> reconstruction.Pose:
+    """Relative pose from 3D points and their projections in two views.
+
+    Uses the 8-point algorithm on the 2D-2D correspondences to recover
+    (R, t_hat), the cross-product trick to recover per-point depths in
+    camera 0, and the known 3D structure to recover translation scale.
+
+    No absolute poses are computed.
+
+    Args:
+        p3d_w:   (B, N, 3) 3D points in an arbitrary coordinate frame.
+        p2d_i0:  (B, N, 2) pixel coordinates in image 0.
+        p2d_i1:  (B, N, 2) pixel coordinates in image 1.
+        camera0: intrinsics for image 0.
+        camera1: intrinsics for image 1.
+        weights: (B, N) optional per-point weights.
+
+    Returns:
+        c1_T_c0: Pose transforming camera 0 -> camera 1.
+    """
+    # --- bearing vectors ---
+    b0 = camera0.image2cam(p2d_i0)  # (B, N, 3)
+    b1 = camera1.image2cam(p2d_i1)
+
+    # --- essential matrix (8-point) ---
+    E = _essential_matrix_8pt(b0, b1, weights)
+
+    # --- decompose E → two (R, t) candidates ---
+    R1, R2, t_hat = epipolar.decompose_essential_matrix(E)
+
+    # --- chirality: pick (R, t_sign) that gives most positive depths ---
+    best_R = R1
+    best_t = t_hat
+    best_count = t_hat.new_zeros(t_hat.shape[:-1])
+
+    for R_cand, t_sign in [(R1, 1), (R1, -1), (R2, 1), (R2, -1)]:
+        t_cand = t_sign * t_hat
+        # cross-product depth recovery (same as relative_pose_reprojection_residual)
+        Rb0 = (R_cand[..., None, :, :] @ b0[..., None]).squeeze(-1)
+        a = torch.cross(b1, Rb0, dim=-1)
+        c = torch.cross(b1, t_cand[..., None, :].expand_as(b1), dim=-1)
+        d0 = -(a * c).sum(-1) / (a * a).sum(-1).clamp(min=1e-8)
+        # depth in cam 1
+        d1 = (R_cand[..., None, :, :] @ (d0[..., None] * b0)[..., None]).squeeze(-1)
+        d1 = d1[..., 2] + t_cand[..., None, 2]
+        count = ((d0 > 0) & (d1 > 0)).sum(-1)
+        better = count > best_count
+        best_R = torch.where(better[..., None, None], R_cand, best_R)
+        best_t = torch.where(better[..., None], t_cand, best_t)
+        best_count = torch.where(better, count, best_count)
+
+    R, t_hat = best_R, best_t
+
+    # --- depth ratios in cam 0 (with chosen R, t_hat) ---
+    Rb0 = (R[..., None, :, :] @ b0[..., None]).squeeze(-1)
+    a = torch.cross(b1, Rb0, dim=-1)
+    c = torch.cross(b1, t_hat[..., None, :].expand_as(b1), dim=-1)
+    f = -(a * c).sum(-1) / (a * a).sum(-1).clamp(min=1e-8)  # (B, N)
+
+    # --- recover translation scale from 3D structure ---
+    # Points in cam-0 frame (up to scale s):  Y_k = f_k * b0_k
+    # True cam-0 points:  s * Y_k = R_abs @ X_k + t_abs
+    # Procrustes recovers the scale s between Y and X_w.
+    Y = f[..., None] * b0  # (B, N, 3)
+    _, scale, _ = batch_align_pointclouds(Y, p3d_w, weights=weights)
+
+    return reconstruction.Pose.from_Rt(R, t_hat / scale[..., None])
+
+
+def world_rays(
+    ci_t_w: reconstruction.Pose,
+    camera: reconstruction.Camera,
+    p2d: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute world-space rays through image points.
+
+    Args:
+        ci_t_w:  Pose world -> camera.
+        camera:  Camera intrinsics.
+        p2d:     (..., N, 2) pixel coordinates.
+
+    Returns:
+        origin:    (..., N, 3) camera center in world coordinates.
+        direction: (..., N, 3) unit ray directions in world coordinates.
+    """
+    bearing = camera.image2cam(p2d)  # (..., N, 3)
+    direction = bearing @ ci_t_w.R  # rotate to world: R^T @ bearing
+    origin = (
+        ci_t_w.inv().t[:, None].expand_as(direction)
+    )  # world position of camera center
+    return origin, direction
+
+
+@misc.force_f32
+def recover_pose_scale(
+    pts3d_c0: torch.Tensor,
+    p2d_i1: torch.Tensor,
+    camera1: reconstruction.Camera,
+    c1_T_c0: reconstruction.Pose,
+    weights: torch.Tensor | None = None,
+    robust: bool = False,
+) -> torch.Tensor:
+    """Recover translation scale for an up-to-scale relative pose.
+
+    Args:
+        pts3d_c0: (..., N, 3) 3D points in camera-0 coordinates.
+        p2d_i1:   (..., N, 2) pixel projections in image 1.
+        camera1:  Camera intrinsics for image 1.
+        c1_T_c0:  Relative pose cam0 -> cam1 (unit translation).
+        weights:  (..., N) optional per-point weights.
+        robust:   If True, use median of per-point estimates.
+
+    Returns:
+        s: (...,) scale such that true_t = s * t.
+    """
+    p = camera1.image2cam(p2d_i1)  # (..., N, 3), z=1
+    A = pts3d_c0 @ c1_T_c0.R.mT
+    t = c1_T_c0.t
+    a = torch.stack(
+        [
+            t[..., None, 0] - p[..., 0] * t[..., None, 2],
+            t[..., None, 1] - p[..., 1] * t[..., None, 2],
+        ],
+        -1,
+    ).flatten(-2)
+    b = torch.stack(
+        [p[..., 0] * A[..., 2] - A[..., 0], p[..., 1] * A[..., 2] - A[..., 1]], -1
+    ).flatten(-2)
+    if weights is None:
+        weights = a.new_ones(pts3d_c0.shape[:-1])
+    w = weights.repeat_interleave(2, dim=-1)  # (..., 2N)
+    valid = a.abs() > 1e-8
+    if robust:
+        s_per = b / a.clamp(min=1e-8)
+        return misc.masked_median(s_per, valid)
+    return (w * a * b).sum(-1) / (w * a * a).sum(-1).clamp(min=1e-8)
 
 
 def conormalize_pointclouds(
