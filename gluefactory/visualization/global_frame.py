@@ -20,7 +20,7 @@ class GlobalFrame:
         "y": "???",
         "diff": False,
         "child": {},
-        "remove_outliers": False,
+        "remove_outliers": True,
     }
 
     child_frame = None  # MatchFrame
@@ -32,7 +32,13 @@ class GlobalFrame:
     scatters = {}
 
     def __init__(
-        self, conf, results, dataset, predictions, title=None, child_frame=None,
+        self,
+        conf,
+        results,
+        dataset,
+        predictions,
+        title=None,
+        child_frame=None,
         eval_predictions=None,
     ):
         self.child_frame = child_frame
@@ -174,6 +180,25 @@ class GlobalFrame:
                 )
             if x_cat and x.dtype == object and xunique.shape[0] > 5:
                 self.axes.set_xticklabels(xunique[sort_ax], rotation=90)
+
+        if self.conf.remove_outliers:
+            all_x, all_y = [], []
+            for name in self.results:
+                if not x_cat:
+                    all_x.append(np.array(self.results[name][self.conf.x]) - refx)
+                if not y_cat:
+                    all_y.append(np.array(self.results[name][self.conf.y]) - refy)
+            if all_x:
+                all_x = np.concatenate(all_x)
+                lo, hi = np.nanpercentile(all_x, [2, 98])
+                margin = (hi - lo) * 0.05
+                self.axes.set_xlim(lo - margin, hi + margin)
+            if all_y:
+                all_y = np.concatenate(all_y)
+                lo, hi = np.nanpercentile(all_y, [2, 98])
+                margin = (hi - lo) * 0.05
+                self.axes.set_ylim(lo - margin, hi + margin)
+
         self.axes.legend()
 
     def on_scatter_pick(self, handle):
