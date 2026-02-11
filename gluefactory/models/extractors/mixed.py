@@ -49,12 +49,14 @@ class MixedExtractor(BaseModel):
             self.interpolate_descriptors_from = [self.interpolate_descriptors_from]
             self.fusion = lambda x: x[0]
         elif isinstance(self.interpolate_descriptors_from, Sequence):
-            if len(self.interpolate_descriptors_from) > 1:
-                assert self.conf.fusion_mlp is not None
+            if (
+                len(self.interpolate_descriptors_from) > 1
+                and conf.fusion_mlp is not None
+            ):
                 self.fusion_mlp = LazyMLP(self.conf.fusion_mlp, norm=True)
                 self.fusion = lambda x: self.fusion_mlp(torch.cat(x, dim=-1))
             else:
-                self.fusion = lambda x: x[0]
+                self.fusion = lambda x: sum(x) / len(x)
 
     def _forward(self, data):
         skip_detect = len(data.get("cache", {})) > 0 and self.conf.allow_no_detect
