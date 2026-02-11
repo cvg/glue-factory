@@ -52,9 +52,8 @@ class GridExtractor(BaseModel):
             )
             .unsqueeze(0)
             .repeat([b, 1, 1, 1])
-            * self.conf.cell_size
-            + self.conf.cell_size / 2
-        ) + 0.5
+        )
+        cgrid = (cgrid + 0.5) * self.conf.cell_size
 
         if self.conf.bias_to_depth and "depth" in data:
             valid = data["depth"] > 0
