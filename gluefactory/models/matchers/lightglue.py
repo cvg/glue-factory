@@ -122,22 +122,41 @@ class Attention(nn.Module):
         if FLASH_AVAILABLE:
             torch.backends.cuda.enable_flash_sdp(allow_flash)
 
-    def forward(self, q, k, v, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self,
+        q,
+        k,
+        v,
+        mask: Optional[torch.Tensor] = None,
+        bias: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if mask is not None and bias is None:
+            attn_mask = mask
+        elif bias is not None and mask is None:
+            attn_mask = bias
+        elif bias is not None and mask is not None:
+            attn_mask = torch.where(mask, bias, float("-inf"))
+        else:
+            attn_mask = None
         if self.enable_flash and q.device.type == "cuda":
             # use torch 2.0 scaled_dot_product_attention with flash
             if FLASH_AVAILABLE:
                 args = [x.contiguous() for x in [q, k, v]]
-                v = F.scaled_dot_product_attention(*args, attn_mask=mask).to(q.dtype)
+                v = F.scaled_dot_product_attention(*args, attn_mask=attn_mask).to(
+                    q.dtype
+                )
                 return v if mask is None else v.nan_to_num()
         elif FLASH_AVAILABLE:
             args = [x.contiguous() for x in [q, k, v]]
-            v = F.scaled_dot_product_attention(*args, attn_mask=mask)
+            v = F.scaled_dot_product_attention(*args, attn_mask=attn_mask)
             return v if mask is None else v.nan_to_num()
         else:
             s = q.shape[-1] ** -0.5
             sim = torch.einsum("...id,...jd->...ij", q, k) * s
             if mask is not None:
                 sim.masked_fill(~mask, -float("inf"))
+            if attn_mask is not None:
+                sim = sim + attn_mask
             attn = F.softmax(sim, -1)
             return torch.einsum("...ij,...jd->...id", attn, v)
 
@@ -231,6 +250,7 @@ class CrossBlock(nn.Module):
         mask: Optional[torch.Tensor] = None,
         encoding0: Optional[torch.Tensor] = None,
         encoding1: Optional[torch.Tensor] = None,
+        bias: Optional[torch.Tensor] = None,
     ) -> List[torch.Tensor]:
         qk0, qk1 = self.map_(self.to_qk, x0, x1)
         v0, v1 = self.map_(self.to_v, x0, x1)
@@ -243,15 +263,21 @@ class CrossBlock(nn.Module):
         if encoding1 is not None:
             qk1 = apply_cached_rotary_emb(encoding1, qk1)
         if self.flash is not None and qk0.device.type == "cuda":
-            m0 = self.flash(qk0, qk1, v1, mask)
+            m0 = self.flash(qk0, qk1, v1, mask, bias)
             m1 = self.flash(
-                qk1, qk0, v0, mask.transpose(-1, -2) if mask is not None else None
+                qk1,
+                qk0,
+                v0,
+                mask.transpose(-1, -2) if mask is not None else None,
+                bias.transpose(-1, -2) if bias is not None else None,
             )
         else:
             qk0, qk1 = qk0 * self.scale**0.5, qk1 * self.scale**0.5
             sim = torch.einsum("bhid, bhjd -> bhij", qk0, qk1)
             if mask is not None:
                 sim = sim.masked_fill(~mask, -float("inf"))
+            if bias is not None:
+                sim = sim + bias
             attn01 = F.softmax(sim, dim=-1)
             attn10 = F.softmax(sim.transpose(-2, -1).contiguous(), dim=-1)
             m0 = torch.einsum("bhij, bhjd -> bhid", attn01, v1)
@@ -344,6 +370,7 @@ class TransformerLayer(nn.Module):
         encoding1,
         cross_encoding0: torch.Tensor | None = None,
         cross_encoding1: torch.Tensor | None = None,
+        cross_attention_bias: Optional[torch.Tensor] = None,
         mask0: Optional[torch.Tensor] = None,
         mask1: Optional[torch.Tensor] = None,
         checkpointed: bool = False,
@@ -358,6 +385,7 @@ class TransformerLayer(nn.Module):
                 encoding1,
                 cross_encoding0,
                 cross_encoding1,
+                cross_attention_bias,
                 mask0,
                 mask1,
                 use_reentrant=reentrant,
@@ -370,6 +398,7 @@ class TransformerLayer(nn.Module):
                 encoding1,
                 cross_encoding0,
                 cross_encoding1,
+                cross_attention_bias,
                 mask0,
                 mask1,
             )
@@ -382,6 +411,7 @@ class TransformerLayer(nn.Module):
                 mask=None,
                 encoding0=cross_encoding0,
                 encoding1=cross_encoding1,
+                bias=cross_attention_bias,
             )
 
     # This part is compiled and allows padding inputs
@@ -393,6 +423,7 @@ class TransformerLayer(nn.Module):
         encoding1,
         cross_encoding0,
         cross_encoding1,
+        cross_attention_bias,
         mask0,
         mask1,
     ):
@@ -407,6 +438,7 @@ class TransformerLayer(nn.Module):
             mask=mask,
             encoding0=cross_encoding0,
             encoding1=cross_encoding1,
+            bias=cross_attention_bias,
         )
 
 
