@@ -5,7 +5,7 @@ import warnings
 import matplotlib.pyplot as plt
 import torch
 from matplotlib.backend_tools import ToolToggleBase
-from matplotlib.widgets import RadioButtons, Slider
+from matplotlib.widgets import RadioButtons, RangeSlider, Slider
 
 from ..geometry import depth, epipolar, homography
 from . import viz2d
@@ -128,6 +128,50 @@ def add_whitespace_bottom(fig, factor):
     fig.set_size_inches([w, h * (1 + factor)])
     fig.subplots_adjust(bottom=(factor + b) / (1 + factor))
     fig.canvas.draw_idle()
+
+
+class SliderPlot:
+    """Base class for plots with a slider controlling color limits."""
+
+    def __init__(self, fig, *, label, valinit, valmin=0.0, valmax=1.0, valstep=0.1):
+        self.fig = fig
+        self.sbpars = {
+            k: v
+            for k, v in vars(fig.subplotpars).items()
+            if k in ["left", "right", "top", "bottom"]
+        }
+        add_whitespace_bottom(fig, 0.1)
+
+        self.range_ax = fig.add_axes([0.3, 0.02, 0.4, 0.06])
+        if isinstance(valinit, tuple):
+            self.slider = RangeSlider(
+                self.range_ax,
+                label=label,
+                valmin=valmin,
+                valmax=valmax,
+                valinit=valinit,
+                valstep=valstep,
+            )
+        else:
+            self.slider = Slider(
+                self.range_ax,
+                label=label,
+                valmin=valmin,
+                valmax=valmax,
+                valinit=valinit,
+                valstep=valstep,
+            )
+        self.slider.on_changed(self.update_slider)
+        self.artists = []
+
+    def clear(self):
+        w, h = self.fig.get_size_inches()
+        self.fig.set_size_inches(w, h / 1.1)
+        self.fig.subplots_adjust(**self.sbpars)
+        self.range_ax.remove()
+
+    def update_slider(self, val):
+        raise NotImplementedError
 
 
 class KeypointPlot:
@@ -374,7 +418,7 @@ class GtLineMatchesPlot:
             viz2d.plot_color_line_matches([m_lines0, m_lines1])
 
 
-class HomographyMatchesPlot:
+class HomographyMatchesPlot(SliderPlot):
     plot_name = "homography"
     required_keys = ["keypoints0", "keypoints1", "matches0", "H_0to1"]
 
@@ -386,25 +430,9 @@ class HomographyMatchesPlot:
         )
 
     def __init__(self, fig, axes, data, preds):
-        self.fig = fig
-        self.sbpars = {
-            k: v
-            for k, v in vars(fig.subplotpars).items()
-            if k in ["left", "right", "top", "bottom"]
-        }
-
-        add_whitespace_bottom(fig, 0.1)
-
-        self.range_ax = fig.add_axes([0.3, 0.02, 0.4, 0.06])
-        self.range = Slider(
-            self.range_ax,
-            label="Error [px]",
-            valmin=0,
-            valmax=5,
-            valinit=3.0,
-            valstep=1.0,
+        super().__init__(
+            fig, label="Error [px]", valinit=3.0, valmin=0, valmax=5, valstep=1.0
         )
-        self.range.on_changed(self.color_matches)
         self.axes = axes
         self.errors = []
 
@@ -425,7 +453,7 @@ class HomographyMatchesPlot:
             viz2d.plot_matches(
                 kpm0[valid_m],
                 kpm1[valid_m],
-                color=viz2d.cm_RdGn(errors[valid_m] < self.range.val).tolist(),
+                color=viz2d.cm_RdGn(errors[valid_m] < self.slider.val).tolist(),
                 axes=axes[i],
                 labels=errors[valid_m],
                 lw=auto_linewidth(kpm0[valid_m].shape[0]),
@@ -433,18 +461,10 @@ class HomographyMatchesPlot:
             )
             self.errors.append(errors[valid_m])
 
-    def clear(self):
-        w, h = self.fig.get_size_inches()
-        self.fig.set_size_inches(w, h / 1.1)
-        self.fig.subplots_adjust(**self.sbpars)
-        self.range_ax.remove()
-
-    def color_matches(self, threshold):
-        # Update line colors.
+    def update_slider(self, threshold):
         for line in self.fig.artists:
             label = line.get_label()
             line.set_color(viz2d.cm_RdGn([float(label) < threshold])[0])
-        # Update match colors.
         for errors, axes in zip(self.errors, self.axes):
             for ax in axes:
                 for coll in ax.collections:
@@ -480,7 +500,7 @@ class ReprojectionMatchesPlot(HomographyMatchesPlot):
         return reproj_error, valid
 
 
-class EpipolarMatchesPlot:
+class EpipolarMatchesPlot(SliderPlot):
     plot_name = "epipolar_matches"
     required_keys = [
         "keypoints0",
@@ -492,26 +512,15 @@ class EpipolarMatchesPlot:
     ]
 
     def __init__(self, fig, axes, data, preds):
-        self.fig = fig
-        self.axes = axes
-        self.sbpars = {
-            k: v
-            for k, v in vars(fig.subplotpars).items()
-            if k in ["left", "right", "top", "bottom"]
-        }
-
-        add_whitespace_bottom(fig, 0.1)
-
-        self.range_ax = fig.add_axes([0.3, 0.02, 0.4, 0.06])
-        self.range = Slider(
-            self.range_ax,
+        super().__init__(
+            fig,
             label="Epipolar Error [px]",
+            valinit=3.0,
             valmin=0,
             valmax=5,
-            valinit=3.0,
             valstep=1.0,
         )
-        self.range.on_changed(self.color_matches)
+        self.axes = axes
 
         camera0 = data["view0"]["camera"][0]
         camera1 = data["view1"]["camera"][0]
@@ -543,7 +552,7 @@ class EpipolarMatchesPlot:
             viz2d.plot_matches(
                 kpm0,
                 kpm1,
-                color=viz2d.cm_RdGn(errors < self.range.val).tolist(),
+                color=viz2d.cm_RdGn(errors < self.slider.val).tolist(),
                 axes=axes[i],
                 labels=errors.numpy(),
                 lw=auto_linewidth(kpm0.shape[0]),
@@ -554,19 +563,11 @@ class EpipolarMatchesPlot:
 
         self.F = epipolar.T_to_F(camera0, camera1, T_0to1)
 
-    def clear(self):
-        w, h = self.fig.get_size_inches()
-        self.fig.set_size_inches(w, h / 1.1)
-        self.fig.subplots_adjust(**self.sbpars)
-        self.range_ax.remove()
-
-    def color_matches(self, threshold):
-        # Update line colors.
+    def update_slider(self, threshold):
         for art in self.fig.artists:
             label = art.get_label()
             if label is not None:
                 art.set_color(viz2d.cm_RdGn([float(label) < threshold])[0])
-        # Update match colors.
         for errors, axes in zip(self.errors, self.axes):
             for ax in axes:
                 for coll in ax.collections:
