@@ -130,6 +130,38 @@ class Pose(tensor.TensorWrapper):
             torch.from_numpy(w_t_c.translation),
         )
 
+    @classmethod
+    def from_rays(
+        cls,
+        bearings_ww: torch.Tensor,
+        origin_ww: torch.Tensor,
+        bearings_local: torch.Tensor,
+        weights: torch.Tensor | None = None,
+    ) -> "Pose":
+        """Recover c_t_ww from predicted rays via Wahba's problem.
+
+        Args:
+            bearings_ww: (B, N, 3) predicted bearing vectors in ww frame.
+            origin_ww: (B, 3) or (B, N, 3) predicted origin(s) in ww frame.
+                If per-keypoint, averaged (optionally weighted) to a single origin.
+            bearings_local: (B, N, 3) local bearing vectors from camera.
+            weights: (B, N) optional confidence weights.
+
+        Returns:
+            c_t_ww: Pose transforming from ww to camera frame.
+        """
+        bearings_ww = tnf.normalize(bearings_ww, dim=-1)
+        bearings_local = tnf.normalize(bearings_local, dim=-1)
+        ww_R_c = gtr.wahba_rotation(bearings_ww, bearings_local, weights)
+        if origin_ww.ndim == bearings_ww.ndim:
+            if weights is not None:
+                origin_ww = misc.wmean(origin_ww, weights[..., None], dim=-2)
+            else:
+                origin_ww = origin_ww.mean(dim=-2)
+        c_R_ww = ww_R_c.transpose(-1, -2)
+        c_t_ww = -(c_R_ww @ origin_ww[..., None]).squeeze(-1)
+        return cls.from_Rt(c_R_ww, c_t_ww)
+
     @property
     def R(self) -> torch.Tensor:
         """Underlying rotation matrix with shape (..., 3, 3)."""
@@ -381,6 +413,59 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
         cx, cy = w / 2, h / 2
         fx = fy = 0.5 * max(w, h)
         data = torch.tensor([w, h, fx, fy, cx, cy], device=img.device, dtype=img.dtype)
+        return cls(data)
+
+    @classmethod
+    def from_rays(
+        cls,
+        bearings_ww: torch.Tensor,
+        keypoints: torch.Tensor,
+        image_size: Tuple[int, int],
+        weights: torch.Tensor | None = None,
+    ) -> "Camera":
+        """Estimate a pinhole camera from predicted world-space bearings.
+
+        For a pinhole camera, the angle between ray i and the optical axis
+        satisfies tan(theta_i) = |d_i| / f, giving a per-ray focal estimate.
+        The optical axis is estimated as the (weighted) mean bearing direction.
+
+        Args:
+            bearings_ww: (B, N, 3) predicted bearing vectors in world frame.
+            keypoints: (B, N, 2) pixel coordinates.
+            image_size: (H, W) of the image.
+            weights: (B, N) optional confidence weights.
+
+        Returns:
+            Camera with estimated focal length and principal point at center.
+        """
+        B = bearings_ww.shape[0]
+        H, W = image_size
+        cx, cy = W / 2.0, H / 2.0
+
+        b = tnf.normalize(bearings_ww, dim=-1)
+        d = keypoints - keypoints.new_tensor([cx, cy])
+        r = d.norm(dim=-1)  # (B, N)
+
+        # Optical axis as weighted mean bearing
+        if weights is not None:
+            z = tnf.normalize((weights[..., None] * b).sum(dim=-2), dim=-1)
+        else:
+            z = tnf.normalize(b.mean(dim=-2), dim=-1)
+
+        # Per-ray: f_i = r_i * cos(theta_i) / sin(theta_i)
+        cos_th = (b * z[:, None]).sum(dim=-1).clamp(min=0.1)
+        sin_th = (1 - cos_th**2).clamp(min=1e-4).sqrt()
+        f_per_ray = r * cos_th / sin_th  # (B, N)
+
+        # Weight by sin²(theta) to down-weight near-axis rays (r≈0, unstable)
+        w = sin_th**2
+        if weights is not None:
+            w = w * weights
+        f = misc.wmean(f_per_ray, w, dim=-1)
+
+        size = keypoints.new_tensor([W, H]).expand(B, 2)
+        pp = keypoints.new_tensor([cx, cy]).expand(B, 2)
+        data = torch.cat([size, f[:, None].expand(B, 2), pp], dim=-1)
         return cls(data)
 
     @tensor.autocast
