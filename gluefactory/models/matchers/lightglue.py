@@ -52,6 +52,10 @@ def apply_cached_rotary_emb(freqs: torch.Tensor, t: torch.Tensor) -> torch.Tenso
     return (t * freqs[0]) + (rotate_half(t) * freqs[1])
 
 
+def apply_cached_rotary_emb_inverse(freqs, t):
+    return (t * freqs[0]) + (rotate_half(t) * (-freqs[1]))
+
+
 class LearnableFourierPositionalEncoding(nn.Module):
     def __init__(
         self, M: int | None, F_dim, hidden_dim: int = None, gamma: float = 1.0
@@ -195,6 +199,7 @@ class SelfBlock(nn.Module):
         x: torch.Tensor,
         encoding: torch.Tensor | None = None,
         mask: Optional[torch.Tensor] = None,
+        apply_vo: bool = False,
     ) -> torch.Tensor:
         qkv = self.Wqkv(x)
         qkv = qkv.unflatten(-1, (self.num_heads, -1, 3)).transpose(1, 2)
@@ -202,7 +207,11 @@ class SelfBlock(nn.Module):
         if encoding is not None:
             q = apply_cached_rotary_emb(encoding, q)
             k = apply_cached_rotary_emb(encoding, k)
+            if apply_vo:
+                v = apply_cached_rotary_emb(encoding, v)
         context = self.inner_attn(q, k, v, mask=mask)
+        if encoding is not None and apply_vo:
+            context = apply_cached_rotary_emb_inverse(encoding, context)
         message = self.out_proj(context.transpose(1, 2).flatten(start_dim=-2))
         return x + self.dropout(self.ffn(torch.cat([x, message], -1)))
 
