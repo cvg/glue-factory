@@ -203,6 +203,31 @@ def scale_intrinsics(K, scales):
     return np.dot(scales.astype(K.dtype, copy=False), K)
 
 
+def wahba_rotation(
+    b_dst: torch.Tensor, b_src: torch.Tensor, weights: torch.Tensor | None = None
+) -> torch.Tensor:
+    """Solve for R such that b_dst = R @ b_src (weighted Wahba problem).
+
+    Args:
+        b_dst: (B, N, 3) target unit vectors.
+        b_src: (B, N, 3) source unit vectors.
+        weights: (B, N) optional per-correspondence weights.
+
+    Returns:
+        dst_R_src: (B, 3, 3) rotation matrices.
+    """
+    if weights is not None:
+        H = (weights[..., None] * b_dst).transpose(-1, -2) @ b_src
+    else:
+        H = b_dst.transpose(-1, -2) @ b_src
+    U, S, Vt = torch.linalg.svd(H.float())
+    d = torch.det((U @ Vt).float())
+    D = torch.diag_embed(
+        torch.stack([torch.ones_like(d), torch.ones_like(d), d], dim=-1)
+    )
+    return (U @ D @ Vt).to(b_dst.dtype)
+
+
 def focal2fov(focal: torch.Tensor, size: torch.Tensor) -> torch.Tensor:
     """Compute (vertical/horizontal) field of view from focal length.
 
