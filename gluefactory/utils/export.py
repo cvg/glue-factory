@@ -65,7 +65,7 @@ def export_predictions(
 
             # renormalization: transform from preprocessed to original image space
             for k in pred.keys():
-                for prefix in ("keypoints", "orig_lines", "lines"):
+                for prefix in ("keypoints", "orig_lines", "lines", "p2d0_i", "p2d1_i"):
                     if k.startswith(prefix):
                         idx = k.replace(prefix, "")
                         transform = (
@@ -73,9 +73,7 @@ def export_predictions(
                             if len(idx) == 0
                             else data[f"view{idx}"]["transform"]
                         )
-                        inv_transform = torch.linalg.inv(
-                            transform.to(pred[k].dtype)
-                        )
+                        inv_transform = torch.linalg.inv(transform.to(pred[k].dtype))
                         pred[k] = gtr.transform_points(inv_transform, pred[k])
                         break
 
