@@ -90,7 +90,7 @@ class CacheLoader(BaseModel):
         "trainable": False,
         "add_data_path": True,
         "collate": True,
-        "scale": ["keypoints", "lines", "orig_lines"],
+        "scale": ["keypoints", "lines", "orig_lines", "p2d0_i", "p2d1_i"],
         "padding_fn": None,
         "padding_length": None,  # required for batching!
         "numeric_type": "float32",  # [None, "float16", "float32", "float64"]
