@@ -3,6 +3,7 @@ import pprint
 import matplotlib.pyplot as plt
 import numpy as np
 
+from ..geometry import depth as gdepth
 from ..utils import misc
 from . import tools as vtools
 from . import viz2d
@@ -29,7 +30,7 @@ class TwoViewFrame:
 
     childs = []
 
-    event_to_image = [None, "color", "depth", "color+depth"]
+    event_to_image = [None, "color", "covisible", "color+depth"]
 
     def __init__(self, conf, data, preds, title=None, event=1, summaries=None):
         self.conf = conf
@@ -91,21 +92,32 @@ class TwoViewFrame:
     def init_frame(self):
         """initialize frame"""
         view0, view1 = self.data["view0"], self.data["view1"]
-        if self.plot == "color" or self.plot == "color+depth":
-            imgs = [
-                view0["image"][0].permute(1, 2, 0),
-                view1["image"][0].permute(1, 2, 0),
-            ]
-        elif self.plot == "depth":
-            imgs = [view0["depth"][0], view1["depth"][0]]
-        else:
-            raise ValueError(self.plot)
+        imgs = [
+            view0["image"][0].permute(1, 2, 0),
+            view1["image"][0].permute(1, 2, 0),
+        ]
         imgs = [imgs for _ in self.names]  # repeat for each model
 
         fig, axes = viz2d.plot_image_grid(imgs, return_fig=True, titles=None, figs=5)
         [viz2d.add_text(0, n, axes=axes[i]) for i, n in enumerate(self.names)]
 
-        if (
+        if self.plot == "covisible" and "depth" in view0.keys():
+            depth0 = view0["depth"][0]
+            depth1 = view1["depth"][0]
+            camera0 = view0["camera"][0]
+            camera1 = view1["camera"][0]
+            T_0to1 = self.data["T_0to1"][0]
+            T_1to0 = T_0to1.inv()
+            _, vis0, _ = gdepth.dense_warp_consistency(
+                depth0, depth1, T_0to1, camera0, camera1, ccth=5.0
+            )
+            _, vis1, _ = gdepth.dense_warp_consistency(
+                depth1, depth0, T_1to0, camera1, camera0, ccth=5.0
+            )
+            masks = [(~v.squeeze()).float() for v in [vis0, vis1]]
+            for i in range(len(self.names)):
+                viz2d.plot_heatmaps(masks, axes=axes[i], a=0.6, cmap="gray")
+        elif (
             self.plot == "color+depth"
             and "depth" in view0.keys()
             and view0["depth"] is not None
