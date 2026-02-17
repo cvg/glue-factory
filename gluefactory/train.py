@@ -87,7 +87,7 @@ def compose_cli_config(output_dir: Path, args) -> DictConfig:
     OmegaConf.save(conf, str(output_dir / "cli_config.yaml"))
     if args.conf:
         conf_path, raw_conf = experiments.compose_config(
-            args.conf, sweep_idx=args.sweep_idx
+            args.conf, sweep_idx=args.sweep_idx, resolve=False
         )
         OmegaConf.set_struct(raw_conf, args.strict)
         conf = OmegaConf.merge(raw_conf, conf)
@@ -109,6 +109,7 @@ def compose_cli_config(output_dir: Path, args) -> DictConfig:
     else:
         if conf.train.seed is None:
             conf.train.seed = torch.initial_seed() & (2**32 - 1)
+    OmegaConf.resolve(conf)
     OmegaConf.save(conf, str(output_dir / "config.yaml"))
     return conf
 
