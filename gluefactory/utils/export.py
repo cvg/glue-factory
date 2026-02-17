@@ -11,6 +11,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+from ..geometry import transforms as gtr
 from . import misc
 
 
@@ -62,32 +63,21 @@ def export_predictions(
             pred = {k: v for k, v in pred.items() if k in matched_keys}
             assert len(pred) > 0
 
-            # renormalization
+            # renormalization: transform from preprocessed to original image space
             for k in pred.keys():
-                if k.startswith("keypoints"):
-                    idx = k.replace("keypoints", "")
-                    scales = 1.0 / (
-                        data["scales"]
-                        if len(idx) == 0
-                        else data[f"view{idx}"]["scales"]
-                    )
-                    pred[k] = pred[k] * scales[:, None]
-                if k.startswith("lines"):
-                    idx = k.replace("lines", "")
-                    scales = 1.0 / (
-                        data["scales"]
-                        if len(idx) == 0
-                        else data[f"view{idx}"]["scales"]
-                    )
-                    pred[k] = pred[k] * scales[:, None]
-                if k.startswith("orig_lines"):
-                    idx = k.replace("orig_lines", "")
-                    scales = 1.0 / (
-                        data["scales"]
-                        if len(idx) == 0
-                        else data[f"view{idx}"]["scales"]
-                    )
-                    pred[k] = pred[k] * scales[:, None]
+                for prefix in ("keypoints", "orig_lines", "lines"):
+                    if k.startswith(prefix):
+                        idx = k.replace(prefix, "")
+                        transform = (
+                            data["transform"]
+                            if len(idx) == 0
+                            else data[f"view{idx}"]["transform"]
+                        )
+                        inv_transform = torch.linalg.inv(
+                            transform.to(pred[k].dtype)
+                        )
+                        pred[k] = gtr.transform_points(inv_transform, pred[k])
+                        break
 
             pred = {k: v[0].cpu() for k, v in pred.items()}
 
