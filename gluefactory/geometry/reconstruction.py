@@ -250,6 +250,36 @@ class Pose(tensor.TensorWrapper):
         dt = torch.norm(self.t, dim=-1)
         return dr, dt
 
+    def jitter(self, max_angle: float, max_angle_t: float | None = None) -> "Pose":
+        """Apply random jitter to rotation and translation direction.
+
+        Samples two independent random rotations (up to max_angle degrees)
+        and applies one to the rotation and one to the translation direction.
+        Translation magnitude is preserved.
+
+        Args:
+            max_angle: maximum perturbation angle in degrees.
+            max_angle_t: maximum translation perturbation angle in degrees.
+        """
+        max_rad = max_angle / 180 * math.pi
+        max_rad_t = (max_angle_t or max_angle) / 180 * math.pi
+
+        # Random axis-angle vectors with uniform angle in [0, max_rad]
+        def _random_aa(shape, max_rad):
+            axis = torch.randn(*shape, 3, device=self.device, dtype=self.data_.dtype)
+            axis = tnf.normalize(axis, dim=-1)
+            angle = torch.rand(*shape, 1, device=self.device, dtype=self.data_.dtype)
+            return axis * (angle * max_rad)
+
+        shape = self.shape
+        dR = gtr.so3exp_map(_random_aa(shape, max_rad))
+        R_jittered = dR @ self.R
+
+        dt_rot = gtr.so3exp_map(_random_aa(shape, max_rad_t))
+        t_jittered = (dt_rot @ self.t.unsqueeze(-1)).squeeze(-1)
+
+        return self.__class__.from_Rt(R_jittered, t_jittered)
+
     def normalize_rotation(self) -> tuple["Pose", torch.Tensor]:
         """Normalize the rotation matrix and extract scale.
 
