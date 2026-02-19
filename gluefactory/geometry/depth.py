@@ -118,6 +118,50 @@ def project(
         return kpi_j, visible, invalid
 
 
+def covisible_bbox(depth_i, camera_i, camera_j, T_itoj, pad=0, min_fraction=0.1):
+    """Bounding box of pixels in view i that project into view j.
+
+    Args:
+        depth_i: (B, H, W) depth map of view i
+        camera_i, camera_j: Camera objects for views i and j
+        T_itoj: Pose from view i to view j
+        pad: padding in pixels around the bbox
+        min_fraction: minimum bbox side as fraction of image size (default 0.1)
+
+    Returns:
+        (B, 4) tensor of [wmin, hmin, wmax, hmax] in pixels, clamped to image
+    """
+    h, w = depth_i.shape[-2:]
+    kpi = misc.get_image_coords(depth_i).flatten(-3, -2)  # (B, H*W, 2)
+    di = depth_i.flatten(-2)  # (B, H*W)
+
+    _, visible, _ = project(kpi, di, None, camera_i, camera_j, T_itoj, ccth=None)
+    covis = (visible & (di > 0)).unflatten(-1, (h, w))  # (B, H, W)
+
+    row_any = covis.any(-1).int()  # (B, H)
+    col_any = covis.any(-2).int()  # (B, W)
+    hmin = row_any.argmax(-1).float()
+    hmax = (h - row_any.flip(-1).argmax(-1)).float()
+    wmin = col_any.argmax(-1).float()
+    wmax = (w - col_any.flip(-1).argmax(-1)).float()
+
+    # Enforce minimum bbox size
+    min_h = min_fraction * h
+    min_w = min_fraction * w
+    h_center = 0.5 * (hmin + hmax)
+    w_center = 0.5 * (wmin + wmax)
+    hmin = torch.minimum(hmin, h_center - min_h / 2)
+    hmax = torch.maximum(hmax, h_center + min_h / 2)
+    wmin = torch.minimum(wmin, w_center - min_w / 2)
+    wmax = torch.maximum(wmax, w_center + min_w / 2)
+
+    wmin = (wmin - pad).clamp(min=0)
+    hmin = (hmin - pad).clamp(min=0)
+    wmax = (wmax + pad).clamp(max=w)
+    hmax = (hmax + pad).clamp(max=h)
+    return torch.stack([wmin, hmin, wmax, hmax], dim=-1)
+
+
 def dense_warp_consistency(
     depthi: torch.Tensor,
     depthj: torch.Tensor,
