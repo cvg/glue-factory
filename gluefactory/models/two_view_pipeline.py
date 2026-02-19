@@ -61,6 +61,20 @@ class TwoViewPipeline(BaseModel):
                 to_ctr(conf.ground_truth)
             )
 
+    def _precompute_covisible_bboxes(self, data, num_views):
+        """Inject covisible bounding boxes into each view's data dict."""
+        from ..geometry.depth import covisible_bbox
+
+        pad = self.conf.extractor.get("cell_size", 16)
+        for i in range(num_views):
+            j = 1 - i
+            vi, vj = data[f"view{i}"], data[f"view{j}"]
+            if "depth" in vi and "camera" in vi and f"T_{i}to{j}" in data:
+                vi["covisible_bbox"] = covisible_bbox(
+                    vi["depth"], vi["camera"], vj["camera"],
+                    data[f"T_{i}to{j}"], pad=pad,
+                )
+
     def extract_view(self, data_i):
         pred_i = data_i.get("cache", {})
         skip_extract = len(pred_i) > 0 and self.conf.allow_no_extract
@@ -79,6 +93,8 @@ class TwoViewPipeline(BaseModel):
 
     def _forward(self, data):
         num_views = len([k for k in data.keys() if k.startswith("view")])
+        if self.conf.extractor.get("bias_to", None) == "covisible" and num_views == 2:
+            self._precompute_covisible_bboxes(data, num_views)
         if self.conf.get("extract_parallel", False) and self.training:
             bs = data["view0"]["image"].shape[0]
             vdata = misc.concat_tree(misc.iterelements(data, pattern="view{i}"))

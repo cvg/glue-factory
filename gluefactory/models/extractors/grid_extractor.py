@@ -17,13 +17,37 @@ def to_map(sequence):
     sequence.transpose(-1, -2).unflatten(-1, [e, e])
 
 
+def _bbox_from_mask(valid, h, w):
+    """Bounding box (wmin, hmin, wmax, hmax) from a (B, H, W) bool mask."""
+    row_valid = valid.any(-1).int()
+    col_valid = valid.any(-2).int()
+    hmin = row_valid.argmax(-1).float()
+    hmax = (h - row_valid.flip(-1).argmax(-1)).float()
+    wmin = col_valid.argmax(-1).float()
+    wmax = (w - col_valid.flip(-1).argmax(-1)).float()
+    return wmin, hmin, wmax, hmax
+
+
+def _remap_grid(cgrid, wmin, hmin, wmax, hmax, w, h):
+    """Remap a [0..w, 0..h] grid into the bbox [wmin..wmax, hmin..hmax]."""
+    cgrid = cgrid / torch.tensor([w, h], device=cgrid.device)[None, :, None, None]
+    cgrid = (
+        cgrid
+        * torch.stack([(wmax - wmin), (hmax - hmin)], dim=1)[:, :, None, None]
+    )
+    cgrid = cgrid + torch.stack([wmin, hmin], dim=1)[:, :, None, None]
+    return cgrid
+
+
 class GridExtractor(BaseModel):
     default_conf = {
         "cell_size": 16,
         "sample_offset": False,
         "avoid_borders": False,
         "max_num_keypoints": None,
-        "bias_to_depth": True,
+        "bias_to": "depth",  # "depth" | "covisible" | "image" | None
+        # Deprecated, kept for backward compat
+        "bias_to_depth": None,
     }
     required_data_keys = ["image"]
 
@@ -35,6 +59,12 @@ class GridExtractor(BaseModel):
         dtype = data["image"].dtype
         device = data["image"].device
         hc, wc = h // self.conf.cell_size, w // self.conf.cell_size
+
+        # Backward compat: bias_to_depth overrides bias_to if explicitly set
+        bias_to = self.conf.bias_to
+        if self.conf.bias_to_depth is not None:
+            bias_to = "depth" if self.conf.bias_to_depth else None
+
         if self.conf.avoid_borders:
             hrange = torch.arange(1, hc - 1, device=device, dtype=dtype)
             wrange = torch.arange(1, wc - 1, device=device, dtype=dtype)
@@ -55,30 +85,14 @@ class GridExtractor(BaseModel):
         )
         cgrid = (cgrid + 0.5) * self.conf.cell_size
 
-        if self.conf.bias_to_depth and "depth" in data:
-            valid = data["depth"] > 0
-            row_valid = valid.any(-1).int()
-            col_valid = valid.any(-2).int()
-            hmin = row_valid.argmax(-1)
-            hmax = h - row_valid.flip(-1).argmax(-1)
-            wmin = col_valid.argmax(-1)
-            wmax = w - col_valid.flip(-1).argmax(-1)
-            cgrid = cgrid / torch.tensor([w, h], device=device)[None, :, None, None]
-            cgrid = (
-                cgrid
-                * torch.stack(
-                    [(wmax - wmin), (hmax - hmin)],
-                    dim=1,
-                )[:, :, None, None]
-            )
-            cgrid = (
-                cgrid
-                + torch.stack(
-                    [wmin, hmin],
-                    dim=1,
-                )[:, :, None, None]
-            )
-        elif "image_size" in data:
+        if bias_to == "depth" and "depth" in data:
+            wmin, hmin, wmax, hmax = _bbox_from_mask(data["depth"] > 0, h, w)
+            cgrid = _remap_grid(cgrid, wmin, hmin, wmax, hmax, w, h)
+        elif bias_to == "covisible" and "covisible_bbox" in data:
+            bbox = data["covisible_bbox"].float()
+            wmin, hmin, wmax, hmax = bbox[:, 0], bbox[:, 1], bbox[:, 2], bbox[:, 3]
+            cgrid = _remap_grid(cgrid, wmin, hmin, wmax, hmax, w, h)
+        elif bias_to == "image" and "image_size" in data:
             cgrid = cgrid * (
                 data["image_size"][:, :, None, None]
                 / torch.tensor([w, h], device=device)[None, :, None, None]
