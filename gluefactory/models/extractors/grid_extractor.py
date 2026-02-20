@@ -31,10 +31,7 @@ def _bbox_from_mask(valid, h, w):
 def _remap_grid(cgrid, wmin, hmin, wmax, hmax, w, h):
     """Remap a [0..w, 0..h] grid into the bbox [wmin..wmax, hmin..hmax]."""
     cgrid = cgrid / torch.tensor([w, h], device=cgrid.device)[None, :, None, None]
-    cgrid = (
-        cgrid
-        * torch.stack([(wmax - wmin), (hmax - hmin)], dim=1)[:, :, None, None]
-    )
+    cgrid = cgrid * torch.stack([(wmax - wmin), (hmax - hmin)], dim=1)[:, :, None, None]
     cgrid = cgrid + torch.stack([wmin, hmin], dim=1)[:, :, None, None]
     return cgrid
 
@@ -84,7 +81,6 @@ class GridExtractor(BaseModel):
             .repeat([b, 1, 1, 1])
         )
         cgrid = (cgrid + 0.5) * self.conf.cell_size
-
         if bias_to == "depth" and "depth" in data:
             wmin, hmin, wmax, hmax = _bbox_from_mask(data["depth"] > 0, h, w)
             cgrid = _remap_grid(cgrid, wmin, hmin, wmax, hmax, w, h)
