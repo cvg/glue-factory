@@ -181,6 +181,8 @@ class Trainer:
         "run_benchmarks": (),
         "writer": "tensorboard",  # options: [tensorboard, wandb]
         "project_name": __module_name__,  # wandb project name
+        "finetune_after": [],  # epochs at which to apply finetune_scales
+        "finetune_scales": {},  # {dotted.key: scale} applied to dataset conf
     }
 
     def __init__(
@@ -412,6 +414,39 @@ class Trainer:
             self.info(
                 f'lr changed from {old_lr} to {self.optimizer.param_groups[0]["lr"]}'
             )
+
+    def _apply_finetune_scales(self, dataset):
+        """Scale dataset config values at configured epochs.
+
+        Keys in finetune_scales must start with "data." and are resolved
+        against the dataset config. Only int and float values (or lists
+        thereof) are supported.
+        """
+        if self.epoch not in self.conf.finetune_after:
+            return
+        conf = dataset.conf
+        OmegaConf.set_readonly(conf, False)
+        for key, scale in self.conf.finetune_scales.items():
+            if not key.startswith("data."):
+                raise ValueError(f"Finetune: key '{key}' must start with 'data.'")
+            key = key[len("data.") :]
+            old_value = OmegaConf.select(conf, key)
+            if old_value is None:
+                raise KeyError(f"Finetune: key '{key}' not found in dataset config")
+            if isinstance(old_value, int):
+                new_value = max(1, int(old_value * scale))
+            elif isinstance(old_value, float):
+                new_value = old_value * scale
+            else:
+                raise TypeError(
+                    f"Finetune: unsupported type {type(old_value).__name__} "
+                    f"for '{key}', expected int or float"
+                )
+            OmegaConf.update(conf, key, new_value)
+            self.info(
+                f"Finetune (epoch {self.epoch}): {key} {old_value} -> {new_value}"
+            )
+        OmegaConf.set_readonly(conf, True)
 
     def setup_sigint_handler(self):
         def sigint_handler(signal, frame):
@@ -1026,6 +1061,8 @@ class Trainer:
 
             if self.conf.lr_schedule.on_epoch and self.epoch > 0:
                 self.learning_rate_step(verbose=True)
+
+            self._apply_finetune_scales(dataset)
 
             # Create data loader
             train_loader = dataset.get_data_loader(
