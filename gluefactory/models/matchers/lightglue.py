@@ -58,26 +58,37 @@ def apply_cached_rotary_emb_inverse(freqs, t):
 
 class LearnableFourierPositionalEncoding(nn.Module):
     def __init__(
-        self, M: int | None, F_dim, hidden_dim: int = None, gamma: float = 1.0
+        self,
+        M: int | None,
+        F_dim,
+        hidden_dim: int = None,
+        gamma: float = 1.0,
+        bias: bool = False,
     ) -> None:
         super().__init__()
         self.gamma = gamma
         if hidden_dim is None:
             self.Wh = nn.Identity()
+            self.act = nn.Identity()
             hidden_dim = M
         else:
             if M is not None:
-                self.Wh = nn.Linear(M, hidden_dim, bias=False)
+                self.Wh = nn.Linear(M, hidden_dim, bias=bias)
             else:
-                self.Wh = nn.LazyLinear(hidden_dim, bias=False)
+                self.Wh = nn.LazyLinear(hidden_dim, bias=bias)
             nn.init.normal_(self.Wh.weight.data, mean=0, std=self.gamma**-2)
+            self.act = nn.GELU()
 
-        self.Wr = nn.Linear(hidden_dim, F_dim // 2, bias=False)
+        self.Wr = nn.Linear(hidden_dim, F_dim // 2, bias=bias)
         nn.init.normal_(self.Wr.weight.data, mean=0, std=self.gamma**-2)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """encode position vector"""
-        projected = self.Wr(self.Wh(x))
+    def forward(
+        self, x: torch.Tensor, confidence: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """encode position vector, optionally scaling angles by confidence."""
+        projected = self.Wr(self.act(self.Wh(x)))
+        if confidence is not None:
+            projected = projected * confidence.unsqueeze(-1)
         cosines, sines = torch.cos(projected), torch.sin(projected)
         emb = torch.stack([cosines, sines], 0).unsqueeze(-3)
         return emb.repeat_interleave(2, dim=-1)
@@ -300,6 +311,74 @@ class CrossBlock(nn.Module):
         return x0, x1
 
 
+class SelfCrossBlock(nn.Module):
+    """Joint self+cross attention via concatenation, with separate Q and K."""
+
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int,
+        flash: bool = False,
+        bias: bool = True,
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__()
+        self.heads = num_heads
+        dim_head = embed_dim // num_heads
+        inner_dim = dim_head * num_heads
+        self.to_q = nn.Linear(embed_dim, inner_dim, bias=bias)
+        self.to_k = nn.Linear(embed_dim, inner_dim, bias=bias)
+        self.to_v = nn.Linear(embed_dim, inner_dim, bias=bias)
+        self.to_out = nn.Linear(inner_dim, embed_dim, bias=bias)
+        self.ffn = nn.Sequential(
+            nn.Linear(2 * embed_dim, 2 * embed_dim),
+            nn.LayerNorm(2 * embed_dim, elementwise_affine=True),
+            nn.GELU(),
+            nn.Linear(2 * embed_dim, embed_dim),
+        )
+        self.flash = Attention(flash)
+
+        if dropout > 1.0e-4:
+            self.dropout = nn.Dropout(dropout)
+        else:
+            self.dropout = nn.Identity()
+
+    def forward(
+        self,
+        x0: torch.Tensor,
+        x1: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        encoding0: Optional[torch.Tensor] = None,
+        encoding1: Optional[torch.Tensor] = None,
+        bias: Optional[torch.Tensor] = None,
+    ) -> List[torch.Tensor]:
+        assert mask is None, "SelfCrossBlock does not support mask"
+        n0 = x0.shape[1]
+        x = torch.cat([x0, x1], dim=1)
+        q = self.to_q(x).unflatten(-1, (self.heads, -1)).transpose(1, 2)
+        k = self.to_k(x).unflatten(-1, (self.heads, -1)).transpose(1, 2)
+        v = self.to_v(x).unflatten(-1, (self.heads, -1)).transpose(1, 2)
+        if encoding0 is not None or encoding1 is not None:
+            enc = torch.cat(
+                [e for e in [encoding0, encoding1] if e is not None], dim=-2
+            )
+            q = apply_cached_rotary_emb(enc, q)
+            k = apply_cached_rotary_emb(enc, k)
+        if bias is not None:
+            # Expand cross bias (B,H,N0,N1) to full (B,H,N0+N1,N0+N1) with zero self-bias
+            n1 = x1.shape[1]
+            full_bias = bias.new_zeros(*bias.shape[:-2], n0 + n1, n0 + n1)
+            full_bias[..., :n0, n0:] = bias
+            full_bias[..., n0:, :n0] = bias.transpose(-1, -2)
+            bias = full_bias
+        context = self.flash(q, k, v, bias=bias)
+        message = self.to_out(context.transpose(1, 2).flatten(start_dim=-2))
+        m0, m1 = message[:, :n0], message[:, n0:]
+        x0 = x0 + self.dropout(self.ffn(torch.cat([x0, m0], -1)))
+        x1 = x1 + self.dropout(self.ffn(torch.cat([x1, m1], -1)))
+        return x0, x1
+
+
 class UniCrossBlock(nn.Module):
     def __init__(
         self,
@@ -366,10 +445,14 @@ class UniCrossBlock(nn.Module):
 
 
 class TransformerLayer(nn.Module):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, self_cross: bool = False, **kwargs):
         super().__init__()
+        self.self_cross = self_cross
         self.self_attn = SelfBlock(*args, **kwargs)
-        self.cross_attn = CrossBlock(*args, **kwargs)
+        if self_cross:
+            self.cross_attn = SelfCrossBlock(*args, **kwargs)
+        else:
+            self.cross_attn = CrossBlock(*args, **kwargs)
 
     def forward(
         self,
