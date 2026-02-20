@@ -5,6 +5,7 @@ Author: Philipp Lindenberger
 """
 
 import collections
+import shutil
 import signal
 from pathlib import Path
 from typing import Any, Callable, TypeAlias
@@ -985,7 +986,14 @@ class Trainer:
             symlink_dir = output_dir / benchmark_name
             symlink_dir.unlink(missing_ok=True)
             symlink_dir.symlink_to(eval_dir)
-        # TODO: Cleanup? Maybe not so necessary
+            # Remove previous test dirs for this benchmark, keep only latest
+            for old_dir in output_dir.glob(f"test_*/{benchmark_name}"):
+                if old_dir != eval_dir:
+                    shutil.rmtree(old_dir, ignore_errors=True)
+                    # Remove parent test_N dir if now empty
+                    parent = old_dir.parent
+                    if parent.exists() and not any(parent.iterdir()):
+                        parent.rmdir()
         str_summaries = [
             f"{k} {v:.3E}" for k, v in summaries.items() if isinstance(v, float)
         ]
