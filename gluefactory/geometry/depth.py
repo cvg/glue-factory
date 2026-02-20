@@ -118,32 +118,58 @@ def project(
         return kpi_j, visible, invalid
 
 
-def covisible_bbox(depth_i, camera_i, camera_j, T_itoj, pad=0, min_fraction=0.1):
+def covisible_bbox(
+    depth_i: torch.Tensor,
+    camera_i: reconstruction.Camera,
+    camera_j: reconstruction.Camera,
+    T_itoj: reconstruction.Pose,
+    depth_j: torch.Tensor | None = None,
+    pad: int = 0,
+    min_fraction: float = 0.1,
+    max_rel_depth_error: float = 0.05,
+    th_consistency: float = 10,
+    stride: int = 4,
+) -> torch.Tensor:
     """Bounding box of pixels in view i that project into view j.
 
     Args:
         depth_i: (B, H, W) depth map of view i
         camera_i, camera_j: Camera objects for views i and j
         T_itoj: Pose from view i to view j
+        depth_j: (B, H, W) depth map of view j (optional, for circle consistency check)
         pad: padding in pixels around the bbox
         min_fraction: minimum bbox side as fraction of image size (default 0.1)
-
+        max_rel_depth_error: maximum relative depth error for circle consistency (default 0.05)
+        th_consistency: reprojection error threshold for circle consistency (default 10 pixels)
+        stride: use every n-th pixel in each dimension (default 1, no subsampling)
     Returns:
         (B, 4) tensor of [wmin, hmin, wmax, hmax] in pixels, clamped to image
     """
     h, w = depth_i.shape[-2:]
-    kpi = misc.get_image_coords(depth_i).flatten(-3, -2)  # (B, H*W, 2)
-    di = depth_i.flatten(-2)  # (B, H*W)
+    depth_s = depth_i[..., ::stride, ::stride]
+    kpi = misc.get_image_coords(depth_s, expand=True) * stride
+    hs, ws = depth_s.shape[-2:]
+    kpi = kpi.flatten(-3, -2)
+    di = depth_s.flatten(-2)
 
-    _, visible, _ = project(kpi, di, None, camera_i, camera_j, T_itoj, ccth=None)
-    covis = (visible & (di > 0)).unflatten(-1, (h, w))  # (B, H, W)
+    _, visible, _ = project(
+        kpi,
+        di,
+        depth_j,
+        camera_i,
+        camera_j,
+        T_itoj,
+        ccth=th_consistency,
+        max_rel_depth_error=max_rel_depth_error,
+    )
+    covis = (visible & (di > 0)).unflatten(-1, (hs, ws))  # (B, hs, ws)
 
-    row_any = covis.any(-1).int()  # (B, H)
-    col_any = covis.any(-2).int()  # (B, W)
-    hmin = row_any.argmax(-1).float()
-    hmax = (h - row_any.flip(-1).argmax(-1)).float()
-    wmin = col_any.argmax(-1).float()
-    wmax = (w - col_any.flip(-1).argmax(-1)).float()
+    row_any = covis.any(-1).int()  # (B, hs)
+    col_any = covis.any(-2).int()  # (B, ws)
+    hmin = (row_any.argmax(-1) * stride).float()
+    hmax = (h - row_any.flip(-1).argmax(-1) * stride).float()
+    wmin = (col_any.argmax(-1) * stride).float()
+    wmax = (w - col_any.flip(-1).argmax(-1) * stride).float()
 
     # Enforce minimum bbox size
     min_h = min_fraction * h
