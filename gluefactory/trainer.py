@@ -18,7 +18,7 @@ from tqdm import tqdm
 
 from gluefactory import datasets, models
 from gluefactory.models import BaseModel
-from gluefactory.utils import experiments, misc, tools
+from gluefactory.utils import experiments, lr_schedule, misc, tools
 from gluefactory.utils.summary_writer import SummaryWriter
 
 from . import __module_name__, eval, logger, settings
@@ -142,6 +142,7 @@ class Trainer:
             "on_epoch": False,
             "factor": 1.0,
             "options": {},  # add lr_scheduler arguments here
+            "warmup": 0.0,  # linear warmup: epochs if on_epoch, iterations if not
         },
         "lr_scaling": {},  # learning rate scaling for parameter name patterns
         "eval_every_epoch": None,  # interval for evaluation on the validation set
@@ -192,6 +193,7 @@ class Trainer:
         model: BaseModel,
         optimizer: torch.optim.Optimizer,
         lr_scheduler: torch.optim.lr_scheduler.LambdaLR,
+        epoch_tracker: lr_schedule.EpochTracker | None = None,
         device: torch.device | str | None = None,
     ):
         # Initialize conf, model, optimizer and LR
@@ -200,6 +202,7 @@ class Trainer:
         self.model = model
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
+        self.epoch_tracker = epoch_tracker or lr_schedule.EpochTracker()
 
         # Setup distributed
         self.distributed = conf.num_devices > 0
@@ -276,14 +279,16 @@ class Trainer:
 
         conf = OmegaConf.merge(cls.default_conf, conf)
         optimizer = cls.construct_optimizer(conf, model)
-        lr_scheduler = tools.get_lr_scheduler(
-            optimizer=optimizer, conf=conf.lr_schedule
+        epoch_tracker = lr_schedule.EpochTracker()
+        lr_scheduler = lr_schedule.get_lr_scheduler(
+            optimizer=optimizer, conf=conf.lr_schedule, epoch_tracker=epoch_tracker
         )
         return cls(
             conf=conf,
             model=model,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
+            epoch_tracker=epoch_tracker,
             **kwargs,
         )
 
@@ -340,6 +345,10 @@ class Trainer:
                     self.info(
                         f"Loaded {metric}={getattr(self, metric)} ({checkpoint[metric]})"
                     )
+            if "epoch_tracker_fractional_epoch" in checkpoint:
+                self.epoch_tracker.fractional_epoch = checkpoint[
+                    "epoch_tracker_fractional_epoch"
+                ]
             self.info(f"Training state loaded. Resuming at epoch {self.epoch}.")
 
     def maybe_load_checkpoint(self):
@@ -392,6 +401,7 @@ class Trainer:
                 custom={
                     "tot_it": self.tot_it,
                     "tot_n_samples": self.tot_n_samples,
+                    "epoch_tracker_fractional_epoch": self.epoch_tracker.fractional_epoch,
                 },
                 **kwargs,
             )
@@ -410,6 +420,7 @@ class Trainer:
 
     def learning_rate_step(self, verbose: bool = False):
         old_lr = self.optimizer.param_groups[0]["lr"]
+        self.epoch_tracker.step()
         self.lr_scheduler.step()
         if verbose:
             self.info(
@@ -809,8 +820,7 @@ class Trainer:
                     self.scaler.update()
                 self.optimizer.zero_grad()
             self.step_timer.measure("step")
-            if not self.conf.lr_schedule.on_epoch:
-                self.learning_rate_step()
+            self.learning_rate_step()
         else:
             self.warn("Skip iteration due to detach.")
         return pred, loss_metrics
@@ -1067,9 +1077,6 @@ class Trainer:
             tools.set_seed(self.conf.seed + self.epoch)
             self.info("Setting up data loader")
 
-            if self.conf.lr_schedule.on_epoch and self.epoch > 0:
-                self.learning_rate_step(verbose=True)
-
             self._apply_finetune_scales(dataset)
 
             # Create data loader
@@ -1080,6 +1087,7 @@ class Trainer:
                 pinned=True,
                 overfit=self.conf.overfit,
             )
+            self.epoch_tracker.set_epoch_length(len(train_loader))
             self.info(f"Training loader has {len(train_loader)} batches")
 
             self.info("Start training")

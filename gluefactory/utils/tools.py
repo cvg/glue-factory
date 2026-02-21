@@ -422,62 +422,6 @@ def filter_parameters(params, regexp):
     return params
 
 
-def get_lr_scheduler(optimizer, conf):
-    """Get lr scheduler specified by conf.train.lr_schedule."""
-    if conf.type not in ["factor", "exp", "cos", "cos_log", None]:
-        if hasattr(conf.options, "schedulers"):
-            # Add option to chain multiple schedulers together
-            # This is useful for e.g. warmup, then cosine decay
-            schedulers = []
-            for scheduler_conf in conf.options.schedulers:
-                scheduler = get_lr_scheduler(optimizer, scheduler_conf)
-                schedulers.append(scheduler)
-
-            options = {k: v for k, v in conf.options.items() if k != "schedulers"}
-            return getattr(torch.optim.lr_scheduler, conf.type)(
-                optimizer, schedulers, **options
-            )
-
-        return getattr(torch.optim.lr_scheduler, conf.type)(optimizer, **conf.options)
-
-    elif conf.type.startswith("cos"):
-
-        def log_decay(x: float, end_val: float) -> float:
-            return 10 ** (np.log10(end_val) * (1 - x))
-
-        def linear_decay(x: float, end_val: float) -> float:
-            return x * (1 - end_val) + end_val
-
-        def cosine_decay(scale_fn: Callable[[float, float], float], it: int) -> float:
-            n_min = conf.min_factor
-            tmax = conf.end - conf.start
-            it = it - conf.start
-            if it < 0:
-                return 1.0
-            elif it >= tmax:
-                return n_min
-            return scale_fn(0.5 * (1 + np.cos(np.pi * it / tmax)), n_min)
-
-        scale_fn = log_decay if conf.type == "cos_log" else linear_decay
-
-        return torch.optim.lr_scheduler.LambdaLR(
-            optimizer, functools.partial(cosine_decay, scale_fn)
-        )
-
-    # backward compatibility
-    def lr_fn(it):  # noqa: E306
-        if conf.type is None:
-            return 1
-        if conf.type == "factor":
-            return 1.0 if it < conf.start else conf.factor
-        if conf.type == "exp":
-            gam = 10 ** (-1 / conf.exp_div_10)
-            return 1.0 if it < conf.start else gam
-        else:
-            raise ValueError(conf.type)
-
-    return torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_fn)
-
 
 def pack_lr_parameters(params, base_lr, lr_scaling):
     """Pack each group of parameters with the respective scaled learning rate."""
