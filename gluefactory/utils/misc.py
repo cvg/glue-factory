@@ -418,7 +418,16 @@ def tree_tensormap(
 
 def tree_cast(tree: types.Tree | Any, dtype: torch.dtype) -> types.Tree | Any:
     """Cast all tensors in a tree to a specific dtype."""
-    return tree_map(tree, lambda v: v.to(dtype) if hasattr(v, "to") else v)
+
+    def is_castable(t):
+        return hasattr(t, "to") and not isinstance(t, type)
+
+    if is_castable(tree):
+        return tree.to(dtype)
+    return tree_map(
+        tree,
+        lambda v: v.to(dtype) if is_castable(v) else v,
+    )
 
 
 def tree_all_gather(tree: types.Tree) -> types.Tree:

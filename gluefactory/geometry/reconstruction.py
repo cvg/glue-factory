@@ -131,6 +131,7 @@ class Pose(tensor.TensorWrapper):
         )
 
     @classmethod
+    @misc.force_f32
     def from_rays(
         cls,
         bearings_ww: torch.Tensor,
@@ -446,6 +447,7 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
         return cls(data)
 
     @classmethod
+    @misc.force_f32
     def from_rays(
         cls,
         bearings_ww: torch.Tensor,
