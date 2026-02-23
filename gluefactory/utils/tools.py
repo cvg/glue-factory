@@ -25,10 +25,14 @@ class AverageMetric:
         self._sum = 0
         self._num_examples = 0
 
-    def update(self, tensor):
+    def update(self, tensor, mask=None):
         assert tensor.dim() == 1
-        self._sum += torch.nansum(tensor)
-        self._num_examples += len(tensor)
+        if mask is not None:
+            self._sum += (tensor * mask).nansum()
+            self._num_examples += mask.sum().item()
+        else:
+            self._sum += torch.nansum(tensor)
+            self._num_examples += len(tensor)
 
     def compute(self):
         if self._num_examples == 0:
@@ -420,7 +424,6 @@ def filter_parameters(params, regexp):
     assert len(params) > 0, regexp
     logger.info("Selected parameters:\n" + "\n".join(n for n, p in params))
     return params
-
 
 
 def pack_lr_parameters(params, base_lr, lr_scaling):

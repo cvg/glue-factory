@@ -8,7 +8,7 @@ import collections
 import shutil
 import signal
 from pathlib import Path
-from typing import Any, Callable, TypeAlias
+from typing import Any, Callable, Sequence, TypeAlias
 
 import numpy as np
 import torch
@@ -28,6 +28,42 @@ Batch: TypeAlias = Any
 Predictions: TypeAlias = Any
 LossMetrics: TypeAlias = dict[str, torch.Tensor]
 Writer: TypeAlias = SummaryWriter | None
+
+
+def apply_batch_mask(
+    pred: dict,
+    data: dict,
+    values: LossMetrics | Sequence[LossMetrics],
+    key: str,
+    exclude: tuple[str, ...],
+) -> tuple[torch.Tensor, LossMetrics | Sequence[LossMetrics]]:
+    """Zero out per-sample values where a batch mask is False.
+
+    Returns the boolean mask and the filtered values dict.
+    Entries whose key contains any of the exclude patterns are left untouched.
+    """
+    if key in data:
+        mask = data[key].bool()
+    elif key in pred:
+        mask = pred[key].bool()
+    else:
+        raise KeyError(f"Batch mask key '{key}' not found in data or predictions.")
+
+    def filter_values(v: LossMetrics) -> LossMetrics:
+        return {
+            k: (
+                v
+                if any(p in k for p in exclude) or not isinstance(v, torch.Tensor)
+                else v.nan_to_num(0.0) * mask
+            )
+            for k, v in v.items()
+        }
+
+    if isinstance(values, dict):
+        values = filter_values(values)
+    else:
+        values = [filter_values(v) for v in values]
+    return mask, values
 
 
 def compose_loss(loss_dict: LossMetrics, compose_str: str) -> torch.Tensor:
@@ -82,6 +118,12 @@ def run_evaluation(
         with torch.no_grad():
             pred = model(data)
             losses, metrics = model.loss_metrics(pred, data)
+            if conf.get("batch_mask_key", None) is not None:
+                exclude = conf.get("batch_mask_exclude", ())
+                mask, (losses, metrics) = apply_batch_mask(
+                    pred, data, (losses, metrics), conf.batch_mask_key, exclude
+                )
+                metrics["batch_mask"] = mask.float()
             pr_metrics_i = model.pr_metrics(pred, data)
             losses, metrics, pr_metrics_i = [
                 misc.batch_to_device(x, "cpu", non_blocking=False)
@@ -101,6 +143,7 @@ def run_evaluation(
                 pr_metrics[k].update(labels, preds)
         del pred, data
         numbers = {**metrics, **{"loss/" + k: v for k, v in losses.items()}}
+        exclude = (*conf.get("batch_mask_exclude", ()), "batch_mask")
         for k, v in numbers.items():
             if k not in results:
                 results[k] = tools.AverageMetric()
@@ -109,7 +152,14 @@ def run_evaluation(
                 if k in conf.recall_metrics.keys():
                     q = conf.recall_metrics[k]
                     results[k + f"_recall{int(q)}"] = tools.RecallMetric(q)
-            results[k].update(v)
+            m = None
+            if (
+                "batch_mask" in numbers
+                and not any(p in k for p in exclude)
+                and v.shape[0] == numbers["batch_mask"].shape[0]
+            ):
+                m = numbers["batch_mask"]
+            results[k].update(v, mask=m)
             if k in conf.median_metrics:
                 results[k + "_median"].update(v)
             if k in conf.recall_metrics.keys():
@@ -185,6 +235,8 @@ class Trainer:
         "project_name": __module_name__,  # wandb project name
         "finetune_after": [],  # epochs at which to apply finetune_scales
         "finetune_scales": {},  # {dotted.key: scale} applied to dataset conf
+        "batch_mask_key": None,  # data key (bool B) to mask losses per sample
+        "batch_mask_exclude": (),  # loss name patterns excluded from masking
     }
 
     def __init__(
@@ -734,8 +786,9 @@ class Trainer:
     def train_step(
         self, data: Batch, do_update: bool = True, log_grad_norm: bool = False
     ) -> tuple[Predictions, LossMetrics]:
+        device_t = "cuda" if torch.cuda.is_available() else "cpu"
         with torch.autocast(
-            device_type="cuda" if torch.cuda.is_available() else "cpu",
+            device_type=device_t,
             enabled=self.use_mp,
             dtype=self.dtype,
         ):
@@ -744,6 +797,12 @@ class Trainer:
             pred = self.model(data)
             self.step_timer.measure("forward")
             losses, metrics = self.model.loss_metrics(pred, data)
+            if self.conf.batch_mask_key is not None:
+                exclude = self.conf.batch_mask_exclude
+                mask, (losses, metrics) = apply_batch_mask(
+                    pred, data, (losses, metrics), self.conf.batch_mask_key, exclude
+                )
+                metrics["batch_mask"] = mask.float().detach()
             if self.conf.get("compose_loss", None) is not None:
                 losses["total"] = compose_loss(
                     {**metrics, **losses}, self.conf.compose_loss
@@ -818,9 +877,9 @@ class Trainer:
                         )
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
+                self.learning_rate_step()
                 self.optimizer.zero_grad()
             self.step_timer.measure("step")
-            self.learning_rate_step()
         else:
             self.warn("Skip iteration due to detach.")
         return pred, loss_metrics
@@ -892,8 +951,17 @@ class Trainer:
             if pred is None:
                 continue  # skip iteration due to NaN
             if self.rank == 0:
+                batch_mask = loss_metrics.pop("batch_mask", None)
+                exclude = (*self.conf.batch_mask_exclude, "batch_mask")
                 for k, val in loss_metrics.items():
-                    train_loss_metrics[k].update(val)
+                    m = None
+                    if (
+                        batch_mask is not None
+                        and not any(p in k for p in exclude)
+                        and val.shape[0] == batch_mask.shape[0]
+                    ):
+                        m = batch_mask
+                    train_loss_metrics[k].update(val, mask=m)
 
                 for k, labels_preds in self.model.pr_metrics(pred, data).items():
                     pr_metrics[k].update(*labels_preds)
