@@ -62,8 +62,10 @@ class MixedExtractor(BaseModel):
         skip_detect = len(data.get("cache", {})) > 0 and self.conf.allow_no_detect
         if self.conf.detector.name and not skip_detect:
             pred = self.detector(data)
-        else:
+        elif "cache" in data:
             pred = data["cache"]
+        else:
+            pred = {}
         if self.conf.descriptor.name:
             pred = {**pred, **self.descriptor({**pred, **data})}
 
