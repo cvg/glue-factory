@@ -99,10 +99,8 @@ class TwoViewPipeline(BaseModel):
 
     def _forward(self, data):
         num_views = len([k for k in data.keys() if k.startswith("view")])
-        if (
-            self.conf.extractor.detector.get("bias_to", None) == "covisible"
-            and num_views == 2
-        ):
+        detector_conf = self.conf.extractor.get("detector", self.conf.extractor)
+        if detector_conf.get("bias_to", None) == "covisible" and num_views == 2:
             self._precompute_covisible_bboxes(data, num_views)
         if self.conf.get("extract_parallel", False) and self.training:
             bs = data["view0"]["image"].shape[0]
