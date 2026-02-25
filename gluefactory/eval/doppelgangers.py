@@ -35,14 +35,12 @@ class DoppelgangersPipeline(eval_pipeline.EvalPipeline):
                 "name": None,  # remove gt matches
             }
         },
-        "eval": {"score_key": "overlaps"},
+        "eval": {"score_key": "overlaps", "subset_idxs": None},
     }
 
     export_keys = (
         "keypoints0",
         "keypoints1",
-        "keypoint_scores0",
-        "keypoint_scores1",
         "matches0",
         "matches1",
         "matching_scores0",
@@ -97,9 +95,11 @@ class DoppelgangersPipeline(eval_pipeline.EvalPipeline):
             results_i = {}
             scores = {**data, **pred}[conf.score_key]
             if scores.ndim == 1:
-                results_i["score"] = scores[0].mean().item()
-                for i in range(0, len(scores)):
-                    results_i[f"score{i}"] = scores[i].item()
+                results_i["score"] = scores[-1].mean().item()
+                if conf.subset_idxs is not None:
+                    for i in conf.subset_idxs:
+                        ii = i if i >= 0 else scores.shape[0] + i
+                        results_i[f"score{ii}"] = scores[ii].item()
             else:
                 results_i["score"] = scores.item()
 
