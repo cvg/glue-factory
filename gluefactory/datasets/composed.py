@@ -167,7 +167,8 @@ class ComposedSplit(torch.utils.data.Dataset):
                 element[f"view{i}"]["camera"] = view["camera"].compose_image_transform(
                     element[f"view{i}"]["transform"]
                 )
-        element["valid_geometry"] = self.dataset_valid[dataset_idx]
+        if hasattr(self, "dataset_valid"):
+            element["valid_geometry"] = self.dataset_valid[dataset_idx]
         return element
 
     def stats(self):
