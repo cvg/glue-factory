@@ -604,6 +604,36 @@ def pad_to_length(
     return torch.cat([x, xn], dim=pad_dim)
 
 
+def sample_random_keypoints(n, transform, original_image_size, device=None, bbox=None):
+    """Sample random keypoints in the valid image region.
+
+    Args:
+        n: number of random keypoints to generate.
+        transform: (3, 3) preprocessing transform (original → preprocessed).
+        original_image_size: (w, h) of the original image.
+        device: target device.
+        bbox: optional (B, 4) bounding box (wmin, hmin, wmax, hmax) in
+            preprocessed image space. If provided, samples uniformly within
+            the bbox and returns (B, n, 2). Ignores transform/original_image_size.
+
+    Returns:
+        (n, 2) or (B, n, 2) tensor of keypoint coordinates (x, y).
+    """
+    if bbox is not None:
+        B = bbox.shape[0]
+        wmin, hmin, wmax, hmax = bbox[:, 0], bbox[:, 1], bbox[:, 2], bbox[:, 3]
+        rand = torch.rand(B, n, 2, device=bbox.device)
+        x = wmin[:, None] + rand[..., 0] * (wmax - wmin)[:, None]
+        y = hmin[:, None] + rand[..., 1] * (hmax - hmin)[:, None]
+        return torch.stack([x, y], dim=-1)
+    t = torch.as_tensor(transform, device=device, dtype=torch.float32)
+    orig_wh = torch.as_tensor(original_image_size, device=device, dtype=torch.float32)
+    rand_xy = torch.rand(n, 2, device=device) * orig_wh
+    ones = rand_xy.new_ones(n, 1)
+    rand_h = torch.cat([rand_xy, ones], dim=-1)  # (n, 3)
+    return (t[:2, :] @ rand_h.T).T
+
+
 def pad_and_stack(
     sequences: Sequence[torch.Tensor],
     length: Optional[int] = None,
@@ -865,6 +895,7 @@ def interpolate_patches(
     pts: torch.Tensor,  # B x N x 2
     features: torch.Tensor,
     ps: int,
+    subpixel: int = 1,
     mode: str = "nearest",
     normalize: bool = False,
     is_chw: bool = False,
@@ -877,20 +908,38 @@ def interpolate_patches(
         pts_i = pts
     else:
         pts_i = denormalize_coords(pts, features.shape[-2:])
-    dummy_patch = torch.zeros(
-        (1, 1, ps, ps), device=features.device, dtype=features.dtype
-    )
-    p_xy = get_image_coords(dummy_patch)
-    cxy_i = torch.round(pts_i - ps / 2 - 0.5)
-    p_xy_i = cxy_i[:, :, None, None, :] + p_xy[:, None]
-    p_xy_n = normalize_coords(p_xy_i, features.shape[-2:])
-    patches = torch.vmap(grid_sample, in_dims=(None, 1), out_dims=1)(
-        features,
-        p_xy_n,
-        interpolation=mode,
-        align_corners=align_corners,
-        padding_mode=padding_mode,
-    )
+
+    hw = features.shape[-2:]
+
+    if mode == "window":
+        # Direct integer indexing via extract_patches — no grid_sample
+        patches, corners = batch_extract_patches(features, pts_i, ps)
+        # corners: (B, N, 2) actual top-left corner after clamping (x, y)
+        # Build grid positions from the actual corners
+        dummy_patch = torch.zeros(
+            (1, 1, ps, ps), device=features.device, dtype=features.dtype
+        )
+        p_xy = get_image_coords(dummy_patch)  # (1, ps, ps, 2) with +0.5 offset
+        p_xy_i = corners[:, :, None, None, :] + p_xy[:, None]
+        p_xy_n = normalize_coords(p_xy_i, hw)
+        cxy_i = corners
+    else:
+        grid_size = ps * subpixel
+        dummy_patch = torch.zeros(
+            (1, 1, grid_size, grid_size), device=features.device, dtype=features.dtype
+        )
+        p_xy = get_image_coords(dummy_patch) / subpixel
+        cxy_i = torch.round(pts_i - ps / 2 - 0.5)
+        p_xy_i = cxy_i[:, :, None, None, :] + p_xy[:, None]
+        p_xy_n = normalize_coords(p_xy_i, hw)
+        patches = torch.vmap(grid_sample, in_dims=(None, 1), out_dims=1)(
+            features,
+            p_xy_n,
+            interpolation=mode,
+            align_corners=align_corners,
+            padding_mode=padding_mode,
+        )
+
     if not is_chw:
         patches = hwc_from_chw(patches)
     return patches, p_xy_n, cxy_i
@@ -1022,6 +1071,10 @@ def match_keypoints_dense(
         # Pipe the keypoints again
         mpred["keypoints0"] = data["keypoints0"]
         mpred["keypoints1"] = data["keypoints1"]
+        mpred["p2d0_i1"] = pts0_i1
+        mpred["p2d1_i0"] = pts1_i0
+        mpred["matchability0"] = kp_scores0
+        mpred["matchability1"] = kp_scores1
     return mpred
 
 
