@@ -1066,8 +1066,13 @@ class Trainer:
                 )
             # Create symlink to eval_dir at head
             symlink_dir = output_dir / benchmark_name
-            symlink_dir.unlink(missing_ok=True)
-            symlink_dir.symlink_to(eval_dir)
+            try:
+                symlink_dir.unlink(missing_ok=True)
+                symlink_dir.symlink_to(eval_dir)
+            except OSError as e:
+                logger.warning(
+                    f"Could not create symlink {symlink_dir} -> {eval_dir}: {e}"
+                )
             # Remove previous test dirs for this benchmark, keep only latest
             for old_dir in output_dir.glob(f"test_*/{benchmark_name}"):
                 if old_dir != eval_dir:
