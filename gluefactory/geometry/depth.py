@@ -284,6 +284,8 @@ def align_pointclouds(
     weights: torch.Tensor = None,
     return_Rt: bool = False,
     scale_only: bool = False,
+    use_eigh: bool = False,
+    eps: float = 0.0,
 ) -> tuple[
     reconstruction.Pose | None | tuple[torch.Tensor, torch.Tensor],
     torch.Tensor,
@@ -312,9 +314,9 @@ def align_pointclouds(
     pts_v0 = pts_v0 - t0[None, :]
     pts_v1 = pts_v1 - t1[None, :]
 
-    s0 = misc.wmean(pts_v0.square().sum(dim=-1), weights[:, 0]).sqrt()
-    s1 = misc.wmean(pts_v1.square().sum(dim=-1), weights[:, 0]).sqrt()
-
+    # clamp before sqrt to block NaN gradients from sqrt(0)
+    s0 = misc.wmean(pts_v0.square().sum(dim=-1), weights[:, 0]).clamp(min=eps).sqrt()
+    s1 = misc.wmean(pts_v1.square().sum(dim=-1), weights[:, 0]).clamp(min=eps).sqrt()
     # Set scale 1 if no weights (i.e. all invalid)
     s0 = torch.where(weights.sum() > 0, s0, torch.tensor(1.0, device=s0.device))
     s1 = torch.where(weights.sum() > 0, s1, torch.tensor(1.0, device=s1.device))
@@ -327,9 +329,20 @@ def align_pointclouds(
     # pts_v1 = pts_v1 * weights
     if scale_only:
         R = torch.eye(3, dtype=t0.dtype, device=t0.device)
+    elif use_eigh:
+        A = pts_v0.T @ pts_v1
+        A = A + eps * torch.eye(3, device=A.device, dtype=A.dtype)
+        ATA = (A.T @ A).double()
+        eigenvalues, V = torch.linalg.eigh(ATA)
+        S = eigenvalues.clamp(min=eps).sqrt()
+        U = A.double() @ V / S[None, :]
+        R = (U @ V.mT).float()
+        R = torch.stack([R[:, 0], R[:, 1], R[:, 2] * R.det().sign()], dim=-1)
     else:
         try:
             A = pts_v0.T @ pts_v1
+            # Regularize to prevent degenerate SVD (e.g. all-zero weights)
+            A = A + eps * torch.eye(3, device=A.device, dtype=A.dtype)
             U, _, V = A.double().svd()
             U: torch.Tensor = U
             V: torch.Tensor = V
@@ -365,6 +378,7 @@ def align_pointclouds_robust(
     num_iters: int = 5,
     robust_fn: str = "huber",
     robust_scale: float | None = None,  # None is automatic estimation
+    use_eigh: bool = False,
 ) -> tuple[
     reconstruction.Pose | None | tuple[torch.Tensor, torch.Tensor],
     torch.Tensor,
@@ -385,7 +399,12 @@ def align_pointclouds_robust(
 
     for _ in range(num_iters):
         _, _, pts1_aligned = align_pointclouds(
-            pts_v0, pts_v1, rweights * weights, return_Rt=False, scale_only=scale_only
+            pts_v0,
+            pts_v1,
+            rweights * weights,
+            return_Rt=False,
+            scale_only=scale_only,
+            use_eigh=use_eigh,
         )
 
         # Compute residuals
@@ -413,9 +432,17 @@ def align_pointclouds_robust(
             raise ValueError(f"Unknown robust function: {robust_fn}")
 
     # Final pass with converged weights
-    return align_pointclouds(pts_v0, pts_v1, rweights * weights, return_Rt, scale_only)
+    return align_pointclouds(
+        pts_v0,
+        pts_v1,
+        rweights * weights,
+        return_Rt,
+        scale_only,
+        use_eigh=use_eigh,
+    )
 
 
+@misc.force_f32
 def batch_align_pointclouds(
     pts_v0: torch.Tensor,
     pts_v1: torch.Tensor,
@@ -440,6 +467,15 @@ def batch_align_pointclouds(
         )
         norm_scale = torch.ones(pts_v0.shape[0], device=pts_v0.device)
 
+    if weights is not None:
+        # This forces identity alignment for invalid weights, which is a reasonable default and prevents NaN gradients from degenerate SVD in align_pointclouds_robust
+        w_valid = weights.sum(dim=-1, keepdim=True) > 1.0e-6
+        weights = torch.where(w_valid, weights, torch.ones_like(weights))
+        pts_v0n = torch.where(w_valid[..., None], pts_v0n, pts_v0.detach())
+        pts_v1 = torch.where(w_valid[..., None], pts_v1, pts_v0n.detach())
+        c0n_t_c0 = torch.where(w_valid[:, 0], c0n_t_c0, c0n_t_c0.detach())
+        norm_scale = torch.where(w_valid[:, 0], norm_scale, norm_scale.detach())
+
     c0n_Rt_c1, scales, pts1_v0n = torch.vmap(
         functools.partial(
             align_pointclouds_robust,
@@ -463,7 +499,6 @@ def batch_align_pointclouds(
 
     # Correct points: scale back to original frame
     pts1_v0 = c0n_t_c0.inv().transform(pts1_v0n) / norm_scale[..., None, None]
-
     return c0_t_c1, scales, pts1_v0
 
 

@@ -204,7 +204,10 @@ def scale_intrinsics(K, scales):
 
 
 def wahba_rotation(
-    b_dst: torch.Tensor, b_src: torch.Tensor, weights: torch.Tensor | None = None
+    b_dst: torch.Tensor,
+    b_src: torch.Tensor,
+    weights: torch.Tensor | None = None,
+    eps: float = 0.0,
 ) -> torch.Tensor:
     """Solve for R such that b_dst = R @ b_src (weighted Wahba problem).
 
@@ -220,6 +223,8 @@ def wahba_rotation(
         H = (weights[..., None] * b_dst).transpose(-1, -2) @ b_src
     else:
         H = b_dst.transpose(-1, -2) @ b_src
+    # Regularize to prevent degenerate SVD (e.g. all-zero weights)
+    H = H + eps * torch.eye(3, device=H.device, dtype=H.dtype)[None]
     U, S, Vt = torch.linalg.svd(H.float())
     d = torch.det((U @ Vt).float())
     D = torch.diag_embed(

@@ -113,8 +113,8 @@ class DoppelgangersSplit(torch.utils.data.Dataset):
                 data[f"view{i}"]["camera"] = reconstruction.Camera.from_image(
                     data[f"view{i}"]["image"]
                 ).compose_image_transform(data[f"view{i}"]["transform"])
-                data[f"view{i}"]["depth"] = torch.zeros_like(
-                    data[f"view{i}"]["image"][0]
+                data[f"view{i}"]["depth"] = (
+                    torch.zeros_like(data[f"view{i}"]["image"][0]) + 1e-2
                 )
                 data[f"view{i}"]["scene"] = data["scene"]
 

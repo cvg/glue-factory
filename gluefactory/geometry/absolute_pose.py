@@ -12,6 +12,7 @@ def _mean_isotropic_scale_normalize(
     eps: float = 1e-3,
     weights: torch.Tensor | None = None,
     return_pose: bool = False,
+    f_eps: float = 0.0,
 ) -> tuple[torch.Tensor, Pose | torch.Tensor]:
     r"""Normalize points. Avoid inplace operations.
 
@@ -27,10 +28,13 @@ def _mean_isotropic_scale_normalize(
     """
     if weights is not None:
         x_mean = misc.wmean(points, weights[..., None], dim=1, keepdim=True)  # Bx1xD
-        scale = misc.wmean((points - x_mean).norm(dim=-1, p=2), weights, dim=-1)  # B
+        # clamp norm to prevent NaN gradient from norm(0)
+        scale = misc.wmean(
+            (points - x_mean).norm(dim=-1, p=2).clamp(min=f_eps), weights, dim=-1
+        )  # B
     else:
         x_mean = torch.mean(points, dim=1, keepdim=True)  # Bx1xD
-        scale = (points - x_mean).norm(dim=-1, p=2).mean(dim=-1)  # B
+        scale = (points - x_mean).norm(dim=-1, p=2).clamp(min=f_eps).mean(dim=-1)  # B
     D_int = points.shape[-1]
     D_float = torch.tensor(points.shape[-1], dtype=torch.float64, device=points.device)
     scale = torch.sqrt(D_float) / (scale + eps)  # B

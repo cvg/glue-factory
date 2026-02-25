@@ -55,6 +55,9 @@ class ComposedSplit(torch.utils.data.Dataset):
         self.datasets = [
             datasets[name].get_dataset(split, epoch) for name in self.dataset_names
         ]
+
+        self.dataset_valid = [d.conf.get("valid_geometry", True) for d in self.datasets]
+        logger.info(f"[{split}] Dataset valid_geometry flags: {self.dataset_valid}")
         self.sizes = np.array([len(d) for d in self.datasets])
 
         logger.info(
@@ -164,6 +167,7 @@ class ComposedSplit(torch.utils.data.Dataset):
                 element[f"view{i}"]["camera"] = view["camera"].compose_image_transform(
                     element[f"view{i}"]["transform"]
                 )
+        element["valid_geometry"] = self.dataset_valid[dataset_idx]
         return element
 
     def stats(self):

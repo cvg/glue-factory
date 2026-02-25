@@ -54,7 +54,7 @@ def apply_batch_mask(
             k: (
                 v
                 if any(p in k for p in exclude) or not isinstance(v, torch.Tensor)
-                else v.nan_to_num(0.0) * mask
+                else torch.where(mask, v, torch.zeros_like(v))
             )
             for k, v in v.items()
         }
@@ -66,7 +66,9 @@ def apply_batch_mask(
     return mask, values
 
 
-def compose_loss(loss_dict: LossMetrics, compose_str: str) -> torch.Tensor:
+def compose_loss(
+    loss_dict: LossMetrics, compose_str: str, allow_missing: bool = False
+) -> torch.Tensor:
     """Compose a loss from a string, e.g. '1.0*loss1 + 0.1*loss2'."""
     # @TODO: Support multiplicative loss terms
     addition_terms = compose_str.split("+")
@@ -81,7 +83,9 @@ def compose_loss(loss_dict: LossMetrics, compose_str: str) -> torch.Tensor:
             key = term
         key = key.strip()
         if key not in loss_dict:
-            raise KeyError(f"Key {key} not found in loss dict.")
+            if not allow_missing:
+                raise KeyError(f"Key {key} not found in loss dict.")
+            continue
         loss = loss + weight * loss_dict[key]
     return loss
 
@@ -951,7 +955,7 @@ class Trainer:
             if pred is None:
                 continue  # skip iteration due to NaN
             if self.rank == 0:
-                batch_mask = loss_metrics.pop("batch_mask", None)
+                batch_mask = loss_metrics.get("batch_mask", None)
                 exclude = (*self.conf.batch_mask_exclude, "batch_mask")
                 for k, val in loss_metrics.items():
                     m = None
