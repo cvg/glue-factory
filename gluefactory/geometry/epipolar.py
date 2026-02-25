@@ -33,13 +33,16 @@ def F_to_E(cam0: reconstruction.Camera, cam1: reconstruction.Camera, F: torch.Te
     return K1.transpose(-1, -2) @ F @ K0
 
 
-def sym_epipolar_distance(p0, p1, E, squared=True):
-    """Compute batched symmetric epipolar distances.
+def sym_epipolar_distance(p0, p1, E, squared=True, symmetric=True):
+    """Compute batched epipolar distances.
     Args:
         p0, p1: batched tensors of N 2D points of size (..., N, 2).
         E: essential matrices from camera 0 to camera 1, size (..., 3, 3).
+        squared: if True, return squared distances.
+        symmetric: if True, average distance from both sides. If False,
+            compute only the distance of p1 to the epipolar line of p0.
     Returns:
-        The symmetric epipolar distance of each point-pair: (..., N).
+        The epipolar distance of each point-pair: (..., N).
     """
     assert p0.shape[-2] == p1.shape[-2]
     if p0.shape[-2] == 0:
@@ -50,30 +53,75 @@ def sym_epipolar_distance(p0, p1, E, squared=True):
         p1 = tr.to_homogeneous(p1)
     p1_E_p0 = torch.einsum("...ni,...ij,...nj->...n", p1, E, p0)
     E_p0 = torch.einsum("...ij,...nj->...ni", E, p0)
-    Et_p1 = torch.einsum("...ij,...ni->...nj", E, p1)
     d0 = (E_p0[..., 0] ** 2 + E_p0[..., 1] ** 2).clamp(min=1e-6)
-    d1 = (Et_p1[..., 0] ** 2 + Et_p1[..., 1] ** 2).clamp(min=1e-6)
-    if squared:
-        d = p1_E_p0**2 * (1 / d0 + 1 / d1)
+    if symmetric:
+        Et_p1 = torch.einsum("...ij,...ni->...nj", E, p1)
+        d1 = (Et_p1[..., 0] ** 2 + Et_p1[..., 1] ** 2).clamp(min=1e-6)
+        if squared:
+            d = p1_E_p0**2 * (1 / d0 + 1 / d1)
+        else:
+            d = p1_E_p0.abs() * (1 / d0.sqrt() + 1 / d1.sqrt()) / 2
     else:
-        d = p1_E_p0.abs() * (1 / d0.sqrt() + 1 / d1.sqrt()) / 2
+        if squared:
+            d = p1_E_p0**2 / d0
+        else:
+            d = p1_E_p0.abs() / d0.sqrt()
     return d
 
 
-def sym_epipolar_distance_all(p0, p1, E, eps=1e-15):
+def sym_epipolar_distance_all(p0, p1, E, eps=1e-15, symmetric=True):
     if p0.shape[-1] != 3:
         p0 = tr.to_homogeneous(p0)
     if p1.shape[-1] != 3:
         p1 = tr.to_homogeneous(p1)
     p1_E_p0 = torch.einsum("...mi,...ij,...nj->...nm", p1, E, p0).abs()
     E_p0 = torch.einsum("...ij,...nj->...ni", E, p0)
-    Et_p1 = torch.einsum("...ij,...mi->...mj", E, p1)
     d0 = p1_E_p0 / (E_p0[..., None, 0] ** 2 + E_p0[..., None, 1] ** 2 + eps).sqrt()
-    d1 = (
-        p1_E_p0
-        / (Et_p1[..., None, :, 0] ** 2 + Et_p1[..., None, :, 1] ** 2 + eps).sqrt()
-    )
-    return (d0 + d1) / 2
+    if symmetric:
+        Et_p1 = torch.einsum("...ij,...mi->...mj", E, p1)
+        d1 = (
+            p1_E_p0
+            / (Et_p1[..., None, :, 0] ** 2 + Et_p1[..., None, :, 1] ** 2 + eps).sqrt()
+        )
+        return (d0 + d1) / 2
+    return d0
+
+
+def bearing_epipolar_distance(
+    bearings0: torch.Tensor,
+    bearings1: torch.Tensor,
+    T_0to1: reconstruction.Pose,
+    squared: bool = False,
+    symmetric: bool = True,
+) -> torch.Tensor:
+    """Epipolar distance between bearing directions (depth-independent).
+
+    Unlike generalized_epi_dist which operates on 2D keypoints projected
+    through the full camera model (including translation), this function
+    works directly with bearing directions in each camera frame. The bearings
+    should be computed using rotation only (no translation), making the
+    distance independent of point depth.
+
+    Operates in normalized camera coordinates with the essential matrix.
+
+    Args:
+        bearings0: bearing directions in camera 0 frame, (..., N, 3).
+        bearings1: bearing directions in camera 1 frame, (..., N, 3).
+            Typically computed as R_wahba @ pred_xyz (rotation only,
+            no translation), then normalized to z=1.
+        T_0to1: GT relative pose for the essential matrix.
+        squared: if True, return squared distances.
+        symmetric: if True, average distance from both sides. If False,
+            compute distance of bearings1 to the epipolar line of bearings0.
+
+    Returns:
+        Epipolar distance per point pair: (..., N).
+    """
+    E = T_to_E(T_0to1)
+    # Normalize to z=1 so the distance is independent of point depth.
+    b0 = bearings0 / bearings0[..., 2:].clamp(min=1e-6)
+    b1 = bearings1 / bearings1[..., 2:].clamp(min=1e-6)
+    return sym_epipolar_distance(b0, b1, E, squared=squared, symmetric=symmetric)
 
 
 def generalized_epi_dist(
@@ -84,23 +132,26 @@ def generalized_epi_dist(
     T_0to1: reconstruction.Pose,
     all=True,
     essential=True,
+    symmetric=True,
 ):
     if essential:
         E = T_to_E(T_0to1)
         p0 = cam0.image2cam(kpts0)
         p1 = cam1.image2cam(kpts1)
         if all:
-            return sym_epipolar_distance_all(p0, p1, E, agg="max")
+            return sym_epipolar_distance_all(p0, p1, E, symmetric=symmetric)
         else:
-            return sym_epipolar_distance(p0, p1, E, squared=False)
+            return sym_epipolar_distance(p0, p1, E, squared=False, symmetric=symmetric)
     else:
-        assert cam0.data_.shape[-1] == 6
-        assert cam1.data_.shape[-1] == 6
+        # assert cam0.data_.shape[-1] == 6
+        # assert cam1.data_.shape[-1] == 6
         F = T_to_F(cam0, cam1, T_0to1)
         if all:
-            return sym_epipolar_distance_all(kpts0, kpts1, F)
+            return sym_epipolar_distance_all(kpts0, kpts1, F, symmetric=symmetric)
         else:
-            return sym_epipolar_distance(kpts0, kpts1, F, squared=False)
+            return sym_epipolar_distance(
+                kpts0, kpts1, F, squared=False, symmetric=symmetric
+            )
 
 
 def decompose_essential_matrix(E):
