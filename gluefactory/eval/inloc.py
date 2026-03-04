@@ -31,8 +31,23 @@ from .eval_pipeline import EvalPipeline, exists_eval, load_eval, save_eval
 logger = logging.getLogger(__name__)
 
 
-def pose_from_cluster(dataset_dir, q, retrieved, match_h5, feature_h5, skip=None):
+def pose_from_cluster(
+    dataset_dir,
+    q,
+    retrieved,
+    match_h5,
+    feature_h5,
+    skip=None,
+    db_keypoints=None,
+    query_keypoints=None,
+):
     """Estimate absolute pose for query *q* from a cluster of DB images.
+
+    Args:
+        db_keypoints: If set, read this key from match_h5[pair] instead of
+            feature_h5[db_image]["keypoints"] (refined positions per pair).
+        query_keypoints: If set, read this key from match_h5[pair] instead of
+            feature_h5[query]["keypoints"] (refined positions per pair).
 
     Returns:
         ret: PnP result dict (or None if no valid matches).
@@ -48,14 +63,25 @@ def pose_from_cluster(dataset_dir, q, retrieved, match_h5, feature_h5, skip=None
     data = collections.defaultdict(list)
     num_matches = 0
 
-    kpq = feature_h5[q]["keypoints"].__array__()
+    # Default query keypoints from feature file (may be overridden per-pair below)
+    kpq_default = feature_h5[q]["keypoints"].__array__()
 
     for i, r in enumerate(retrieved):
         pair = names_to_pair(q, r)
         if pair not in match_h5:
             continue
 
-        kpr = feature_h5[r]["keypoints"].__array__()
+        # Use overridden keypoints from match_h5 if configured, else feature_h5
+        kpq = (
+            match_h5[pair][query_keypoints].__array__()
+            if query_keypoints and query_keypoints in match_h5[pair]
+            else kpq_default
+        )
+        kpr = (
+            match_h5[pair][db_keypoints].__array__()
+            if db_keypoints and db_keypoints in match_h5[pair]
+            else feature_h5[r]["keypoints"].__array__()
+        )
         m = match_h5[pair]["matches0"].__array__()
         v = m > -1
 
@@ -93,7 +119,8 @@ def pose_from_cluster(dataset_dir, q, retrieved, match_h5, feature_h5, skip=None
     ret = pycolmap.estimate_and_refine_absolute_pose(
         cat_data["mkpq"], cat_data["mkp3d"], cam, estimation_options
     )
-    ret["cfg"] = cam
+    if ret is not None:
+        ret["cfg"] = cam
     return ret, data, cat_data, num_matches
 
 
@@ -115,6 +142,8 @@ class InLocPipeline(EvalPipeline):
         },
         "eval": {
             "skip_matches": None,
+            "db_keypoints": None,
+            "query_keypoints": None,
         },
         "pipeline": {
             "name": "reconstruction.hloc",
@@ -130,7 +159,7 @@ class InLocPipeline(EvalPipeline):
     def _init(self, conf):
         self.root_dir = settings.DATA_PATH / conf.data.root
         pipeline_conf = OmegaConf.merge(
-            self.default_conf.pipeline,
+            conf.pipeline,
             {"data": conf.data},
         )
         self.pipeline: ReconstructionPipeline = pipelines.get_pipeline(
@@ -201,7 +230,13 @@ class InLocPipeline(EvalPipeline):
         self.pipeline.extract_features(experiment_dir, model, data)
 
         # Step 2: match pairs (loads cached features from h5)
-        self.pipeline.match_features(experiment_dir, model, data)
+        conf = self.conf.eval
+        optional_keys = [
+            k for k in [conf.get("db_keypoints"), conf.get("query_keypoints")] if k
+        ]
+        self.pipeline.match_features(
+            experiment_dir, model, data, optional_keys=optional_keys
+        )
 
     def run(self, experiment_dir, model=None, overwrite=False, overwrite_eval=False):
         self.save_conf(
@@ -256,6 +291,9 @@ class InLocPipeline(EvalPipeline):
         pred_h5 = h5py.File(str(pred_file), "w")
         eval_h5 = h5py.File(str(eval_pred_file), "w")
 
+        db_kp_key = conf.get("db_keypoints", None)
+        query_kp_key = conf.get("query_keypoints", None)
+
         for q in tqdm(queries, desc="Evaluating queries"):
             dbs = retrieval_dict[q]
             ret, _, cat_data, _ = pose_from_cluster(
@@ -265,6 +303,8 @@ class InLocPipeline(EvalPipeline):
                 match_h5,
                 feature_h5,
                 skip=conf.get("skip_matches", None),
+                db_keypoints=db_kp_key,
+                query_keypoints=query_kp_key,
             )
 
             if ret is not None and ret.get("num_inliers", 0) > 0:
@@ -272,11 +312,10 @@ class InLocPipeline(EvalPipeline):
 
             # Get inlier mask (over cat_data) from PnP result
             inlier_mask = None
-            print(ret.keys())
             if ret is not None and cat_data and ret.get("num_inliers", 0) > 0:
                 inlier_mask = np.asarray(ret["inlier_mask"], dtype=bool)
 
-            kpq = feature_h5[q]["keypoints"].__array__()
+            kpq_default = feature_h5[q]["keypoints"].__array__()
 
             # Write per-pair data
             for i, r in enumerate(dbs):
@@ -286,7 +325,17 @@ class InLocPipeline(EvalPipeline):
                 if hloc_pair not in match_h5:
                     continue
 
-                kpr = feature_h5[r]["keypoints"].__array__()
+                # Use overridden keypoints from match_h5 if configured
+                kpq = (
+                    match_h5[hloc_pair][query_kp_key].__array__()
+                    if query_kp_key and query_kp_key in match_h5[hloc_pair]
+                    else kpq_default
+                )
+                kpr = (
+                    match_h5[hloc_pair][db_kp_key].__array__()
+                    if db_kp_key and db_kp_key in match_h5[hloc_pair]
+                    else feature_h5[r]["keypoints"].__array__()
+                )
                 m = match_h5[hloc_pair]["matches0"].__array__()
                 ms = match_h5[hloc_pair]["matching_scores0"].__array__()
 

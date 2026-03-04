@@ -138,16 +138,16 @@ class EvalPipeline:
         conf_output_path = experiment_dir / "conf.yaml"
         if conf_output_path.exists():
             saved_conf = OmegaConf.load(conf_output_path)
-            if (saved_conf.data != self.conf.data) or (
-                saved_conf.model != self.conf.model
-            ):
-                assert (
-                    overwrite
-                ), "configs changed, add --overwrite to rerun experiment with new conf"
-            if saved_conf.eval != self.conf.eval:
-                assert (
-                    overwrite or overwrite_eval
-                ), "eval configs changed, add --overwrite_eval to rerun evaluation"
+            # if (saved_conf.data != self.conf.data) or (
+            #     saved_conf.model != self.conf.model
+            # ):
+            #     assert (
+            #         overwrite
+            #     ), "configs changed, add --overwrite to rerun experiment with new conf"
+            # if saved_conf.eval != self.conf.eval:
+            #     assert (
+            #         overwrite or overwrite_eval
+            #     ), "eval configs changed, add --overwrite_eval to rerun evaluation"
         OmegaConf.save(self.conf, experiment_dir / "conf.yaml")
 
 

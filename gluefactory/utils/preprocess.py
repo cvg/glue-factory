@@ -271,10 +271,31 @@ def square_crop(
     return ret
 
 
-def read_image(path: Path, grayscale: bool = False) -> np.ndarray:
-    """Read an image from path as RGB or grayscale"""
+def read_image(
+    path: Path, grayscale: bool = False, draft_size: int | None = None
+) -> np.ndarray:
+    """Read an image from path as RGB or grayscale.
+
+    Args:
+        draft_size: If set, use PIL draft mode to decode JPEG at a reduced
+            resolution (nearest 1/2, 1/4, or 1/8). Significantly faster for
+            large images that will be downscaled anyway.
+    """
     if not Path(path).exists():
         raise FileNotFoundError(f"No image at path {path}.")
+
+    if draft_size is not None and Path(path).suffix.lower() in (".jpg", ".jpeg"):
+        from PIL import Image
+
+        pil_mode = "L" if grayscale else "RGB"
+        img = Image.open(str(path))
+        img.draft(pil_mode, (draft_size, draft_size))
+        img.load()
+        image = np.asarray(img)
+        if image.ndim == 2 and not grayscale:
+            image = np.stack([image] * 3, axis=-1)
+        return image
+
     mode = cv2.IMREAD_GRAYSCALE if grayscale else cv2.IMREAD_COLOR
     image = cv2.imread(str(path), mode)
     if image is None:
@@ -295,8 +316,10 @@ def numpy_image_to_torch(image: np.ndarray) -> torch.Tensor:
     return torch.as_tensor(image / 255.0, dtype=torch.float)
 
 
-def load_image(path: Path, grayscale=False) -> torch.Tensor:
-    image = read_image(path, grayscale=grayscale)
+def load_image(
+    path: Path, grayscale=False, draft_size: int | None = None
+) -> torch.Tensor:
+    image = read_image(path, grayscale=grayscale, draft_size=draft_size)
     return numpy_image_to_torch(image)
 
 

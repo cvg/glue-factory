@@ -50,6 +50,7 @@ class ImagePairs(BaseDataset, torch.utils.data.Dataset):
         "pairs": "???",  # ToDo: add image folder interface
         "root": "???",
         "preprocessing": preprocess.ImagePreprocessor.default_conf,
+        "draft_size": None,  # JPEG draft decode size (faster loading for large images)
         "extra_data": None,  # relative_pose, homography
         "load_features": {
             "do": False,
@@ -79,7 +80,7 @@ class ImagePairs(BaseDataset, torch.utils.data.Dataset):
             path = Path(self.conf.root) / name
         else:
             path = settings.DATA_PATH / self.conf.root / name
-        img = preprocess.load_image(path)
+        img = preprocess.load_image(path, draft_size=self.conf.draft_size)
         data = self.preprocessor(img)
         data["name"] = name
         if self.conf.load_features.do:

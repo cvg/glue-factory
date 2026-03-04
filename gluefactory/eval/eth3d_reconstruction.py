@@ -46,7 +46,6 @@ ETH3D_SCENES = {
 class ETH3DReconstructionPipeline(eval_pipeline.EvalPipeline):
     child_frame = ReconstructionFrame
     scenes = sum(ETH3D_SCENES.values(), [])
-    # scenes = ["courtyard"]
 
     default_conf = {
         "data": {

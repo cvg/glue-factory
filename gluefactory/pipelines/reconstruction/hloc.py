@@ -81,6 +81,7 @@ class HlocPipeline(base.ReconstructionPipeline):
         output_dir: Path,
         model: base_model.BaseModel,
         data: types.ReconstructionData,
+        optional_keys=None,
     ) -> Path:
         """Match features between images."""
         hloc_output = self.PathConfig(output_dir)
@@ -100,6 +101,7 @@ class HlocPipeline(base.ReconstructionPipeline):
             hloc_output.matches_file,
             as_half=self.conf.export_half,
             keys=["matches0", "matches1", "matching_scores0", "matching_scores1"],
+            optional_keys=optional_keys or [],
         )
         # Shut down DataLoader workers so they release h5 file handles
         # before hloc reconstruction tries to open the same files.
