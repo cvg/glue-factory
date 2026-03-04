@@ -179,7 +179,8 @@ class BaseDataset(metaclass=ABCMeta):
             worker_init_fn=worker_init_fn,
             collate_fn=collate,
             prefetch_factor=None,
-            shuffle=split == "train",
+            # shuffle=split == "train",
+            shuffle=True,
             **kwargs,
         )
 

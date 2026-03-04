@@ -36,6 +36,7 @@ class ImagePreprocessor:
         "crop_mode": "center",
         "pad_value": 0.0,
         "center_pad": False,
+        "keep_original_image": False,
         "homography": {
             "p": 0.0,
             "difficulty": 0.5,
@@ -53,6 +54,10 @@ class ImagePreprocessor:
     def __call__(self, img: torch.Tensor, interpolation: Optional[str] = None) -> dict:
         """Resize and preprocess an image, return image and resize scale"""
         h, w = img.shape[-2:]
+        if self.conf.keep_original_image:
+            data = {"original_image": img.clone()}
+        else:
+            data = {}
         size = h, w
         if self.conf.resize is not None or self.conf.edge_divisible_by is not None:
             if interpolation is None:
@@ -82,6 +87,7 @@ class ImagePreprocessor:
         )
         r_t_img = w_t_r @ r_t_img
         data = {
+            **data,
             "scales": scale,
             "image_size": np.array(img.shape[-2:][::-1]),  # w, h
             "transform": r_t_img,
@@ -361,3 +367,45 @@ class ImageNetNormalizer(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return ((x.transpose(-3, -1) - self.mean) / self.std).transpose(-3, -1)
+
+
+def highres_inference(fn):
+    """Decorator: run extractor on a higher-res resize of the original image,
+    then map keypoints back to the preprocessed coordinate frame."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(self, data):
+        if not self.conf.get("resize_original_image", False):
+            return fn(self, data)
+        image = kornia.geometry.transform.resize(
+            data["original_image"],
+            self.conf.resize_original_image,
+            side="long",
+            antialias=False,
+            align_corners=False,
+            interpolation="bilinear",
+        )
+        orig_transform = data["transform"].clone()
+        data = {
+            **data,
+            "image": image,
+            "transform": torch.eye(3, device=image.device, dtype=float)[None],
+            "original_image_size": torch.tensor(
+                image.shape[-2:][::-1], device=image.device
+            )[None],
+        }
+        pred = fn(self, data)
+        # highres pixel coords -> original image coords (undo the resize)
+        oh, ow = data["original_image"].shape[-2:]
+        hh, hw = image.shape[-2:]
+        pred["keypoints"] = pred["keypoints"] * pred["keypoints"].new_tensor(
+            [ow / hw, oh / hh]
+        )
+        # original image coords -> preprocessed coords (apply padding/crop etc.)
+        pred["keypoints"] = gtr.transform_points(
+            orig_transform.float(), pred["keypoints"].float()
+        )
+        return pred
+
+    return wrapper

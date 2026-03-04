@@ -25,6 +25,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 Self: TypeAlias = Any
+EPS = 1e-4
 
 try:
     import pycolmap
@@ -196,7 +197,7 @@ class Pose(tensor.TensorWrapper):
         t = self.t + (self.R @ other.t.unsqueeze(-1)).squeeze(-1)
         return self.__class__.from_Rt(R, t)
 
-    @tensor.autocast
+    # @tensor.autocast
     @tensor.autovmap
     def transform(self, p3d: torch.Tensor) -> torch.Tensor:
         """Transform a set of 3D points (or 4D hom.).
@@ -221,12 +222,12 @@ class Pose(tensor.TensorWrapper):
     ) -> Union["Pose", torch.Tensor]:
         """Transform a set of 3D points: T_A2B * p3D_A -> p3D_B.
         or chain two SE(3) poses: T_B2C @ T_A2B -> T_A2C."""
-        if isinstance(other, self.__class__):
+        if isinstance(other, Pose):
             return self.compose(other)
         else:
             return self.transform(other)
 
-    @tensor.autocast
+    # @tensor.autocast
     def J_transform(self, p3d_out: torch.Tensor):
         # [[1,0,0,0,-pz,py],
         #  [0,1,0,pz,0,-px],
@@ -321,10 +322,16 @@ class Pose(tensor.TensorWrapper):
         return (self @ other.inv()).magnitude()[0]
 
     def translation_error(
-        self, other: "Pose", scale: torch.Tensor | int = 1.0
+        self, other: "Pose", scale: torch.Tensor | int = None, squared: bool = False
     ) -> torch.Tensor:
-        dt = self.t * scale - other.t
-        return dt.norm(dim=-1)
+        if scale is not None:
+            dt = self.t * scale - other.t
+        else:
+            dt = misc.l2_normalize(self.t, dim=-1) - misc.l2_normalize(other.t, dim=-1)
+        if squared:
+            return (dt**2).sum(-1)
+        else:
+            return dt.norm(dim=-1)
 
     def _opening_angle(self, return_cos: bool = False) -> float:
         v0 = torch.zeros_like(self.t)
@@ -380,14 +387,12 @@ class Pose(tensor.TensorWrapper):
 
 
 class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
-    eps: float = 1e-4
     share_df: bool = True  # share fx, fy updates (global): has no impact outside BA
 
-    def __init__(self, data_: torch.Tensor, share_df: bool = False, eps: float = 1e-4):
+    def __init__(self, data_: torch.Tensor, share_df: bool = False):
         assert data_.shape[-1] in {6, 8, 10}
         self.data_ = data_
         self.share_df = share_df
-        self.eps = eps
         super().__post_init__()
 
     @classmethod
@@ -475,7 +480,9 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
         cx, cy = W / 2.0, H / 2.0
 
         b = tnf.normalize(bearings_ww, dim=-1)
-        d = keypoints - keypoints.new_tensor([cx, cy])
+        d = torch.stack(
+            [keypoints[..., 0] - cx, keypoints[..., 1] - cy], dim=-1
+        )  # (B, N, 2)
         r = d.norm(dim=-1)  # (B, N)
 
         # Optical axis as weighted mean bearing
@@ -494,13 +501,12 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
         if weights is not None:
             w = w * weights
         f = misc.wmean(f_per_ray, w, dim=-1)
-
-        size = keypoints.new_tensor([W, H]).expand(B, 2)
-        pp = keypoints.new_tensor([cx, cy]).expand(B, 2)
+        size = torch.stack([f.new_full(f.shape, W), f.new_full(f.shape, H)], dim=-1)
+        pp = torch.stack([f.new_full(f.shape, cx), f.new_full(f.shape, cy)], dim=-1)
         data = torch.cat([size, f[:, None].expand(B, 2), pp], dim=-1)
         return cls(data)
 
-    @tensor.autocast
+    # @tensor.autocast
     def calibration_matrix(self):
         K = torch.zeros(
             *self.data_.shape[:-1],
@@ -544,7 +550,7 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
         """Distortion parameters, with shape (..., {0, 2, 4})."""
         return self.data_[..., 6:]
 
-    @tensor.autocast
+    # @tensor.autocast
     def scale(self, scales: torch.Tensor):
         """Update the camera parameters after resizing an image."""
         s = scales
@@ -580,12 +586,12 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
 
     def crop(self, left_top: Tuple[float], size: Tuple[int]):
         """Update the camera parameters after cropping an image."""
-        left_top = self.data_.new_tensor(left_top)
-        size = self.data_.new_tensor(size)
+        left_top = self.data_.new_tensor(left_top, device=self.data_.device)
+        size = self.data_.new_tensor(size, device=self.data_.device)
         data = torch.cat([size, self.f, self.c - left_top, self.dist], -1)
         return self.__class__(data)
 
-    @tensor.autocast
+    # @tensor.autocast
     @tensor.autovmap
     def in_image(self, p2d: torch.Tensor):
         """Check if 2D points are within the image boundaries."""
@@ -605,16 +611,14 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
         """Convert pixel coordinates into normalized 2D coordinates."""
         return p2d / self.size * 2 - 1
 
-    @tensor.autocast
-    @tensor.autovmap
     def project(self, p3d: torch.Tensor) -> Tuple[torch.Tensor]:
         """Project 3D points into the camera plane and check for visibility."""
         z = p3d[..., -1:]
-        valid = z > self.eps
-        z = z.clamp(min=self.eps)
+        valid = z > EPS
+        z = z.clamp(min=EPS)
         return p3d[..., :-1] / z, valid[..., 0]
 
-    @tensor.autocast
+    # @tensor.autocast
     @tensor.autovmap
     def distort(self, pts: torch.Tensor) -> Tuple[torch.Tensor]:
         """Distort normalized 2D coordinates
@@ -624,19 +628,19 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
         # assert pts.shape[:-2] == self.shape  # allow broadcasting
         return gtr.distort_points(pts, self.dist)
 
-    @tensor.autocast
+    # @tensor.autocast
     @tensor.autovmap
     def denormalize(self, p2d: torch.Tensor) -> torch.Tensor:
         """Convert normalized 2D coordinates into pixel coordinates."""
         return p2d * self.f + self.c
 
-    @tensor.autocast
+    # @tensor.autocast
     @tensor.autovmap
     def normalize(self, p2d: torch.Tensor) -> torch.Tensor:
         """Convert normalized 2D coordinates into pixel coordinates."""
         return (p2d - self.c) / self.f
 
-    @tensor.autocast
+    # @tensor.autocast
     @tensor.autovmap
     def cam2image(self, p3d: torch.Tensor) -> Tuple[torch.Tensor]:
         """Transform 3D points into 2D pixel coordinates."""
@@ -787,33 +791,31 @@ class PerspectiveCamera(Camera):
         )
         return cls(data)
 
-    @tensor.autocast
+    # @tensor.autocast
     def calibration_matrix(self):
         return self.data_[..., 2:11].reshape(self.data_.shape[:-1] + (3, 3))
 
     @property
     def f(self) -> torch.Tensor:
         """Focal lengths (fx, fy) with shape (..., 2)."""
-        return self.data_[..., (2, 6)]
+        return torch.stack([self.data_[..., 2], self.data_[..., 6]], dim=-1)
 
     @property
     def c(self) -> torch.Tensor:
         """Principal points (cx, cy) with shape (..., 2)."""
-        return self.data_[..., (4, 7)]
+        return torch.stack([self.data_[..., 4], self.data_[..., 7]], dim=-1)
 
-    @tensor.autocast
+    # @tensor.autocast
     def scale(self, scales):
         size = self.size * scales
         K = self.calibration_matrix() @ torch.diag_embed(gtr.to_homogeneous(scales))
         data = torch.cat([size, K.flatten(-2), self.dist], -1)
         return self.__class__(data)
 
-    @tensor.autocast
-    @tensor.autovmap
     def project(self, p3d: torch.Tensor) -> Tuple[torch.Tensor]:
         return super().project(p3d)
 
-    @tensor.autocast
+    # @tensor.autocast
     @tensor.autovmap
     def denormalize(self, p2d: torch.Tensor) -> torch.Tensor:
         """Convert normalized 2D coordinates into pixel coordinates."""
@@ -821,7 +823,7 @@ class PerspectiveCamera(Camera):
             gtr.to_homogeneous(p2d) @ self.calibration_matrix().transpose(-1, -2)
         )
 
-    @tensor.autocast
+    # @tensor.autocast
     @tensor.autovmap
     def normalize(self, p2d: torch.Tensor) -> torch.Tensor:
         """Convert normalized 2D coordinates into pixel coordinates."""

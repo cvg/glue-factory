@@ -16,16 +16,17 @@ class DoppelgangersVisymPipeline(DoppelgangersPipeline):
                 "side": "long",
                 "crop_if_short_side": True,
                 "square_pad": True,
+                "center_pad": True,
             },
             "seed": 42,
-            "visym": True,
+            "visym": False,
         },
         "model": {
             "ground_truth": {
                 "name": None,  # remove gt matches
             }
         },
-        "eval": {"score_key": "overlaps"},
+        "eval": {"score_key": "overlaps", "subset_idxs": None},
     }
 
 

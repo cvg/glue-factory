@@ -54,7 +54,7 @@ import torch
 from torch import nn
 
 from gluefactory.models.base_model import BaseModel
-from gluefactory.utils import misc
+from gluefactory.utils import misc, preprocess
 
 
 def simple_nms(scores, radius):
@@ -207,6 +207,7 @@ class SuperPoint(BaseModel):
         rgb_to_grayscale = torch.tensor([0.299, 0.587, 0.114]).view(1, 3, 1, 1)
         self.register_buffer("rgb_to_grayscale", rgb_to_grayscale, persistent=False)
 
+    @preprocess.highres_inference
     def _forward(self, data):
         image = data["image"]
         if image.shape[1] == 3:  # RGB
@@ -249,21 +250,29 @@ class SuperPoint(BaseModel):
 
             # Discard keypoints near the image borders
             if self.conf.remove_borders:
-                scores[:, : self.conf.remove_borders] = -1
-                scores[:, :, : self.conf.remove_borders] = -1
-
-                if "image_size" in data:
-                    for i in range(scores.shape[0]):
-                        w, h = data["image_size"][i]
-                        scores[i] = misc.set_slice(
-                            scores[i], -1, dim=-2, start=h - self.conf.remove_borders
-                        )
-                        scores[i] = misc.set_slice(
-                            scores[i], -1, dim=-1, start=w - self.conf.remove_borders
-                        )
+                rb = self.conf.remove_borders
+                if "transform" in data:
+                    xy_min, xy_max = misc.content_bounds(
+                        data["transform"],
+                        data["original_image_size"],
+                        scores.device,
+                        scores.dtype,
+                    )
+                    H, W = scores.shape[1], scores.shape[2]
+                    h_idx = torch.arange(H, device=scores.device).view(1, H, 1)
+                    w_idx = torch.arange(W, device=scores.device).view(1, 1, W)
+                    valid = (
+                        (h_idx >= xy_min[:, 1:2, None] + rb)
+                        & (h_idx < xy_max[:, 1:2, None] - rb)
+                        & (w_idx >= xy_min[:, 0:1, None] + rb)
+                        & (w_idx < xy_max[:, 0:1, None] - rb)
+                    )
+                    scores = torch.where(valid, scores, -1.0)
                 else:
-                    scores[:, -self.conf.remove_borders :] = -1
-                    scores[:, :, -self.conf.remove_borders :] = -1
+                    scores[:, :rb] = -1
+                    scores[:, -rb:] = -1
+                    scores[:, :, :rb] = -1
+                    scores[:, :, -rb:] = -1
 
             # Extract keypoints
             best_kp = torch.where(scores > self.conf.detection_threshold)

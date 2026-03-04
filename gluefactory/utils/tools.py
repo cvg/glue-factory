@@ -426,7 +426,7 @@ def filter_parameters(params, regexp):
     return params
 
 
-def pack_lr_parameters(params, base_lr, lr_scaling):
+def pack_lr_parameters(params, base_lr, lr_scaling, freeze_epochs=None):
     """Pack each group of parameters with the respective scaled learning rate."""
     if lr_scaling:
         filters, scales = tuple(
@@ -440,21 +440,49 @@ def pack_lr_parameters(params, base_lr, lr_scaling):
         )
     else:
         filters, scales = [], []
-    scale2params = collections.defaultdict(list)
+
+    freeze_epochs = freeze_epochs or {}
+    if freeze_epochs:
+        freeze_filters, freeze_vals = tuple(
+            zip(
+                *[
+                    (n, e)
+                    for pattern, e in freeze_epochs.items()
+                    for n in pattern.split("+")
+                ]
+            )
+        )
+    else:
+        freeze_filters, freeze_vals = [], []
+
+    groups = collections.defaultdict(list)
     for n, p in params:
         scale = 1
         # TODO: use proper regexp rather than just this inclusion check
         is_match = [f in n for f in filters]
         if any(is_match):
             scale = scales[is_match.index(True)]
-        scale2params[scale].append((n, p))
+        freeze = 0
+        is_freeze = [f in n for f in freeze_filters]
+        if any(is_freeze):
+            freeze = freeze_vals[is_freeze.index(True)]
+        groups[(scale, freeze)].append((n, p))
     logger.info(
         "Parameters with scaled learning rate:\n%s",
-        {s: [n for n, _ in ps] for s, ps in scale2params.items() if s != 1},
+        {s: [n for n, _ in ps] for (s, _), ps in groups.items() if s != 1},
     )
+    if freeze_epochs:
+        logger.info(
+            "Parameters with epoch freeze:\n%s",
+            {f: [n for n, _ in ps] for (_, f), ps in groups.items() if f > 0},
+        )
     lr_params = [
-        {"lr": scale * base_lr, "params": [p for _, p in ps]}
-        for scale, ps in scale2params.items()
+        {
+            "lr": scale * base_lr,
+            "params": [p for _, p in ps],
+            "freeze_until": freeze,
+        }
+        for (scale, freeze), ps in groups.items()
     ]
     return lr_params
 

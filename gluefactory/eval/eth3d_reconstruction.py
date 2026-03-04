@@ -12,6 +12,7 @@ from ..geometry import reconstruction as reconstruction
 from ..models import cache_loader
 from ..pipelines.reconstruction.base import ReconstructionPipeline
 from ..utils import export, misc, types
+from ..visualization.reconstruction_frame import ReconstructionFrame
 from . import eval_pipeline, io
 
 ETH3D_SCENES = {
@@ -25,26 +26,27 @@ ETH3D_SCENES = {
         "relief_2",
         "terrains",
     ],
-    "test": [
-        "botanical_garden",
-        "boulders",
-        "bridge",
-        "door",
-        "exhibition_hall",
-        "lecture_room",
-        "living_room",
-        "lounge",
-        "observatory",
-        "old_computer",
-        "statue",
-        "terrace_2",
-    ],
+    # "test": [
+    #     "botanical_garden",
+    #     "boulders",
+    #     "bridge",
+    #     "door",
+    #     "exhibition_hall",
+    #     "lecture_room",
+    #     "living_room",
+    #     "lounge",
+    #     "observatory",
+    #     "old_computer",
+    #     "statue",
+    #     "terrace_2",
+    # ],
 }
 
 
 class ETH3DReconstructionPipeline(eval_pipeline.EvalPipeline):
+    child_frame = ReconstructionFrame
     scenes = sum(ETH3D_SCENES.values(), [])
-    scenes = ["pipes"]
+    # scenes = ["courtyard"]
 
     default_conf = {
         "data": {
@@ -139,6 +141,8 @@ class ETH3DReconstructionPipeline(eval_pipeline.EvalPipeline):
 
         if overwrite and experiment_dir.exists():
             shutil.rmtree(experiment_dir)
+            experiment_dir.mkdir(exist_ok=True, parents=True)
+            self.save_conf(experiment_dir, overwrite=overwrite)
         elif experiment_dir.exists():
             return predictions_file
 

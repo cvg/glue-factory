@@ -1,6 +1,8 @@
 """Simple hloc-based reconstruction pipeline."""
 
 import dataclasses
+import gc
+import os
 import shutil
 from pathlib import Path
 
@@ -70,6 +72,8 @@ class HlocPipeline(base.ReconstructionPipeline):
             self.PathConfig(output_dir).feature_file,
             as_half=self.conf.export_half,
         )
+        del image_loader
+        gc.collect()
         return self.PathConfig(output_dir).feature_file
 
     def match_features(
@@ -82,7 +86,10 @@ class HlocPipeline(base.ReconstructionPipeline):
         hloc_output = self.PathConfig(output_dir)
         _ = self.extract_pairs(output_dir, data)
         pair_loader = data.pair_loader(
-            {"num_workers": self.conf.data.get("num_workers", 8)},
+            {
+                "num_workers": self.conf.data.get("num_workers", 8),
+                "preprocessing": self.conf.data.get("preprocessing", {}),
+            },
             pairs_file=hloc_output.pairs_file,
             features_file=hloc_output.feature_file,
         )
@@ -94,6 +101,10 @@ class HlocPipeline(base.ReconstructionPipeline):
             as_half=self.conf.export_half,
             keys=["matches0", "matches1", "matching_scores0", "matching_scores1"],
         )
+        # Shut down DataLoader workers so they release h5 file handles
+        # before hloc reconstruction tries to open the same files.
+        del pair_loader
+        gc.collect()
         return hloc_output.matches_file
 
     def export_priors(

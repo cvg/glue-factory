@@ -1,5 +1,6 @@
 import importlib.util
 
+from ..settings import SUBMODULES
 from ..utils.tools import get_class
 from .base_model import BaseModel
 

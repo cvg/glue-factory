@@ -26,6 +26,7 @@ class ComposedDataset(BaseDataset):
         "weights": None,  # Same order and length as sample_from
         "photometric": {"name": "identity", "p": 0.75},
         "force_perspective_camera": False,
+        "flip_p": 0.0,  # probability of flipping one view (only when valid_geometry=True)
     }
 
     def _init(self, conf):
@@ -44,10 +45,11 @@ class ComposedSplit(torch.utils.data.Dataset):
     def __init__(self, conf, datasets, split: str, epoch: int = 0):
         self.conf = conf = copy.deepcopy(conf)
         if split != "train":
-            OmegaConf.set_readonly(self.conf.preprocessing, False)
-            # Only perform homography augmentation during training
+            OmegaConf.set_readonly(self.conf, False)
+            # Only perform augmentations during training
             self.conf.preprocessing.homography.p = 0.0
-            OmegaConf.set_readonly(self.conf.preprocessing, True)
+            self.conf.flip_p = 0.0
+            OmegaConf.set_readonly(self.conf, True)
 
         self.dataset_names = (
             conf.get(f"{split}_split") or conf.sample_from or list(datasets.keys())
@@ -150,7 +152,8 @@ class ComposedSplit(torch.utils.data.Dataset):
         for i, view in enumerate(misc.iterelements(element)):
             element[f"view{i}"].update(self.preprocessor(view["image"]))
             element[f"view{i}"]["image"] = self.photometric_augmentor(
-                element[f"view{i}"]["image"].permute(1, 2, 0), return_tensor=True
+                element[f"view{i}"]["image"].permute(1, 2, 0).numpy(),
+                return_tensor=True,
             )
             if "depth" in view:
                 element[f"view{i}"]["depth"] = self.preprocessor.interpolate(
@@ -169,6 +172,36 @@ class ComposedSplit(torch.utils.data.Dataset):
                 )
         if hasattr(self, "dataset_valid"):
             element["valid_geometry"] = self.dataset_valid[dataset_idx]
+
+        # Flip augmentation: horizontally flip one random view
+        if self.conf.get("flip_p", 0.0) > 0 and element.get("valid_geometry", True):
+            if np.random.random() < self.conf.get("flip_p", 0.0):
+                flip_idx = np.random.randint(2)
+                view_key = f"view{flip_idx}"
+                W = element[view_key]["image"].shape[-1]
+
+                element[view_key]["image"] = element[view_key]["image"].flip(-1)
+
+                if "depth" in element[view_key]:
+                    element[view_key]["depth"] = element[view_key]["depth"].flip(-1)
+
+                if "camera" in element[view_key]:
+                    flip_H = torch.tensor(
+                        [[-1, 0, W - 1], [0, 1, 0], [0, 0, 1]], dtype=torch.float
+                    )
+                    element[view_key]["camera"] = element[view_key][
+                        "camera"
+                    ].compose_image_transform(flip_H)
+
+                element["valid_geometry"] = False
+                # Enforce negative supervision: no overlap
+                if "overlap_0to1" in element:
+                    element["overlap_0to1"] = 0.0
+                if "overlap_1to0" in element:
+                    element["overlap_1to0"] = 0.0
+                if "overlap" in element:
+                    element["overlap"] = np.eye(2, dtype=np.float32)
+
         return element
 
     def stats(self):

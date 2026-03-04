@@ -20,6 +20,7 @@ class ScanNet1500Pipeline(RelativePosePipeline):
             "extra_data": "relative_pose",
             "preprocessing": {
                 "side": "long",
+                "resize": (640, 480),
             },
             "num_workers": 14,
         },

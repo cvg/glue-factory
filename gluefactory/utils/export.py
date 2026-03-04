@@ -4,6 +4,7 @@ Use a standalone script with `python3 -m dsfm.scipts.export_predictions dir`
 or call from another script.
 """
 
+import time
 from pathlib import Path
 
 import h5py
@@ -30,10 +31,13 @@ def export_predictions(
 ):
     assert keys == "*" or isinstance(keys, (tuple, list))
     Path(output_file).parent.mkdir(exist_ok=True, parents=True)
-    hfile = h5py.File(str(output_file), mode)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device).eval()
-    for data_ in tqdm(loader):
+    # Spawn DataLoader workers before opening the h5 file so forked
+    # processes don't inherit the file descriptor (HDF5 is not fork-safe).
+    loader_iter = iter(loader)
+    hfile = h5py.File(str(output_file), mode)
+    for data_ in tqdm(loader_iter, total=len(loader)):
         with torch.autocast(
             device_type=device,
             enabled=mixed_precision,
@@ -77,7 +81,9 @@ def export_predictions(
                         pred[k] = gtr.transform_points(inv_transform, pred[k])
                         break
 
-            pred = {k: v[0].cpu() for k, v in pred.items()}
+            pred = {
+                k: v[0].cpu() for k, v in pred.items() if isinstance(v, torch.Tensor)
+            }
 
             if as_half:
                 pred = {

@@ -63,6 +63,7 @@ if __name__ == "__main__":
     pio.renderers.default = args.renderer
 
     num_samples = args.num_samples
+    data_conf = None
     for name in args.dotlist:
         possible_paths = [
             settings.EVAL_PATH / args.benchmark / name,  # Preferred
@@ -91,6 +92,8 @@ if __name__ == "__main__":
         config = OmegaConf.load(experiment_dir / "conf.yaml")
         if config.get("num_samples") is not None and args.num_samples is None:
             num_samples = min(num_samples or 1e8, config.num_samples)
+        if data_conf is None and config.get("data") is not None:
+            data_conf = config.data
 
     logger.info("Aggregated evaluation summaries:\n%s", pprint.pformat(dict(summaries)))
     plt.close("all")
@@ -98,7 +101,7 @@ if __name__ == "__main__":
     bm = get_benchmark(args.benchmark)
     if num_samples is not None:
         bm.num_samples = num_samples
-    dataset = bm.get_dataset()
+    dataset = bm.get_dataset(data_conf)
 
     argvars = vars(args)
     if args.x is None:
@@ -112,13 +115,15 @@ if __name__ == "__main__":
     if default_plot is None:
         default_plot = TwoViewFrame.default_conf["default"]
 
+    child_frame_cls = getattr(bm, "child_frame", TwoViewFrame)
+
     frame = GlobalFrame(
         {"child": {"default": default_plot}, **argvars},
         results,
         dataset,
         predictions,
         eval_predictions=eval_predictions,
-        child_frame=TwoViewFrame,
+        child_frame=child_frame_cls,
     )
     frame.draw()
     print("Visualization done.")

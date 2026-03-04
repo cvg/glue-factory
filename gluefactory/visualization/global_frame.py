@@ -261,7 +261,7 @@ class GlobalFrame:
             summaries=summaries_i,
         )
 
-        if hasattr(frame, "fig"):
+        if hasattr(frame, "fig") and hasattr(frame.fig, "canvas"):
             frame.fig.canvas.mpl_connect(
                 "key_press_event",
                 functools.partial(

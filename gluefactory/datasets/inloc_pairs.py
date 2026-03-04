@@ -61,8 +61,8 @@ class InLocPairsDataset(base_dataset.BaseDataset, torch.utils.data.Dataset):
         line = self.items[idx]
         pair_data = line.split(" ")
         name0, name1 = pair_data[:2]
-        data0 = self._read_view(name0, is_database=False)
-        data1 = self._read_view(name1, is_database=True)
+        data0 = self._read_view(name0)
+        data1 = self._read_view(name1)
 
         data = {}
         data = {

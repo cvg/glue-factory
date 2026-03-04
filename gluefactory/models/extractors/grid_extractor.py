@@ -2,6 +2,7 @@ import math
 
 import torch
 
+from ...utils.misc import content_bounds
 from ..base_model import BaseModel
 
 
@@ -30,7 +31,7 @@ def _bbox_from_mask(valid, h, w):
 
 def _remap_grid(cgrid, wmin, hmin, wmax, hmax, w, h):
     """Remap a [0..w, 0..h] grid into the bbox [wmin..wmax, hmin..hmax]."""
-    cgrid = cgrid / torch.tensor([w, h], device=cgrid.device)[None, :, None, None]
+    cgrid = torch.stack([cgrid[:, 0] / w, cgrid[:, 1] / h], dim=1)
     cgrid = cgrid * torch.stack([(wmax - wmin), (hmax - hmin)], dim=1)[:, :, None, None]
     cgrid = cgrid + torch.stack([wmin, hmin], dim=1)[:, :, None, None]
     return cgrid
@@ -88,10 +89,12 @@ class GridExtractor(BaseModel):
             bbox = data["covisible_bbox"].float()
             wmin, hmin, wmax, hmax = bbox[:, 0], bbox[:, 1], bbox[:, 2], bbox[:, 3]
             cgrid = _remap_grid(cgrid, wmin, hmin, wmax, hmax, w, h)
-        elif bias_to == "image" and "image_size" in data:
-            cgrid = cgrid * (
-                data["image_size"][:, :, None, None]
-                / torch.tensor([w, h], device=device)[None, :, None, None]
+        elif bias_to == "image" and "transform" in data:
+            xy_min, xy_max = content_bounds(
+                data["transform"], data["original_image_size"], device, dtype
+            )
+            cgrid = _remap_grid(
+                cgrid, xy_min[:, 0], xy_min[:, 1], xy_max[:, 0], xy_max[:, 1], w, h
             )
         pred = {
             "grid": cgrid,

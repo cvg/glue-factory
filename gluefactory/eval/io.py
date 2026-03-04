@@ -62,8 +62,9 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
             args.conf, default_config_dir=configs_path
         )
         conf = extract_benchmark_conf(OmegaConf.merge(conf, custom_conf), benchmark)
-        args.tag = args.tag if args.tag is not None else conf_path.stem
-
+        conf_name = conf_path.stem
+    else:
+        conf_name = None
     cli_conf = OmegaConf.from_cli(args.dotlist)
     conf = OmegaConf.merge(conf, cli_conf)
     conf.checkpoint = args.checkpoint if args.checkpoint else conf.get("checkpoint")
@@ -87,10 +88,10 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
     name = ""
     if args.tag:
         name = args.tag
-    elif args.conf and checkpoint_name:
-        name = f"{args.conf}_{checkpoint_name}"
-    elif args.conf:
-        name = args.conf
+    elif conf_name and checkpoint_name:
+        name = f"{checkpoint_name}_{conf_name}"
+    elif conf_name:
+        name = conf_name
     elif checkpoint_name:
         name = checkpoint_name
 
@@ -104,7 +105,7 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
     logger.info("Running benchmark: %s", benchmark)
     logger.info("Experiment tag: %s", name)
     logger.info("Config:")
-    logger.info(pprint.pformat(OmegaConf.to_container(conf)))
+    # logger.info(pprint.pformat(OmegaConf.to_container(conf)))
     return name, conf
 
 
@@ -172,7 +173,7 @@ def run_cli(eval_cls, name: str, parser: argparse.ArgumentParser | None = None):
         plt.show()
 
     logger.info(
-        f"To inspect results: python -m gluefactory.eval.inspect {benchmark} {name}"
+        f"To inspect results: \n python -m gluefactory.eval.inspect {benchmark} {name}"
     )
 
     return s, f, r

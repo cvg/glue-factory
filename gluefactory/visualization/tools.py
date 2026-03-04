@@ -657,6 +657,30 @@ class ReprojectionErrorPlot(SliderPlot):
         self._update_labels(threshold)
 
 
+class PnPInlierPlot:
+    plot_name = "pnp_inliers"
+    required_keys = ["keypoints0", "keypoints1", "matches0", "pnp_inlier0"]
+
+    def __init__(self, fig, axes, data, preds):
+        for i, name in enumerate(preds):
+            pred = preds[name]
+            kp0, kp1 = pred["keypoints0"][0], pred["keypoints1"][0]
+            m0 = pred["matches0"][0]
+            valid = m0 > -1
+            kpm0 = kp0[valid]
+            kpm1 = kp1[m0[valid]]
+            inlier = pred["pnp_inlier0"][0][valid]
+            colors = viz2d.cm_RdGn(inlier).tolist()
+            viz2d.plot_matches(
+                kpm0,
+                kpm1,
+                color=colors,
+                axes=axes[i],
+                lw=auto_linewidth(kpm0.shape[0]),
+                a=_COMMON["DRAW_LINE_ALPHA"],
+            )
+
+
 class EpipolarMatchesPlot(SliderPlot):
     plot_name = "epipolar_matches"
     required_keys = [

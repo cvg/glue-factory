@@ -4,6 +4,7 @@ import torch
 
 from raco.raco import RaCo as RaCo_
 
+from ...utils import preprocess
 from ...utils.misc import sample_random_keypoints
 from ..base_model import BaseModel
 
@@ -38,9 +39,10 @@ class RaCo(BaseModel):
         )
         self.set_initialized()
 
+    @preprocess.highres_inference
     def _forward(self, data):
         pred = self.model_(data)
-        if self.conf.add_random_keypoints > 0:
+        if self.training and self.conf.add_random_keypoints > 0:
             delta = self.conf.add_random_keypoints
             kpts = pred["keypoints"]  # (B, N, 2)
             B, dev = kpts.shape[0], kpts.device

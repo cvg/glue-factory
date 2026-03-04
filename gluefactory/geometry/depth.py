@@ -196,7 +196,7 @@ def dense_warp_consistency(
     cameraj: reconstruction.Camera,
     **kwargs,
 ):
-    kpi = misc.get_image_coords(depthi).flatten(-3, -2)
+    kpi = misc.get_image_coords(depthi, expand=True).flatten(-3, -2)
     di = depthi.flatten(
         -2,
     )
@@ -359,7 +359,7 @@ def align_pointclouds(
         R = torch.stack(
             [R[:, 0], R[:, 1], R[:, 2] * R.det().sign()], dim=-1
         )  # ensure a right-handed coordinate system
-    s = s0 / s1
+    s = s0 / s1.clip(min=1e-4)
     t = t0 - s * (t1 @ R.T)
     c0_t_c1 = reconstruction.Pose.from_Rt(R, t)
     pts1_v0 = c0_t_c1.transform(pts_v1_in * s)
@@ -422,7 +422,7 @@ def align_pointclouds_robust(
             rweights = torch.where(
                 residuals < robust_scale,
                 torch.ones_like(residuals),
-                robust_scale / residuals.clamp(min=1e-8),
+                robust_scale / residuals.clamp(min=1e-4),
             )
         elif robust_fn == "cauchy":
             rweights = 1 / (1 + (residuals / robust_scale) ** 2)
@@ -442,7 +442,7 @@ def align_pointclouds_robust(
     )
 
 
-@misc.force_f32
+# @misc.force_f32
 def batch_align_pointclouds(
     pts_v0: torch.Tensor,
     pts_v1: torch.Tensor,

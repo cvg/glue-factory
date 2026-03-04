@@ -281,6 +281,80 @@ def rays_to_plucker(c_t_w: reconstruction.Pose, rays_cam: torch.Tensor) -> torch
     return plucker
 
 
+def plucker_epipolar_distance_all(
+    plucker0: torch.Tensor, plucker1: torch.Tensor, eps: float = 1e-8
+) -> torch.Tensor:
+    """All-pairs symmetric epipolar distance from Plücker rays.
+
+    Uses the reciprocal product of two Plücker lines, which equals the
+    scalar triple product [(o0-o1), d0, d1] — the coplanarity residual.
+    Zero iff the two rays intersect (epipolar constraint satisfied).
+
+    Generalizes sym_epipolar_distance_all to work directly from 6D rays
+    without cameras, poses, or the essential matrix. Handles non-central
+    cameras (per-ray origins) for free.
+
+    Args:
+        plucker0: Plücker coords (direction, moment) for view 0, (B, N0, 6).
+        plucker1: Plücker coords (direction, moment) for view 1, (B, N1, 6).
+        eps: numerical stability constant.
+
+    Returns:
+        All-pairs distance, shape (B, N0, N1).
+    """
+    d0, m0 = plucker0[..., :3], plucker0[..., 3:]
+    d1, m1 = plucker1[..., :3], plucker1[..., 3:]
+
+    # Reciprocal product: d0·m1 + m0·d1 = [(o0-o1), d0, d1]
+    rp = torch.einsum("bni,bmi->bnm", d0, m1) + torch.einsum(
+        "bni,bmi->bnm", m0, d1
+    )
+
+    # Normalize by direction norms (absorbed by learned scale, but keeps
+    # the quantity well-conditioned for unnormalized rays)
+    norm0 = d0.norm(dim=-1).clamp(min=eps)  # (B, N0)
+    norm1 = d1.norm(dim=-1).clamp(min=eps)  # (B, N1)
+    return rp.abs() / (norm0[:, :, None] * norm1[:, None, :])
+
+
+def xyz_epipolar_distance_all(
+    origin0: torch.Tensor,
+    origin1: torch.Tensor,
+    xyz0: torch.Tensor,
+    xyz1: torch.Tensor,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """All-pairs epipolar distance from camera origins and 3D coordinates.
+
+    Efficient specialization of plucker_epipolar_distance_all for pinhole
+    cameras where all rays per view share a single origin. Computes the
+    scalar triple product [(o1-o0), d0, d1] via one cross and one einsum.
+
+    Args:
+        origin0: Camera center for view 0, (B, 3).
+        origin1: Camera center for view 1, (B, 3).
+        xyz0: 3D coordinates of keypoints in view 0, (B, N0, 3).
+        xyz1: 3D coordinates of keypoints in view 1, (B, N1, 3).
+        eps: numerical stability constant.
+
+    Returns:
+        All-pairs distance, shape (B, N0, N1).
+    """
+    d0 = xyz0 - origin0[:, None, :]  # (B, N0, 3)
+    d1 = xyz1 - origin1[:, None, :]  # (B, N1, 3)
+    b = origin1 - origin0  # (B, 3)
+
+    # [b, d0, d1] = d1 · (b × d0)  for all pairs
+    b_cross_d0 = torch.linalg.cross(
+        b[:, None].expand_as(d0), d0
+    )  # (B, N0, 3)
+    triple = torch.einsum("bni,bmi->bnm", b_cross_d0, d1)  # (B, N0, N1)
+
+    norm0 = d0.norm(dim=-1).clamp(min=eps)  # (B, N0)
+    norm1 = d1.norm(dim=-1).clamp(min=eps)  # (B, N1)
+    return triple.abs() / (norm0[:, :, None] * norm1[:, None, :])
+
+
 def triangulate_from_plucker(
     plucker1: torch.Tensor, plucker2: torch.Tensor
 ) -> torch.Tensor:

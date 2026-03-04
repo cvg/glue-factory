@@ -531,6 +531,7 @@ def resize_image(
 def l2_normalize(
     tensor: torch.Tensor, dim: int = -1, eps: float = 1e-10
 ) -> torch.Tensor:
+    eps = 1e-4 if tensor.dtype == torch.float16 else eps
     norm = torch.norm(tensor, p=2, dim=dim, keepdim=True).clamp_min(eps)
     return tensor / norm
 
@@ -604,6 +605,30 @@ def pad_to_length(
     return torch.cat([x, xn], dim=pad_dim)
 
 
+def content_bounds(transform, original_image_size, device=None, dtype=None):
+    """Bounding box of the original image in preprocessed space.
+
+    Maps the corners (0, 0) and (orig_w, orig_h) through the preprocessing
+    transform to obtain the valid content region.
+
+    Args:
+        transform: (B, 3, 3) preprocessing transform (original -> preprocessed).
+        original_image_size: (B, 2) as (w, h) of the original image.
+        device: target device.
+        dtype: target dtype.
+
+    Returns:
+        xy_min: (B, 2) top-left of the content region (x, y).
+        xy_max: (B, 2) bottom-right of the content region (x, y).
+    """
+    t = torch.as_tensor(transform, device=device, dtype=dtype)
+    orig_wh = torch.as_tensor(original_image_size, device=device, dtype=dtype)
+    # t[:, :2, 2] is the translation (maps origin), avoid new_ones/new_zeros sync
+    xy_min = t[:, :2, 2]
+    xy_max = (t[:, :2, :2] @ orig_wh.unsqueeze(-1)).squeeze(-1) + xy_min
+    return xy_min, xy_max
+
+
 def sample_random_keypoints(n, transform, original_image_size, device=None, bbox=None):
     """Sample random keypoints in the valid image region.
 
@@ -628,7 +653,7 @@ def sample_random_keypoints(n, transform, original_image_size, device=None, bbox
         return torch.stack([x, y], dim=-1)
     t = torch.as_tensor(transform, device=device, dtype=torch.float32)
     orig_wh = torch.as_tensor(original_image_size, device=device, dtype=torch.float32)
-    rand_xy = torch.rand(n, 2, device=device) * orig_wh
+    rand_xy = (torch.rand(n, 2, device=device) * 0.99 + 0.005) * orig_wh
     ones = rand_xy.new_ones(n, 1)
     rand_h = torch.cat([rand_xy, ones], dim=-1)  # (n, 3)
     return (t[:2, :] @ rand_h.T).T
@@ -901,6 +926,7 @@ def interpolate_patches(
     is_chw: bool = False,
     align_corners: bool = False,
     padding_mode: str = "zeros",
+    center_on_point: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:  # B x N x D x ps x ps, B x N x 2
     if not is_chw:
         features = chw_from_hwc(features)
@@ -912,6 +938,7 @@ def interpolate_patches(
     hw = features.shape[-2:]
 
     if mode == "window":
+        assert subpixel == 1
         # Direct integer indexing via extract_patches — no grid_sample
         patches, corners = batch_extract_patches(features, pts_i, ps)
         # corners: (B, N, 2) actual top-left corner after clamping (x, y)
@@ -929,7 +956,13 @@ def interpolate_patches(
             (1, 1, grid_size, grid_size), device=features.device, dtype=features.dtype
         )
         p_xy = get_image_coords(dummy_patch) / subpixel
-        cxy_i = torch.round(pts_i - ps / 2 - 0.5)
+        if center_on_point:
+            # Place corner so the center grid cell lands exactly on pts_i.
+            # Local grid center is at (grid_size // 2 + 0.5) / subpixel.
+            center_offset = (grid_size // 2 + 0.5) / subpixel
+            cxy_i = pts_i - center_offset
+        else:
+            cxy_i = torch.round(pts_i - ps / 2 - 0.5)
         p_xy_i = cxy_i[:, :, None, None, :] + p_xy[:, None]
         p_xy_n = normalize_coords(p_xy_i, hw)
         patches = torch.vmap(grid_sample, in_dims=(None, 1), out_dims=1)(
