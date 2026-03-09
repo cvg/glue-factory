@@ -163,9 +163,30 @@ class BaseModel(nn.Module, metaclass=MetaModel):
         """To be implemented by the child class."""
         return {}
 
-    def load_state_dict(self, *args, **kwargs):
-        """Load the state dict of the model, and set the model to initialized."""
-        ret = super().load_state_dict(*args, **kwargs)
+    def load_state_dict(self, state_dict, strict=True, **kwargs):
+        """Load the state dict of the model, and set the model to initialized.
+        If strict=False, parameters with mismatched shapes are skipped
+        (default-initialized) and logged."""
+        if not strict:
+            model_state = self.state_dict()
+            mismatched = []
+            for key in list(state_dict.keys()):
+                if (
+                    key in model_state
+                    and state_dict[key].shape != model_state[key].shape
+                ):
+                    mismatched.append(
+                        f"{key}: checkpoint {list(state_dict[key].shape)}"
+                        f" vs model {list(model_state[key].shape)}"
+                    )
+                    del state_dict[key]
+            if mismatched:
+                logger.warning(
+                    "Skipped %d parameters with mismatched shapes:\n  %s",
+                    len(mismatched),
+                    "\n  ".join(mismatched),
+                )
+        ret = super().load_state_dict(state_dict, strict=strict, **kwargs)
         self.set_initialized()
         return ret
 
