@@ -30,7 +30,7 @@ class DoppelgangersPipeline(eval_pipeline.EvalPipeline):
                 "center_pad": True,
             },
             "seed": 42,
-            # "visym": True,
+            "visym": True,
         },
         "model": {
             "ground_truth": {
@@ -40,14 +40,7 @@ class DoppelgangersPipeline(eval_pipeline.EvalPipeline):
         "eval": {"score_key": "overlaps", "subset_idxs": None},
     }
 
-    export_keys = (
-        "keypoints0",
-        "keypoints1",
-        "matches0",
-        "matches1",
-        "matching_scores0",
-        "matching_scores1",
-    )
+    export_keys = ()
 
     # For plotting
     default_x: str | None = "score"
@@ -58,6 +51,12 @@ class DoppelgangersPipeline(eval_pipeline.EvalPipeline):
         "matchability1",
         "overlap_score0",
         "overlap_score1",
+        "keypoints0",
+        "keypoints1",
+        "matches0",
+        "matches1",
+        "matching_scores0",
+        "matching_scores1",
     )
 
     def _init(self, conf):
