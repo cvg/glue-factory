@@ -1,0 +1,27 @@
+# Fast pglue iteration config - apply with +pglue_fast
+# Smaller images, fewer layers, no benchmarks
+
+data:
+    preprocessing:
+        resize: 256
+    batch_size: 8
+    sample_from: [megadepth_dense]
+    childs:
+        megadepth:
+            train_split: valid_scenes_clean.txt
+
+model:
+    matcher:
+        n_layers: 4
+        checkpointed: false
+        compile: false
+
+train:
+    compile: null
+    epochs: 5
+    eval_every_epoch: 1
+    log_every_iter: 10
+    run_benchmarks: []
+    print_arch: false
+    train_split: val
+    writer: tensorboard

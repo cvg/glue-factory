@@ -1,0 +1,5 @@
+name: flexglue.s2dnet
+pretrained: s2dnet
+num_layers: 3
+output_dim: 128
+normalize_features: false

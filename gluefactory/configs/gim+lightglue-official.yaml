@@ -6,7 +6,7 @@ defaults:
 
 model:
     matcher:
-      features: superpoint
+      features: gim_superpoint
 benchmarks:
     megadepth1500:
       data:
@@ -33,5 +33,12 @@ benchmarks:
         preprocessing:
           side: long
           resize: 1600
+    zeb:
+      data:
+        preprocessing:
+          side: long
+          resize: 1600
+      eval:
+        estimator: [poselib,opencv]
         
 

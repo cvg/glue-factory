@@ -6,7 +6,9 @@ model:
         name: roma
         weights: outdoor
         sample_num_matches: 10000
-        internal_hw: [560, 560]
+        internal_hw: [630, 630]
+        upsample_preds: true
+        # output_hw: [1344, 1344]
 benchmarks:
     megadepth1500:
         data:
@@ -18,13 +20,12 @@ benchmarks:
                 output_hw: [1344, 1344]
                 sample_num_matches: 5000
         eval:
-            estimator: opencv
-            ransac_th: 0.5  # Use 1 for poselib
+            estimator: [opencv, poselib]
     scannet1500:
         model:
             matcher:
                 weights: indoor
                 sample_num_matches: 5000
         eval:
-            estimator: opencv
-            ransac_th: 0.5
+            estimator: [poselib,opencv]
+            ransac_th: -1

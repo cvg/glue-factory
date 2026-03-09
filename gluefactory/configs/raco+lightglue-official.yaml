@@ -1,26 +1,21 @@
 defaults:
   - model: two_view_pipeline
-  - model@model.extractor: extractor/aliked
+  - model@model.extractor: extractor/raco
   - model@model.matcher: matcher/lightglue_pretrained
   - _self_
 
 model:
+    extractor:
+        remove_borders: 0
+        max_num_keypoints: 2048
     matcher:
-      features: aliked
+      features: raco-aliked
 benchmarks:
     megadepth1500:
       data:
         preprocessing:
           side: long
           resize: 1600
-      eval:
-        estimator: opencv
-    hpatches:
-      eval:
-        estimator: opencv
-      model:
-        extractor:
-          max_num_keypoints: 1024  # overwrite config above
     scannet1500:
       data:
         preprocessing:
@@ -30,3 +25,9 @@ benchmarks:
         extractor:
           detector:
             resize_original_image: 1600
+    hpatches:
+      eval:
+        estimator: opencv
+      model:
+        extractor:
+          max_num_keypoints: 1024  # overwrite config above

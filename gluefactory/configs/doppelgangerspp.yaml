@@ -1,0 +1,22 @@
+data:
+  preprocessing:
+    side: long
+    resize: 512
+
+model:
+  name: two_view_pipeline
+  matcher:
+    name: gluefactory_nonfree.mast3r
+    return_decoder_features: true
+  filter:
+    name: gluefactory_nonfree.doppelgangers
+    weights: dg
+
+benchmarks:
+  doppelgangers:
+    data:
+      preprocessing:
+        side: long
+        resize: 512
+    eval:
+      score_key: overlaps

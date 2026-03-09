@@ -5,13 +5,14 @@ defaults:
 
 model:
     extractor:
-        max_num_keypoints: 2048
+        max_num_keypoints: 4096
         detection_threshold: 0.00666666
-        nms_radius: -1
+        nms_radius: null
         pycolmap_options:
           first_octave: -1
     matcher:
         name: matchers.nearest_neighbor_matcher
+        ratio_thresh: 0.8
 benchmarks:
     megadepth1500:
         data:

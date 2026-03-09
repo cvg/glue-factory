@@ -3,10 +3,15 @@
 
 data:
   batch_size: 4
-  sample_from: [megadepth_dense]
+  # sample_from: [megadepth_dense]
   childs:
     megadepth:
       train_split: valid_scenes_clean.txt
+# model:
+#   extractor:
+#     detector:
+#       bias_to_depth: false
+#       max_num_keypoints: null
 
 train:
   compile: null
@@ -14,7 +19,10 @@ train:
   log_every_iter: 10
   record_memory: null
   profile: null
-  eval_every_epoch: 20
+  eval_every_epoch: 100
   train_split: val
   print_arch: false
   print_batch: false
+  # run_benchmarks: []
+  # compose_loss: 0.0 * xyz_rmse_normalized_all + 0.0 * reproj_angle_cosim_all  + 1.0 * inliers_robust_all + 0.0 * matchability_bce_balanced_all
+  # stdout_metrics: [xyz_p5_cov, xyz_p5_mono, xyz_p1_cov, pnp_error_deg, acc_1, loss/total, acc_3]

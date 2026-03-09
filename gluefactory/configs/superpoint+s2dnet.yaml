@@ -1,0 +1,37 @@
+defaults:
+  - model: two_view_pipeline
+  - model@model.extractor: extractor/superpoint
+  - model@model.matcher: matcher/s2dnet
+  - _self_
+
+data:
+  preprocessing:
+    keep_original_image: true
+
+model:
+  extractor:
+    max_num_keypoints: 2048
+    resize_original_image: 1600
+
+benchmarks:
+  megadepth1500:
+    data:
+      preprocessing:
+        keep_original_image: true
+        resize: 768
+    eval:
+      estimator: [poselib,opencv]
+      ransac_th: -1
+  scannet1500:
+    data:
+      preprocessing:
+        keep_original_image: true
+    eval:
+      estimator: [poselib,opencv]
+      ransac_th: -1
+  hpatches:
+    eval:
+      estimator: opencv
+    model:
+      extractor:
+        max_num_keypoints: 1024

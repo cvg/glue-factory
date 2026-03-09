@@ -1,0 +1,33 @@
+model:
+    name: two_view_pipeline
+    extractor:
+        name: extractors.raco # Set this for sparse matching
+        nms_radius: 3
+        max_num_keypoints: 2048
+    matcher:
+        name: roma
+        weights: outdoor
+        sample_num_matches: 0
+        sparse_to_dense: true
+        internal_hw: [560, 560]
+benchmarks:
+    megadepth1500:
+        data:
+            preprocessing:
+                resize: 768
+                square_pad: true
+        model:
+            matcher:
+                internal_hw: [630, 630]  # > 644 yields MAGMA warning, official: 672
+                # output_hw: [1344, 1344]
+        eval:
+            estimator: [opencv, poselib]
+    scannet1500:
+        model:
+            matcher:
+                weights: indoor
+                sample_num_matches: 0
+                mutual_check: false
+                sparse_to_dense: true
+        eval:
+            estimator: [opencv, poselib]

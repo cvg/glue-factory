@@ -1,0 +1,43 @@
+model:
+  name: two_view_pipeline
+  matcher:
+    name: gluefactory_nonfree.edm
+    weights: third_party/EDM/weights/edm_outdoor.ckpt
+    test_res: [1152, 1152]
+    mconf_thr: 0.05
+    topk: 7258
+    zero_pad: true
+data:
+  preprocessing:
+    side: long
+    resize: 1152
+benchmarks:
+  megadepth1500:
+    data:
+      preprocessing:
+        side: long
+        resize: 1152
+    model:
+      matcher:
+        test_res: [1152, 1152]
+        mconf_thr: 0.05
+        topk: 7258
+        zero_pad: true
+    eval:
+      estimator: [poselib,opencv]
+      ransac_th: -1
+  scannet1500:
+    data:
+      preprocessing:
+        resize: 640
+        side: long
+    model:
+      matcher:
+        weights: third_party/EDM/weights/edm_outdoor.ckpt
+        test_res: [480, 640]
+        mconf_thr: 0.2
+        topk: 1680
+        zero_pad: false
+    eval:
+      estimator: [poselib,opencv]
+      ransac_th: -1
