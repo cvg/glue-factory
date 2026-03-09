@@ -199,6 +199,7 @@ class Trainer:
             "warmup": 0.0,  # linear warmup: epochs if on_epoch, iterations if not
         },
         "lr_scaling": {},  # learning rate scaling for parameter name patterns
+        "freeze_epochs": {},  # parameter name patterns -> epochs to keep frozen (lr=0)
         "eval_every_epoch": None,  # interval for evaluation on the validation set
         "train_split": "train",  # split to use for training
         "eval_split": "val",  # split to use for evaluation
@@ -225,6 +226,8 @@ class Trainer:
         "record_memory": None,  # Record memory usage during training (# record steps)
         "log_it": False,  # Log tensorboard on iteration (default is num_samples)
         "print_arch": False,  # Print the model architecture
+        "train_iters": None,
+        "eval_iters": None,
         "stdout_metrics": [
             "loss/total"
         ],  # List of metrics to print to stdout (None=all)
@@ -445,22 +448,25 @@ class Trainer:
         **kwargs,
     ) -> int | None:
         if self.rank == 0:
-            return experiments.save_experiment(
-                self.model,
-                self.optimizer,
-                self.lr_scheduler,
-                conf,
-                results,
-                iter_i=iter_i,
-                epoch=self.epoch,
-                output_dir=output_dir,
-                custom={
-                    "tot_it": self.tot_it,
-                    "tot_n_samples": self.tot_n_samples,
-                    "epoch_tracker_fractional_epoch": self.epoch_tracker.fractional_epoch,
-                },
-                **kwargs,
-            )
+            try:
+                return experiments.save_experiment(
+                    self.model,
+                    self.optimizer,
+                    self.lr_scheduler,
+                    conf,
+                    results,
+                    iter_i=iter_i,
+                    epoch=self.epoch,
+                    output_dir=output_dir,
+                    custom={
+                        "tot_it": self.tot_it,
+                        "tot_n_samples": self.tot_n_samples,
+                        "epoch_tracker_fractional_epoch": self.epoch_tracker.fractional_epoch,
+                    },
+                    **kwargs,
+                )
+            except Exception as e:
+                logger.error(f"Error saving checkpoint: {e}. Continue.")
 
     # ------------------------------------------------------------------------
     # Setup helper functions (internal)
@@ -478,6 +484,9 @@ class Trainer:
         old_lr = self.optimizer.param_groups[0]["lr"]
         self.epoch_tracker.step()
         self.lr_scheduler.step()
+        for group in self.optimizer.param_groups:
+            if self.epoch < group.get("freeze_until", 0):
+                group["lr"] = 0.0
         if verbose:
             self.info(
                 f'lr changed from {old_lr} to {self.optimizer.param_groups[0]["lr"]}'
@@ -582,7 +591,9 @@ class Trainer:
         params = [(n, p) for n, p in model.named_parameters() if p.requires_grad]
         if conf.opt_regexp:
             params = tools.filter_parameters(params, conf.opt_regexp)
-        lr_params = tools.pack_lr_parameters(params, conf.lr, conf.lr_scaling)
+        lr_params = tools.pack_lr_parameters(
+            params, conf.lr, conf.lr_scaling, conf.freeze_epochs
+        )
         optimizer = optimizer_fn(lr_params, lr=conf.lr, **conf.optimizer_options)
         return optimizer
 
@@ -1143,7 +1154,7 @@ class Trainer:
         if writer is None:
             writer = self.get_writer(output_dir, full_conf)
         if self.conf.get("eval_init", False):
-            self.run_eval(output_dir, dataset, writer)
+            self.run_eval(output_dir, dataset, writer, max_iters=self.conf.eval_iters)
             self.run_all_benchmarks(output_dir, writer, force=True)
 
         # Start Loop
@@ -1168,7 +1179,9 @@ class Trainer:
             self.info(f"Training loader has {len(train_loader)} batches")
 
             self.info("Start training")
-            self.train_epoch(output_dir, train_loader, writer)
+            self.train_epoch(
+                output_dir, train_loader, writer, max_iters=self.conf.train_iters
+            )
             del train_loader  # shutdown multiprocessing pool
 
             self.epoch += 1
@@ -1180,13 +1193,15 @@ class Trainer:
                     self.epoch % self.conf.eval_every_epoch == 0
                     or self.epoch == self.conf.epochs  # Run eval in last epoch
                 ):
-                    self.run_eval(output_dir, dataset, writer)
+                    self.run_eval(
+                        output_dir, dataset, writer, max_iters=self.conf.eval_iters
+                    )
 
             # Run test loops
             self.run_all_benchmarks(output_dir, writer)
 
         # Final evals
-        self.run_eval(output_dir, dataset, writer)
+        self.run_eval(output_dir, dataset, writer, max_iters=self.conf.eval_iters)
         self.run_all_benchmarks(output_dir, writer, force=True)
 
         if writer is not None:
