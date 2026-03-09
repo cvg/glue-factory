@@ -7,11 +7,18 @@ import kornia
 import numpy as np
 import torch
 from omegaconf import OmegaConf
+from PIL import Image
 from torch import nn
 
 from ..geometry import homography
 from ..geometry import transforms as gtr
 from . import misc
+
+
+def get_image_size(path: Path) -> np.ndarray:
+    """Return (w, h) of an image without fully decoding it."""
+    img = Image.open(str(path))
+    return np.array(img.size, dtype=np.float32)  # (w, h)
 
 
 def get_divisible_wh(w, h, df=None):
@@ -284,8 +291,10 @@ def read_image(
     if not Path(path).exists():
         raise FileNotFoundError(f"No image at path {path}.")
 
-    if draft_size is not None and Path(path).suffix.lower() in (".jpg", ".jpeg"):
-        from PIL import Image
+    if draft_size is not None and Path(path).suffix.lower() in (
+        ".jpg",
+        ".jpeg",
+    ):
 
         pil_mode = "L" if grayscale else "RGB"
         img = Image.open(str(path))

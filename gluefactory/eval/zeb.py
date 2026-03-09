@@ -25,7 +25,7 @@ class ZeroshotEvaluationBenchmarkPipeline(RelativePosePipeline):
             "scene_list": None,
             "root": "zeb",
             "shuffle": False,
-            "exclude_scenes": ["eth3di", "eth3do"],
+            "exclude_scenes": ["eth3di", "eth3do", "blendedmvs", "gl3d"],
             "max_per_scene": 200,  # maximum number of pairs per scene
             "min_overlap": 0.0,  # minimum overlap for pairs
             "max_overlap": 1.0,  # maximum overlap for pairs

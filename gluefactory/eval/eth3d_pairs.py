@@ -22,9 +22,10 @@ class ETH3DPairsPipeline(RelativePosePipeline):
             "overwrite": False,
             "min_overlap": 0.1,
             "max_overlap": 0.7,
-            "max_per_scene": 10,
+            "max_per_scene": 50,
             "preprocessing": {
                 "side": "long",
+                "keep_original_image": True,
             },
             "num_workers": 14,
         },

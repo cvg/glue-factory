@@ -97,7 +97,7 @@ class RoMa(base_model.BaseModel):
         "internal_hw": (560, 560),
         "output_hw": None,  # like input image
         "sample": False,
-        "mixed_precision": True,  # mixed precision
+        "mixed_precision": False,  # mixed precision
         "add_cycle_error": False,
         "sample_num_matches": 0,  # sample X sparse matches, <=0 means no sampling
         "sample_mode": "threshold_balanced",

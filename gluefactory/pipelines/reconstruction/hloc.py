@@ -6,7 +6,8 @@ import os
 import shutil
 from pathlib import Path
 
-from hloc import pairs_from_exhaustive
+from hloc import extract_features as hloc_extract_features
+from hloc import pairs_from_exhaustive, pairs_from_retrieval
 from hloc import reconstruction as hloc_reconstruction
 from omegaconf import OmegaConf
 
@@ -20,11 +21,16 @@ class HlocPipeline(base.ReconstructionPipeline):
     default_conf = {
         "name": "hloc_reconstruction",
         "data": {},
+        "retrieval": {
+            "conf": None,  # hloc global extractor: "netvlad", "dir", "openibl", "megaloc"
+            "num_matched": 20,
+        },
         "reconstruction": {
             "mapper_options": {},
             "camera_mode": "AUTO",
         },
         "export_half": False,
+        "export_keys": None,
     }
 
     @dataclasses.dataclass
@@ -36,6 +42,8 @@ class HlocPipeline(base.ReconstructionPipeline):
         feature_file_name: str = "features.h5"
         matches_file_name: str = "matches.h5"
         pairs_file_name: str = "pairs.txt"
+        global_features_file: Path | None = None
+        global_features_file_name: str = "global_features.h5"
 
         def __post_init__(self):
             self.feature_file = self.feature_file or (
@@ -45,18 +53,47 @@ class HlocPipeline(base.ReconstructionPipeline):
                 self.cache_dir / self.matches_file_name
             )
             self.pairs_file = self.pairs_file or (self.cache_dir / self.pairs_file_name)
+            self.global_features_file = self.global_features_file or (
+                self.cache_dir / self.global_features_file_name
+            )
 
     def extract_pairs(self, output_dir: Path, data: types.ReconstructionData) -> Path:
-        """Extract pairs of images for reconstruction."""
-        pairs_file = self.PathConfig(output_dir).pairs_file
+        """Extract pairs of images for reconstruction.
+
+        Priority: custom pairs file > retrieval > exhaustive.
+        """
+        hloc_output = self.PathConfig(output_dir)
         if data.pairs_file:
-            shutil.copy(data.pairs_file, pairs_file)
-        if not pairs_file.exists():
+            shutil.copy(data.pairs_file, hloc_output.pairs_file)
+        elif self.conf.retrieval.conf is not None:
+            self._extract_pairs_retrieval(output_dir, data)
+        elif not hloc_output.pairs_file.exists():
             pairs_from_exhaustive.main(
-                pairs_file,
+                hloc_output.pairs_file,
                 image_list=data.image_list,
             )
-        return pairs_file
+        return hloc_output.pairs_file
+
+    def _extract_pairs_retrieval(
+        self, output_dir: Path, data: types.ReconstructionData
+    ) -> Path:
+        """Extract global descriptors with hloc and generate pairs via retrieval."""
+        hloc_output = self.PathConfig(output_dir)
+        retrieval_conf = hloc_extract_features.confs[self.conf.retrieval.conf]
+
+        hloc_extract_features.main(
+            retrieval_conf,
+            data.image_dir,
+            feature_path=hloc_output.global_features_file,
+            image_list=data.image_list,
+        )
+
+        pairs_from_retrieval.main(
+            hloc_output.global_features_file,
+            hloc_output.pairs_file,
+            num_matched=self.conf.retrieval.num_matched,
+        )
+        return hloc_output.pairs_file
 
     def extract_features(
         self,
@@ -90,6 +127,7 @@ class HlocPipeline(base.ReconstructionPipeline):
             {
                 "num_workers": self.conf.data.get("num_workers", 8),
                 "preprocessing": self.conf.data.get("preprocessing", {}),
+                "draft_size": self.conf.data.get("draft_size", None),
             },
             pairs_file=hloc_output.pairs_file,
             features_file=hloc_output.feature_file,
@@ -102,6 +140,7 @@ class HlocPipeline(base.ReconstructionPipeline):
             as_half=self.conf.export_half,
             keys=["matches0", "matches1", "matching_scores0", "matching_scores1"],
             optional_keys=optional_keys or [],
+            mixed_precision=self.conf.export_half,
         )
         # Shut down DataLoader workers so they release h5 file handles
         # before hloc reconstruction tries to open the same files.

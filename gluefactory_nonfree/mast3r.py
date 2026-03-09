@@ -22,7 +22,7 @@ from mast3r.fast_nn import fast_reciprocal_NNs  # noqa: E402
 from mast3r.model import AsymmetricMASt3R, load_model  # noqa: E402
 
 
-def symmetric_inference(model, img1, img2):
+def symmetric_inference(model, img1, img2, return_decoder_features=False):
     shape1 = torch.tensor(img1.shape[-2:])[None].to(img1.device, non_blocking=True)
     shape2 = torch.tensor(img2.shape[-2:])[None].to(img2.device, non_blocking=True)
 
@@ -31,16 +31,27 @@ def symmetric_inference(model, img1, img2):
 
     def decoder(feat1, feat2, pos1, pos2, shape1, shape2):
         dec1, dec2 = model._decoder(feat1, pos1, feat2, pos2)
+        # Materialize iterators so we can reuse them
+        dec1, dec2 = list(dec1), list(dec2)
         with torch.amp.autocast(device_type="cuda", enabled=False):
             res1 = model._downstream_head(1, [tok.float() for tok in dec1], shape1)
             res2 = model._downstream_head(2, [tok.float() for tok in dec2], shape2)
-        return res1, res2
+        return res1, res2, dec1, dec2
 
     # decoder 1-2
-    res11, res21 = decoder(feat1, feat2, pos1, pos2, shape1, shape2)
+    res11, res21, dec1_12, dec2_12 = decoder(feat1, feat2, pos1, pos2, shape1, shape2)
     # decoder 2-1
-    res22, res12 = decoder(feat2, feat1, pos2, pos1, shape2, shape1)
-
+    res22, res12, dec1_21, dec2_21 = decoder(feat2, feat1, pos2, pos1, shape2, shape1)
+    if return_decoder_features:
+        # dec1_12: view0 features from 1→2 decoding (list of layer outputs)
+        # dec2_12: view1 features from 1→2 decoding
+        # dec1_21: view1 features from 2→1 decoding
+        # dec2_21: view0 features from 2→1 decoding
+        decoder_features = {
+            "dec12": (dec1_12, dec2_12),
+            "dec21": (dec1_21, dec2_21),
+        }
+        return (res11, res21, res22, res12), decoder_features
     return (res11, res21, res22, res12)
 
 
@@ -143,6 +154,8 @@ class Mast3rMatcher(BaseModel):
         "model_name": "naver/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric",
         "window": 8,
         "square_ok": False,
+        "return_decoder_features": False,
+        "skip_correspondence_extraction": False,
     }
     required_keys = ["view0", "view1"]
 
@@ -171,71 +184,97 @@ class Mast3rMatcher(BaseModel):
             data["view1"]["image"], square_ok=self.conf.square_ok
         )
 
-        res = symmetric_inference(self.net, im0, im1)
-        pts3d00, _, pts3d11, _ = [r["pts3d"][0].cpu().numpy() for r in res]
-        confid00, _, confid11, _ = [r["conf"][0].cpu().numpy() for r in res]
-        descs = [r["desc"][0] for r in res]
-        qonfs = [r["desc_conf"][0] for r in res]
-        pred = {}
-        # extracting 2v corres
-        corres = extract_correspondences(descs, qonfs, subsample=self.conf.window)
-        dkps0, dkps1, scores0 = corres
-
-        dkps0 = map_keypoints_to_original_after_crop(dkps0, *var0[:-6])
-        dkps1 = map_keypoints_to_original_after_crop(dkps1, *var1[:-6])
-
-        def extract_rescale_crop(v):
-            cropx_a, cropx_b = v[0] - v[2], v[0] + v[2]
-            cropy_a, cropy_b = v[1] - v[3], v[1] + v[3]
-            return (cropx_a, cropx_b, cropy_a, cropy_b)
-
-        rescale_crop = [extract_rescale_crop(v) for v in [var0, var1]]
-        (cropx0a, cropx0b, cropy0a, cropy0b), (cropx1a, cropx1b, cropy1a, cropy1b) = (
-            rescale_crop
+        result = symmetric_inference(
+            self.net,
+            im0,
+            im1,
+            return_decoder_features=self.conf.return_decoder_features,
         )
+        if self.conf.return_decoder_features:
+            res, decoder_features = result
+        else:
+            res = result
 
-        for i, (H, W, slicex, slicey, pts3d, confid) in enumerate(
-            [
-                (
-                    *var0[-2:],
-                    slice(cropx0a, cropx0b),
-                    slice(cropy0a, cropy0b),
-                    pts3d00,
-                    confid00,
-                ),
-                (
-                    *var1[-2:],
-                    slice(cropx1a, cropx1b),
-                    slice(cropy1a, cropy1b),
-                    pts3d11,
-                    confid11,
-                ),
-            ]
-        ):
-            pred[f"depth{i}"] = np.zeros((H, W))
-            pred[f"variance{i}"] = np.ones((H, W)) * 1e6
-            pred[f"valid{i}"] = np.zeros((H, W), dtype=bool)
-            pred[f"depth{i}"][slicey, slicex] = pts3d[..., -1]
-            pred[f"variance{i}"][slicey, slicex] = (1 / confid) ** 2
-            pred[f"valid{i}"][slicey, slicex] = True
+        pred = {}
+        if not self.conf.skip_correspondence_extraction:
+            pts3d00, _, pts3d11, _ = [r["pts3d"][0].cpu().numpy() for r in res]
+            confid00, _, confid11, _ = [r["conf"][0].cpu().numpy() for r in res]
+            descs = [r["desc"][0] for r in res]
+            qonfs = [r["desc_conf"][0] for r in res]
+            # extracting 2v corres
+            corres = extract_correspondences(descs, qonfs, subsample=self.conf.window)
+            dkps0, dkps1, scores0 = corres
 
-        pred = {
-            "matches0": np.arange(0, scores0.shape[-1]),
-            "matches1": np.arange(0, scores0.shape[-1]),
-            "matching_scores0": scores0,
-            "matching_scores1": scores0,
-            "keypoints0": dkps0,
-            "keypoints1": dkps1,
-            "keypoint_scores0": scores0,
-            "keypoint_scores1": scores0,
-            "matchability0": scores0,
-            "matchability1": scores0,
-        }
-        pred = {k: torch.as_tensor(v, device=im0.device)[None] for k, v in pred.items()}
-        pred["keypoints0"] = pred["keypoints0"].float()
-        pred["keypoints1"] = pred["keypoints1"].float()
-        pred["p2d0_i1"] = pred["keypoints1"]
-        pred["p2d1_i0"] = pred["keypoints0"]
+            dkps0 = map_keypoints_to_original_after_crop(dkps0, *var0[:-6])
+            dkps1 = map_keypoints_to_original_after_crop(dkps1, *var1[:-6])
+
+            def extract_rescale_crop(v):
+                cropx_a, cropx_b = v[0] - v[2], v[0] + v[2]
+                cropy_a, cropy_b = v[1] - v[3], v[1] + v[3]
+                return (cropx_a, cropx_b, cropy_a, cropy_b)
+
+            rescale_crop = [extract_rescale_crop(v) for v in [var0, var1]]
+            (cropx0a, cropx0b, cropy0a, cropy0b), (
+                cropx1a,
+                cropx1b,
+                cropy1a,
+                cropy1b,
+            ) = rescale_crop
+
+            for i, (H, W, slicex, slicey, pts3d, confid) in enumerate(
+                [
+                    (
+                        *var0[-2:],
+                        slice(cropx0a, cropx0b),
+                        slice(cropy0a, cropy0b),
+                        pts3d00,
+                        confid00,
+                    ),
+                    (
+                        *var1[-2:],
+                        slice(cropx1a, cropx1b),
+                        slice(cropy1a, cropy1b),
+                        pts3d11,
+                        confid11,
+                    ),
+                ]
+            ):
+                pred[f"depth{i}"] = np.zeros((H, W))
+                pred[f"variance{i}"] = np.ones((H, W)) * 1e6
+                pred[f"valid{i}"] = np.zeros((H, W), dtype=bool)
+                pred[f"depth{i}"][slicey, slicex] = pts3d[..., -1]
+                pred[f"variance{i}"][slicey, slicex] = (1 / confid) ** 2
+                pred[f"valid{i}"][slicey, slicex] = True
+
+            pred = {
+                "matches0": np.arange(0, scores0.shape[-1]),
+                "matches1": np.arange(0, scores0.shape[-1]),
+                "matching_scores0": scores0,
+                "matching_scores1": scores0,
+                "keypoints0": dkps0,
+                "keypoints1": dkps1,
+                "keypoint_scores0": scores0,
+                "keypoint_scores1": scores0,
+                "matchability0": scores0,
+                "matchability1": scores0,
+            }
+            pred = {
+                k: torch.as_tensor(v, device=im0.device)[None] for k, v in pred.items()
+            }
+            pred["keypoints0"] = pred["keypoints0"].float()
+            pred["keypoints1"] = pred["keypoints1"].float()
+            pred["p2d0_i1"] = pred["keypoints1"]
+            pred["p2d1_i0"] = pred["keypoints0"]
+
+        if self.conf.return_decoder_features:
+            # Full decoder output lists for each direction.
+            # Each is a list of (dec_depth+1) tensors: [enc_out(1024d), blk1..blkN(768d)]
+            # Stored as non-tensor values so they are silently dropped during h5 export.
+            dec12_v0, dec12_v1 = decoder_features["dec12"]
+            dec21_v1, dec21_v0 = decoder_features["dec21"]
+            pred["_decout_12"] = [t.float() for t in dec12_v0]
+            pred["_decout_21"] = [t.float() for t in dec21_v1]
+
         return pred
 
     def loss(self, data, pred):

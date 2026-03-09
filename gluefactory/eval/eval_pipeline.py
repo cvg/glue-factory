@@ -345,7 +345,7 @@ class RelativePosePipeline(EvalPipeline):
         for k, v in results.items():
             arr = np.array(v)
             if k.endswith("pose_error"):
-                thresholds = [5, 10, 20]
+                thresholds = [1, 3, 5, 10, 20]
                 aucs = tools.AUCMetric(thresholds, elements=v).compute()
                 for i, th in enumerate(thresholds):
                     summaries[f"{k}@{th}°"] = round(aucs[i], 3)
@@ -357,7 +357,7 @@ class RelativePosePipeline(EvalPipeline):
         for estimator, pose_results_e in pose_results.items():
             prefix = f"est_{estimator}:"
             best_summary_e, best_th = utils.eval_poses(
-                pose_results_e, auc_ths=[5, 10, 20], key="rel_pose_error"
+                pose_results_e, auc_ths=[1, 3, 5, 10, 20], key="rel_pose_error"
             )
             results = {
                 **results,
