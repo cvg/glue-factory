@@ -83,6 +83,17 @@ class ImagePairs(BaseDataset, torch.utils.data.Dataset):
         img = preprocess.load_image(path, draft_size=self.conf.draft_size)
         data = self.preprocessor(img)
         data["name"] = name
+        if self.conf.draft_size is not None:
+            # draft mode loads a smaller image, so the preprocessor's transform
+            # maps draft coords → preprocessed coords. Fix it to map from the
+            # true original coords instead, so that inv(transform) correctly
+            # recovers original-image coordinates (needed by export and COLMAP).
+            true_size = preprocess.get_image_size(path)  # (w_orig, h_orig)
+            draft_size = data["original_image_size"]  # (w_draft, h_draft)
+            s = (draft_size / true_size).astype(np.float32)
+            orig_to_draft = np.diag([s[0], s[1], 1.0])
+            data["transform"] = data["transform"] @ orig_to_draft
+            data["original_image_size"] = true_size
         if self.conf.load_features.do:
             features = self.feature_loader({k: [v] for k, v in data.items()})
             data = {"cache": features, **data}
