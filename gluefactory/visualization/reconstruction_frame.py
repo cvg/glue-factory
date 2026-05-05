@@ -1,5 +1,7 @@
 """Plotly-based 3D reconstruction visualizer for the inspect flow."""
 
+from pathlib import Path
+
 import numpy as np
 import plotly.graph_objects as go
 import pycolmap
@@ -107,7 +109,7 @@ class ReconstructionFrame:
 
     default_conf = {
         "default": "reconstruction",
-        "max_points": 50_000,
+        "max_points": 500_000,
     }
 
     def __init__(self, conf, data, preds, title=None, event=1, summaries=None):
@@ -123,15 +125,19 @@ class ReconstructionFrame:
         fig = viz3d.init_figure(height=800)
 
         rec_data = self.data.get("reconstruction")
+        gt_colmap_rec = None
         # Plot GT cameras if reference_sfm is available
         if rec_data is not None:
             ref_sfm = rec_data[0] if isinstance(rec_data, list) else rec_data
             if hasattr(ref_sfm, "reference_sfm") and ref_sfm.reference_sfm is not None:
-                gt_rec = Reconstruction.from_colmap(ref_sfm.reference_sfm)
+                gt_colmap_rec = ref_sfm.reference_sfm
+                if isinstance(gt_colmap_rec, Path):
+                    gt_colmap_rec = pycolmap.Reconstruction(gt_colmap_rec)
+                gt_rec = Reconstruction.from_colmap(gt_colmap_rec)
                 plot_cameras_batched(
                     fig,
                     gt_rec,
-                    color="rgb(200, 200, 200)",
+                    color="rgb(255, 0, 0)",
                     name="GT cameras",
                     scale=3.0,
                 )
@@ -144,6 +150,15 @@ class ReconstructionFrame:
             output_dir = output_dir[0] if isinstance(output_dir, list) else output_dir
 
             colmap_rec = pycolmap.Reconstruction(str(output_dir))
+
+            # Coarsely align estimated poses to GT via Sim3d
+            if gt_colmap_rec is not None:
+                sim3 = pycolmap.align_reconstructions_via_proj_centers(
+                    colmap_rec, gt_colmap_rec, max_proj_center_error=1.0
+                )
+                if sim3 is not None:
+                    colmap_rec.transform(sim3)
+
             color = COLORS[i % len(COLORS)]
 
             rec = Reconstruction.from_colmap(colmap_rec)

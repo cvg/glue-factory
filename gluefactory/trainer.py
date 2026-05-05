@@ -86,7 +86,10 @@ def compose_loss(
             if not allow_missing:
                 raise KeyError(f"Key {key} not found in loss dict.")
             continue
-        loss = loss + weight * loss_dict[key]
+        val = loss_dict[key]
+        if weight == 0.0:
+            val = val.nan_to_num(0.0)
+        loss = loss + weight * val
     return loss
 
 
@@ -375,19 +378,21 @@ class Trainer:
         strict: bool = True,
         load_state: bool = False,
         load_modelconfig: bool = False,
+        load_weights: bool = True,
     ):
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             # Fix distributed model naming
             checkpoint["model"] = {
-                (k if k.startswith("module.") else "module." + k): v
+                (k.replace("module.", "") if k.startswith("module.") else k): v
                 for k, v in checkpoint["model"].items()
             }
-        missing, unexpected = self.model.load_state_dict(
-            checkpoint["model"], strict=strict
-        )
-        self.info(
-            f"state_dict loaded. Missing keys: {missing or 'None'}. Unexpected keys: {unexpected or 'None'}."
-        )
+        if load_weights:
+            missing, unexpected = self.model.load_state_dict(
+                checkpoint["model"], strict=strict
+            )
+            self.info(
+                f"state_dict loaded. Missing keys: {missing or 'None'}. Unexpected keys: {unexpected or 'None'}."
+            )
         if load_modelconfig:
             self.conf.model = OmegaConf.merge(
                 OmegaConf.create(checkpoint["conf"]).model, self.conf.model
@@ -437,6 +442,7 @@ class Trainer:
                 load_state=self.conf.get("load_state", False),
                 load_modelconfig=self.conf.get("load_modelconfig", False),
                 strict=self.conf.get("load_strict", True),
+                load_weights=self.conf.get("load_weights", True),
             )
 
     def save_checkpoint(

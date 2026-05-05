@@ -99,6 +99,16 @@ def gt_matches_from_pose_depth(
     d0 = torch.where(valid0, d0, torch.zeros_like(d0))
     d1 = torch.where(valid1, d1, torch.zeros_like(d1))
 
+    # Dense warp consistency
+    dense_proj_0to1, dense_matchable0, _ = depth.dense_warp_consistency(
+        depth0, depth1, T_0to1, camera0, camera1,
+        ccth=cc_th, max_rel_depth_error=max_rel_depth_error,
+    )
+    dense_proj_1to0, dense_matchable1, _ = depth.dense_warp_consistency(
+        depth1, depth0, T_1to0, camera1, camera0,
+        ccth=cc_th, max_rel_depth_error=max_rel_depth_error,
+    )
+
     pred = {
         "depth_keypoints0": d0,
         "depth_keypoints1": d1,
@@ -111,6 +121,12 @@ def gt_matches_from_pose_depth(
         "has_overlap": has_overlap,
         "xyz_keypoints0": c0_t_w.inv() @ (camera0.image2cam(kp0) * d0.unsqueeze(-1)),
         "xyz_keypoints1": c1_t_w.inv() @ (camera1.image2cam(kp1) * d1.unsqueeze(-1)),
+        "dense_matchable0": dense_matchable0,
+        "dense_matchable1": dense_matchable1,
+        "dense_valid0": depth0 > 0,
+        "dense_valid1": depth1 > 0,
+        "dense_proj_0to1": dense_proj_0to1,
+        "dense_proj_1to0": dense_proj_1to0,
     }
 
     if not compute_assignment:

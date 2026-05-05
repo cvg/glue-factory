@@ -58,6 +58,11 @@ class DoppelgangersSplit(torch.utils.data.Dataset):
             visym_pair_f = settings.DATA_PATH / conf.root / visym_pairs_name
             visym_items = np.load(visym_pair_f, allow_pickle=True)
             self.items = np.concatenate([self.items, visym_items], axis=0)
+        elif conf.add_visym_pairs and split == "test":
+            visym_pairs_name = "pairs_metadata/test_pairs_visym.npy"
+            visym_pair_f = settings.DATA_PATH / conf.root / visym_pairs_name
+            visym_items = np.load(visym_pair_f, allow_pickle=True)
+            self.items = np.concatenate([self.items, visym_items], axis=0)
 
         self.items = np.array(
             [x for x in self.items if ".gif" not in x[0] and ".gif" not in x[1]]

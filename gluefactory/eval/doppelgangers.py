@@ -30,7 +30,7 @@ class DoppelgangersPipeline(eval_pipeline.EvalPipeline):
                 "center_pad": True,
             },
             "seed": 42,
-            "visym": True,
+            "visym": False,
         },
         "model": {
             "ground_truth": {

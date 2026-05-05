@@ -32,7 +32,7 @@ class ComposedDataset(BaseDataset):
     def _init(self, conf):
         child_confs = conf.childs
         self.datasets = {
-            name: get_dataset(name)(c)
+            name: get_dataset(c.get("name", name))(c)
             for name, c in child_confs.items()
             if name in (conf.sample_from or child_confs.keys())
         }

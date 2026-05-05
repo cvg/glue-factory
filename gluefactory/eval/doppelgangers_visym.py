@@ -10,16 +10,15 @@ class DoppelgangersVisymPipeline(DoppelgangersPipeline):
             "batch_size": 1,
             "name": "doppelgangers",
             "root": "doppelgangerspp",
-            "num_workers": 16,
+            "num_workers": 8,
             "preprocessing": {
-                "resize": 1024,  # we also resize during eval to have comparable metrics
+                "resize": 768,  # we also resize during eval to have comparable metrics
                 "side": "long",
                 "crop_if_short_side": True,
-                "square_pad": True,
                 "center_pad": True,
             },
             "seed": 42,
-            "visym": False,
+            "visym": True,
         },
         "model": {
             "ground_truth": {

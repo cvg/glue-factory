@@ -245,18 +245,22 @@ def plot_matches(kpts0, kpts1, color=None, lw=1.5, ps=4, a=1.0, labels=None, axe
 
     scatters = []
     if ps > 0:
-        scatters.append(ax0.scatter(
-            kpts0[:, 0],
-            kpts0[:, 1],
-            c=color,
-            s=ps,
-        ))
-        scatters.append(ax1.scatter(
-            kpts1[:, 0],
-            kpts1[:, 1],
-            c=color,
-            s=ps,
-        ))
+        scatters.append(
+            ax0.scatter(
+                kpts0[:, 0],
+                kpts0[:, 1],
+                c=color,
+                s=ps,
+            )
+        )
+        scatters.append(
+            ax1.scatter(
+                kpts1[:, 0],
+                kpts1[:, 1],
+                c=color,
+                s=ps,
+            )
+        )
     return scatters
 
 
@@ -540,8 +544,20 @@ def plot_cumulative(
     return plt.gcf()
 
 
-def features_to_RGB(*Fs, skip: int = 1, norm: bool = False, offset: int = 0):
-    """Project a list of d-dimensional feature maps (...c) to RGB colors using PCA."""
+def features_to_RGB(
+    *Fs, skip: int = 0, norm: bool = False, offset: int = 0, fit_points=None
+):
+    """Project a list of d-dimensional feature maps (..., D) to RGB using PCA.
+
+    Args:
+        Fs: feature maps of shape (..., D).
+        skip: subsample factor when fitting PCA on all features.
+        norm: L2-normalize features before PCA.
+        offset: skip the first `offset` PCA components.
+        fit_points: optional list of (N_i, D) arrays to fit PCA on instead of
+            the full feature maps. When given, PCA is fit on their concatenation
+            and then applied to the full maps.
+    """
     from sklearn.decomposition import PCA
 
     if isinstance(Fs[0], torch.Tensor):
@@ -559,7 +575,15 @@ def features_to_RGB(*Fs, skip: int = 1, norm: bool = False, offset: int = 0):
     flatten = np.concatenate(flatten, axis=0)
 
     pca = PCA(n_components=3 + offset)
-    if skip > 1:
+    if fit_points is not None:
+        if isinstance(fit_points[0], torch.Tensor):
+            fit_points = [fp.detach().cpu().numpy() for fp in fit_points]
+        fit_data = np.concatenate(
+            [fp.reshape(-1, fp.shape[-1]) for fp in fit_points], axis=0
+        )
+        pca.fit(normalize(fit_data))
+        flatten = pca.transform(normalize(flatten))
+    elif skip > 1:
         pca.fit(normalize(flatten[::skip]))
         flatten = pca.transform(normalize(flatten))
     else:

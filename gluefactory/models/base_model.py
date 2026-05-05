@@ -171,10 +171,13 @@ class BaseModel(nn.Module, metaclass=MetaModel):
             model_state = self.state_dict()
             mismatched = []
             for key in list(state_dict.keys()):
-                if (
-                    key in model_state
-                    and state_dict[key].shape != model_state[key].shape
-                ):
+                if key not in model_state:
+                    continue
+                try:
+                    shapes_match = state_dict[key].shape == model_state[key].shape
+                except RuntimeError:
+                    continue  # UninitializedParameter (LazyLinear etc.)
+                if not shapes_match:
                     mismatched.append(
                         f"{key}: checkpoint {list(state_dict[key].shape)}"
                         f" vs model {list(model_state[key].shape)}"
@@ -221,6 +224,7 @@ class BaseModel(nn.Module, metaclass=MetaModel):
         model.loss_metrics = self.loss_metrics
         model.visualize = self.visualize
         model.pr_metrics = self.pr_metrics
+        model.load_state_dict = self.load_state_dict
         return model
 
     def compile(self, *args, **kwargs) -> "BaseModel":
