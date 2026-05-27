@@ -40,8 +40,6 @@ class HPatchesPipeline(eval_pipeline.EvalPipeline):
     export_keys = (
         "keypoints0",
         "keypoints1",
-        "keypoint_scores0",
-        "keypoint_scores1",
         "matches0",
         "matches1",
         "matching_scores0",
@@ -49,6 +47,8 @@ class HPatchesPipeline(eval_pipeline.EvalPipeline):
     )
 
     optional_export_keys = (
+        "keypoint_scores0",
+        "keypoint_scores1",
         "lines0",
         "lines1",
         "orig_lines0",

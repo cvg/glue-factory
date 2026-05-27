@@ -17,6 +17,7 @@ from hloc import localize_inloc
 from hloc.utils.io import write_poses
 from hloc.utils.parsers import names_to_pair, parse_retrieval
 from omegaconf import OmegaConf
+from PIL import Image
 from tqdm import tqdm
 
 from .. import datasets, pipelines, settings
@@ -40,6 +41,7 @@ def pose_from_cluster(
     skip=None,
     db_keypoints=None,
     query_keypoints=None,
+    threshold: float | None = 0.7,
 ):
     """Estimate absolute pose for query *q* from a cluster of DB images.
 
@@ -55,7 +57,8 @@ def pose_from_cluster(
         cat_data: concatenated version of *data* (or empty dict).
         num_matches: total number of raw matches across all DB images.
     """
-    height, width = cv2.imread(str(dataset_dir / q)).shape[:2]
+    # height, width = cv2.imread(str(dataset_dir / q)).shape[:2]
+    width, height = Image.open(dataset_dir / q).size
     cx = 0.5 * width
     cy = 0.5 * height
     focal_length = 4032.0 * 28.0 / 36.0
@@ -84,6 +87,10 @@ def pose_from_cluster(
         )
         m = match_h5[pair]["matches0"].__array__()
         v = m > -1
+
+        if threshold is not None:
+            ms = match_h5[pair]["matching_scores0"].__array__()
+            v = v & (ms > threshold)
 
         if skip and (np.count_nonzero(v) < skip):
             continue
@@ -144,6 +151,7 @@ class InLocPipeline(EvalPipeline):
             "skip_matches": None,
             "db_keypoints": None,
             "query_keypoints": None,
+            "scene": None,  # e.g. "DUC1" or "DUC2" to restrict to one scene
         },
         "pipeline": {
             "name": "reconstruction.hloc",
@@ -165,6 +173,8 @@ class InLocPipeline(EvalPipeline):
         self.pipeline: ReconstructionPipeline = pipelines.get_pipeline(
             ReconstructionPipeline, conf.pipeline.name
         )(pipeline_conf)
+
+        print(self.pipeline.conf)
 
     def _load_retrieval(self):
         pairs_path = Path(self.conf.data.pairs)
@@ -245,6 +255,9 @@ class InLocPipeline(EvalPipeline):
 
         retrieval_dict = self._load_retrieval()
         queries = list(retrieval_dict.keys())
+        scene = self.conf.eval.get("scene", None)
+        if scene is not None:
+            queries = [q for q in queries if any(scene in d for d in retrieval_dict[q])]
         if self.conf.num_samples is not None:
             queries = queries[: self.conf.num_samples]
 

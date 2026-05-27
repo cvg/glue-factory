@@ -732,8 +732,7 @@ class Trainer:
                 tot_n_samples,
             )
 
-            if it % (self.conf.log_every_iter * 2) == 0:
-                # Plot at reduced frequency
+            if it % (self.conf.log_every_iter * 20) == 0:
                 writer.add_figure(
                     "step/sections",
                     self.step_timer.plot(),
@@ -850,6 +849,7 @@ class Trainer:
                     loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
                     self.optimizer.zero_grad()
                 else:
+                    self.optimizer.zero_grad()
                     del pred, data, loss, losses
                     return None, None
 
@@ -876,21 +876,22 @@ class Trainer:
                     raise RuntimeError("Detected anomaly in training.")
             if do_update:
                 self.scaler.unscale_(self.optimizer)
+                step_taken = True
                 if self.conf.get("clip_grad", None):
-                    try:
-                        torch.nn.utils.clip_grad_norm_(
-                            self.model.parameters(),
-                            max_norm=self.conf.clip_grad,
-                            error_if_nonfinite=True,
-                        )
-                        if log_grad_norm:
-                            loss_metrics["l2/grad_norm"] = torch.Tensor(
-                                [misc.grad_norm(self.model.parameters())]
-                            )
-                        self.scaler.step(self.optimizer)
-                    except RuntimeError:
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(),
+                        max_norm=self.conf.clip_grad,
+                        error_if_nonfinite=False,
+                    )
+                    if not torch.isfinite(grad_norm):
                         logger.warning("NaN detected in gradients. Skipping iteration.")
-                    self.scaler.update()
+                        step_taken = False
+                        self.scaler.update()
+                    else:
+                        if log_grad_norm:
+                            loss_metrics["l2/grad_norm"] = grad_norm.reshape(1)
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
                 else:
                     if log_grad_norm:
                         loss_metrics["l2/grad_norm"] = torch.Tensor(
@@ -898,7 +899,8 @@ class Trainer:
                         )
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
-                self.learning_rate_step()
+                if step_taken:
+                    self.learning_rate_step()
                 self.optimizer.zero_grad()
             self.step_timer.measure("step")
         else:
@@ -1226,6 +1228,25 @@ def scale_by_device_count(
     # adjust batch size and num of workers since these are per GPU
     if "batch_size" in data_conf and not batch_size_per_gpu:
         data_conf.batch_size = int(data_conf.batch_size / num_gpus)
+
+    ref_vram = data_conf.get("ref_vram", None)
+    if ref_vram is not None and torch.cuda.is_available():
+        per_device_vram = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        vram_scale = per_device_vram / ref_vram
+        for key in ["batch_size"] + [
+            f"{s}_batch_size" for s in ["train", "val", "test"]
+        ]:
+            if key in data_conf:
+                scaled = int(max(1, round(data_conf[key] * vram_scale)))
+                logger.info(
+                    "VRAM scaling (%s): %d → %d (%.1f GB / %.1f GB ref)",
+                    key,
+                    data_conf[key],
+                    scaled,
+                    per_device_vram,
+                    ref_vram,
+                )
+                data_conf[key] = scaled
 
     logger.info(
         "Batch size: global=%d, per-device=%d",

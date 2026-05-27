@@ -105,7 +105,7 @@ def parse_eval_args(benchmark, args, configs_path, default=None):
     logger.info("Running benchmark: %s", benchmark)
     logger.info("Experiment tag: %s", name)
     logger.info("Config:")
-    # logger.info(pprint.pformat(OmegaConf.to_container(conf)))
+    logger.info(pprint.pformat(OmegaConf.to_container(conf)))
     return name, conf
 
 

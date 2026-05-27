@@ -31,10 +31,10 @@ try:
     import pycolmap
 except ImportError:
     pycolmap = None
-    print(
-        "pycolmap not found, COLMAP support is disabled. "
-        "Install it with `pip install pycolmap`."
-    )
+    # print(
+    #     "pycolmap not found, COLMAP support is disabled. "
+    #     "Install it with `pip install pycolmap`."
+    # )
 
 import torch
 import torch.nn.functional as tnf
@@ -982,6 +982,16 @@ class Reconstruction:
 
         # Remove diagonal elements (self-self)
         errors_without_diag = errors[~torch.eye(errors.shape[0], dtype=bool)]
+
+        # Penalize images that failed to register: pad with 180° for all pairs
+        # involving GT images not present in the estimated reconstruction.
+        n_gt = len(gt.image_names)
+        n_reg = len(image_ids)
+        n_missing = n_gt * (n_gt - 1) - n_reg * (n_reg - 1)
+        if n_missing > 0:
+            extra = torch.full((n_missing,), 180.0)
+            errors_without_diag = torch.cat([errors_without_diag.cpu(), extra])
+
         return (
             errors,
             tools.AUCMetric(thresholds, errors_without_diag.cpu().numpy()).compute(),

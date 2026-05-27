@@ -225,12 +225,15 @@ class BaseDataset(metaclass=ABCMeta):
             # limit num_workers per process in distributed training
             max_num_workers = max_num_workers // dist.get_world_size()
 
+        if "SLURM_CPUS_PER_TASK" in os.environ:
+            max_num_workers = int(os.environ["SLURM_CPUS_PER_TASK"])
+
         if num_workers is None:
             num_workers = self.conf.get("num_workers", max_num_workers)
         if num_workers is None or num_workers < 0:
             num_workers = max_num_workers
         num_workers = min(num_workers, max_num_workers)
-        logger.info(f"{split} DataLoader num_workers: {num_workers} {os.cpu_count()}")
+        logger.info(f"{split} DataLoader num_workers: {num_workers} {max_num_workers}")
         drop_last = True if split == "train" else False
         if distributed:
             shuffle = False

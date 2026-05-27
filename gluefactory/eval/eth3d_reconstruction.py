@@ -46,7 +46,6 @@ ETH3D_SCENES = {
 class ETH3DReconstructionPipeline(eval_pipeline.EvalPipeline):
     child_frame = ReconstructionFrame
     scenes = sum(ETH3D_SCENES.values(), [])
-
     default_conf = {
         "data": {
             "root": "ETH3D_undistorted_resized",
@@ -132,9 +131,6 @@ class ETH3DReconstructionPipeline(eval_pipeline.EvalPipeline):
 
     def get_predictions(self, experiment_dir, model=None, overwrite=False):
         """Export a prediction file for each eval datapoint"""
-        if model is None:
-            model = io.load_model(self.conf.model, self.conf.checkpoint)
-
         experiment_dir.mkdir(exist_ok=True, parents=True)
         predictions_file = experiment_dir / "predictions.h5"
 
@@ -144,6 +140,9 @@ class ETH3DReconstructionPipeline(eval_pipeline.EvalPipeline):
             self.save_conf(experiment_dir, overwrite=overwrite)
         elif experiment_dir.exists():
             return predictions_file
+
+        if model is None:
+            model = io.load_model(self.conf.model, self.conf.checkpoint)
 
         all_preds = {}
 
@@ -169,7 +168,12 @@ class ETH3DReconstructionPipeline(eval_pipeline.EvalPipeline):
         results = defaultdict(dict)
         output_dir = experiment_dir / scene
         gt_model = reconstruction.Reconstruction.from_colmap(data.reference_sfm)
-        estimated_colmap_model = pycolmap.Reconstruction(output_dir)
+        try:
+            estimated_colmap_model = pycolmap.Reconstruction(
+                output_dir / "models" / "0"
+            )
+        except:
+            estimated_colmap_model = pycolmap.Reconstruction(output_dir)
         results["track_length"] = estimated_colmap_model.compute_mean_track_length()
         results["reprojection_error"] = (
             estimated_colmap_model.compute_mean_reprojection_error()

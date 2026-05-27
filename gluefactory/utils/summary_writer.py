@@ -120,11 +120,15 @@ class SummaryWriter:
 
     def add_figure(self, tag: str, figure: Any, step: int | None = None):
         """Log a figure to tensorboard or wandb."""
+        import matplotlib.pyplot as plt
+
         if self.use_wandb:
             step = 1 if step == 0 else step
             self.wandb_log({tag: wandb.Image(figure)}, step=step)
         if self.use_tensorboard:
             self.writer.add_figure(tag, figure, step, close=True)
+        elif self.use_wandb:
+            plt.close(figure)
 
     def add_histogram(self, tag: str, values, step: int | None = None):
         """Log a histogram to tensorboard or wandb."""

@@ -12,7 +12,11 @@ from typing import Optional, Sequence
 
 import numpy as np
 import plotly.graph_objects as go
-import pycolmap
+
+try:
+    import pycolmap
+except ImportError:
+    pycolmap = None
 import torch
 
 
@@ -123,7 +127,7 @@ def plot_camera(
 def plot_cameras(
     fig: go.Figure,
     w_t_c: np.ndarray,
-    camera: pycolmap.Camera,
+    camera,  # pycolmap.Camera,
     scale: float = 3.0,
     color: str = "rgb(0, 0, 255)",
     name: Optional[str] = None,

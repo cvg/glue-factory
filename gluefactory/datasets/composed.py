@@ -117,6 +117,13 @@ class ComposedSplit(torch.utils.data.Dataset):
             for i, (dataset, actual_size) in enumerate(
                 zip(self.datasets, actual_sizes)
             ):
+                if len(dataset) == 0:
+                    logger.warning(
+                        f"[{split}] Dataset {self.dataset_names[i]} is empty, skipping."
+                    )
+                    self.sample_idxs.append(np.array([], dtype=int))
+                    actual_sizes[i] = 0
+                    continue
                 if actual_size > len(dataset):
                     idxs = np.random.default_rng(conf.seed + epoch + i).choice(
                         len(dataset), actual_size, replace=True

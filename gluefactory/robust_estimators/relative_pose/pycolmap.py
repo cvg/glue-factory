@@ -1,4 +1,7 @@
-import pycolmap
+try:
+    import pycolmap
+except ImportError:
+    pycolmap = None
 import torch
 from omegaconf import OmegaConf
 
