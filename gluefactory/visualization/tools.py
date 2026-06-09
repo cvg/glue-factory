@@ -16,7 +16,7 @@ with warnings.catch_warnings():
 
 
 _COMMON = {
-    "DRAW_LINE_MODE": "auto",  # "on", "off", "auto"
+    "DRAW_LINE_MODE": "off",  # "on", "off", "auto"
     "MAX_NUM_LINES": 4096,  # maximum number of lines to draw in auto mode
     "DRAW_LINE_WIDTH": 0.5,  # default line width
     "DRAW_LINE_ALPHA": 0.5,  # default line alpha

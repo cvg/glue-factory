@@ -67,26 +67,29 @@ class GlobalFrame:
         if title is not None:
             self.fig.canvas.manager.set_window_title(title)
 
-        self.xradios = self.fig.canvas.manager.toolmanager.add_tool(
+        tm = self.fig.canvas.manager.toolmanager
+        self.xradios = tm.add_tool(
             "x",
             vtools.RadioHideTool,
             options=self.metrics,
             callback_fn=self.update_x,
             active=self.conf.x,
-            keymap="x",
         )
+        tm.update_keymap("x", "x")
 
-        self.yradios = self.fig.canvas.manager.toolmanager.add_tool(
+        self.yradios = tm.add_tool(
             "y",
             vtools.RadioHideTool,
             options=self.metrics,
             callback_fn=self.update_y,
             active=self.conf.y,
-            keymap="y",
         )
-        if self.fig.canvas.manager.toolbar is not None:
-            self.fig.canvas.manager.toolbar.add_tool("x", "navigation")
-            self.fig.canvas.manager.toolbar.add_tool("y", "navigation")
+        tm.update_keymap("y", "y")
+
+        toolbar = self.fig.canvas.manager.toolbar
+        if toolbar is not None and hasattr(toolbar, "add_tool"):
+            toolbar.add_tool("x", "navigation")
+            toolbar.add_tool("y", "navigation")
 
     def init_frame(self):
         """initialize frame"""

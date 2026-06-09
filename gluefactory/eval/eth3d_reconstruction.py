@@ -26,20 +26,20 @@ ETH3D_SCENES = {
         "relief_2",
         "terrains",
     ],
-    # "test": [
-    #     "botanical_garden",
-    #     "boulders",
-    #     "bridge",
-    #     "door",
-    #     "exhibition_hall",
-    #     "lecture_room",
-    #     "living_room",
-    #     "lounge",
-    #     "observatory",
-    #     "old_computer",
-    #     "statue",
-    #     "terrace_2",
-    # ],
+    "test": [
+        "botanical_garden",
+        "boulders",
+        "bridge",
+        "door",
+        "exhibition_hall",
+        "lecture_room",
+        "living_room",
+        "lounge",
+        "observatory",
+        "old_computer",
+        "statue",
+        "terrace_2",
+    ],
 }
 
 
@@ -57,7 +57,7 @@ class ETH3DReconstructionPipeline(eval_pipeline.EvalPipeline):
         "eval": {
             "thresholds": [1, 3, 5, 10, 20],  # degrees
             "fov_thresholds": [1, 5],  # degrees
-            "write_scene_summaries": False,
+            "write_scene_summaries": True,
         },
         "pipeline": {
             "name": "reconstruction.hloc",

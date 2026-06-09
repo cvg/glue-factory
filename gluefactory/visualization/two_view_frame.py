@@ -55,36 +55,42 @@ class TwoViewFrame:
             k for k, v in self.plot_dict.items() if set(v.required_keys).issubset(keys)
         ]
         self.handle = None
-        self.radios = self.fig.canvas.manager.toolmanager.add_tool(
+        tm = self.fig.canvas.manager.toolmanager
+        self.radios = tm.add_tool(
             "switch plot",
             vtools.RadioHideTool,
             options=self.options,
             callback_fn=self.draw,
             active=conf.default,
-            keymap="R",
             description="Switch between different plots",
         )
 
-        self.toggle_summary = self.fig.canvas.manager.toolmanager.add_tool(
+        self.toggle_summary = tm.add_tool(
             "toggle summary",
             vtools.ToggleTool,
             toggled=self.conf.summary_visible,
             callback_fn=self.set_summary_visible,
-            keymap="t",
             description="Toggle visibility of summary text",
         )
 
-        self.toggle_lines = self.fig.canvas.manager.toolmanager.add_tool(
+        self.toggle_lines = tm.add_tool(
             "show lines",
             vtools.RadioHideTool,
             options=["auto", "on", "off"],
             active=vtools._COMMON["DRAW_LINE_MODE"],
             callback_fn=self.toggle_lines,
-            keymap="_",
             description="Toggle visibility of lines in the plot",
         )
 
-        if self.fig.canvas.manager.toolbar is not None:
+        # Set keymaps after all tools are added: "show lines" must release "R"
+        # (stolen via RadioHideTool class default) before "switch plot" reclaims it.
+        tm.update_keymap("toggle summary", "t")
+        tm.update_keymap("show lines", "_")
+        tm.update_keymap("switch plot", "R")
+
+        if self.fig.canvas.manager.toolbar is not None and hasattr(
+            self.fig.canvas.manager.toolbar, "add_tool"
+        ):
             self.fig.canvas.manager.toolbar.add_tool("switch plot", "navigation")
             self.fig.canvas.manager.toolbar.add_tool("show lines", "navigation")
         self.draw(conf.default)

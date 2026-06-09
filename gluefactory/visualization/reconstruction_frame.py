@@ -168,7 +168,51 @@ class ReconstructionFrame:
                 colmap_rec,
                 name=f"{name} points",
                 ps=1,
-                max_points=self.conf.get("max_points", 5_000),
+                max_points=self.conf.get("max_points", 500_000),
+            )
+
+        # Lock axis ranges from all traces so legend toggles don't rescale the scene
+        all_x, all_y, all_z = [], [], []
+        for trace in fig.data:
+            for coord, lst in zip(("x", "y", "z"), (all_x, all_y, all_z)):
+                vals = getattr(trace, coord, None)
+                if vals is not None:
+                    lst.extend(v for v in vals if v is not None)
+        if all_x:
+            pad = 1.0
+            ranges = [(min(v), max(v)) for v in (all_x, all_y, all_z)]
+            spans = [hi - lo for lo, hi in ranges]
+            max_span = max(spans) or 1.0
+            fig.update_layout(
+                scene=dict(
+                    xaxis=dict(
+                        range=[
+                            ranges[0][0] - pad * spans[0],
+                            ranges[0][1] + pad * spans[0],
+                        ],
+                        autorange=False,
+                    ),
+                    yaxis=dict(
+                        range=[
+                            ranges[1][0] - pad * spans[1],
+                            ranges[1][1] + pad * spans[1],
+                        ],
+                        autorange=False,
+                    ),
+                    zaxis=dict(
+                        range=[
+                            ranges[2][0] - pad * spans[2],
+                            ranges[2][1] + pad * spans[2],
+                        ],
+                        autorange=False,
+                    ),
+                    aspectmode="manual",
+                    aspectratio=dict(
+                        x=spans[0] / max_span,
+                        y=spans[1] / max_span,
+                        z=spans[2] / max_span,
+                    ),
+                )
             )
 
         if title:

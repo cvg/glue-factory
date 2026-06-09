@@ -34,7 +34,7 @@ def init_figure(
         autorange=True,
     )
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_white",
         height=height,
         scene_camera=dict(
             projection=dict(
@@ -47,6 +47,7 @@ def init_figure(
             zaxis=axes,
             aspectmode="data",
             dragmode="orbit",
+            uirevision="constant",
         ),
         margin=dict(l=0, r=0, b=0, t=0, pad=0),
         legend=dict(orientation="h", yanchor="top", y=0.99, xanchor="left", x=0.1),
@@ -140,7 +141,7 @@ def plot_cameras(
         t = w_t_ci.t.cpu().numpy()
         K = cami.K.cpu().numpy()
         name_i = name
-        if isinstance(name, Sequence):
+        if isinstance(name, (list, tuple)):
             name_i = name[i]
         plot_camera(
             fig,
