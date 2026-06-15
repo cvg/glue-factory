@@ -4,6 +4,7 @@ from pathlib import Path
 
 import cv2
 import h5py
+import hdf5plugin  # registers custom compression filters with h5py
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -58,6 +59,7 @@ class H5Dataset(base_dataset.BaseDataset):
         "max_overlap": 1.0,
         "read_depth": True,
         "read_image": True,
+        "use_valid_mask": False,
         "preprocessing": preprocess.ImagePreprocessor.default_conf,
         "reseed": False,
         "seed": 0,
@@ -160,6 +162,7 @@ class _H5Split(torch.utils.data.Dataset):
         self.split = split
         self.seed = seed if seed is not None else conf.seed
         self._h5_files = {}  # lazy open per worker, keyed by file path string
+        self._views_groups = {}  # cached "views" group per scene, keyed by scene name
         self._is_dir = h5_path.is_dir()
 
         scenes_conf = conf.get(f"{split}_scenes")
@@ -209,6 +212,11 @@ class _H5Split(torch.utils.data.Dataset):
         if key not in self._h5_files:
             self._h5_files[key] = h5py.File(h5_file, "r", rdcc_nbytes=0)
         return self._h5_files[key][scene]
+
+    def _get_views_group(self, scene):
+        if scene not in self._views_groups:
+            self._views_groups[scene] = self._get_scene_group(scene)["views"]
+        return self._views_groups[scene]
 
     def sample_groups(self, seed):
         self.items = []
@@ -306,7 +314,7 @@ class _H5Split(torch.utils.data.Dataset):
         np.random.RandomState(seed).shuffle(self.items)
 
     def _read_view(self, scene, idx):
-        view = self._get_scene_group(scene)["views"][str(idx)]
+        view = self._get_views_group(scene)[str(idx)]
 
         if self.conf.read_image:
             raw = view["image"][()]
@@ -320,12 +328,28 @@ class _H5Split(torch.utils.data.Dataset):
             img = torch.zeros(3, 1, 1)
 
         K = view["K"][()].astype(np.float32)
+
+        if "K_pinhole" in view:
+            # then K is a full perspective matrix!
+            camera = reconstruction.PerspectiveCamera.from_calibration_matrix(
+                K, hw=img.shape[-2:]
+            )
+        else:
+            camera = reconstruction.Camera.from_calibration_matrix(K)
+
         c_T_w = view["c_T_w"][()].astype(np.float32)
         name = view["name"][()].decode() if "name" in view else str(idx)
 
         depth = None
         if self.conf.read_depth and "depth" in view:
             depth = torch.from_numpy(view["depth"][()].astype(np.float32)).unsqueeze(0)
+            if self.conf.use_valid_mask:
+                if "valid" not in view:
+                    raise ValueError(
+                        f"use_valid_mask=True but no 'valid' dataset in view {name}"
+                    )
+                valid = torch.from_numpy(view["valid"][()].astype(bool)).unsqueeze(0)
+                depth = depth * valid
 
         data = self.preprocessor(img)
         if depth is not None:
@@ -340,9 +364,9 @@ class _H5Split(torch.utils.data.Dataset):
                 "name": name,
                 "scene": scene,
                 "T_w2cam": reconstruction.Pose.from_4x4mat(c_T_w),
-                "camera": reconstruction.Camera.from_calibration_matrix(K)
-                .float()
-                .compose_image_transform(data["transform"]),
+                "camera": camera.float().compose_image_transform(
+                    data["transform"], hw=data["image"].shape[-2:]
+                ),
             }
         )
         return data
