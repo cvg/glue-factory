@@ -1,4 +1,8 @@
+import hashlib
+import json
 import logging
+import os
+import zipfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -60,13 +64,19 @@ class H5Dataset(base_dataset.BaseDataset):
         "read_depth": True,
         "read_image": True,
         "use_valid_mask": False,
+        "cache_sampling": True,  # cache per-scene sampling to {scene}_sample_cache.npz
+        "preload_files": True,  # pre-open all h5 handles and view groups at worker start
         "preprocessing": preprocess.ImagePreprocessor.default_conf,
         "reseed": False,
         "seed": 0,
     }
 
     def _init(self, conf):
-        self.h5_path = settings.DATA_PATH / conf.data_path
+        if Path(conf.data_path).exists():
+            # Handle absolute or relative path as-is
+            self.h5_path = Path(conf.data_path)
+        else:
+            self.h5_path = settings.DATA_PATH / conf.data_path
         assert self.h5_path.exists(), self.h5_path
 
     def get_dataset(self, split: str, epoch: int = 0):
@@ -155,6 +165,36 @@ def _build_overlap_matrix(sg, n):
     return mat.toarray() + np.eye(n, dtype=np.float32)
 
 
+def _scene_cache_key(conf, split, seed, h5_file):
+    keys = [
+        "use_pairs",
+        "balance_views",
+        "balance_overlap",
+        "min_overlap",
+        "max_overlap",
+        f"{split}_num_per_scene",
+        f"{split}_scenes",
+    ]
+    conf_dict = {k: conf.get(k) for k in keys}
+    st = h5_file.stat()
+    blob = json.dumps(
+        {
+            "conf": conf_dict,
+            "split": split,
+            "seed": seed,
+            "file": str(h5_file),
+            "size": st.st_size,
+            "mtime": st.st_mtime,
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+def _scene_cache_path(scene, h5_file):
+    return h5_file.parent / f"{scene}_sample_cache.npz"
+
+
 class _H5Split(torch.utils.data.Dataset):
     def __init__(self, conf, h5_path, split, seed=None):
         self.conf = conf
@@ -178,12 +218,16 @@ class _H5Split(torch.utils.data.Dataset):
 
         self.preprocessor = preprocess.ImagePreprocessor(conf.preprocessing)
 
+        logger.info(
+            "Building scene index for %s (%d scenes)",
+            conf.data_path,
+            len(self.scenes) if self.scenes is not None else -1,
+        )
         self.scene_to_h5 = self._build_scene_index()
 
         self.items = []
-        self.scene_num_views = (
-            {}
-        )  # scene → total view count, populated during sample_groups
+        self.scene_num_views = {}  # scene → total view count, populated during sampling
+
         self.sample_groups(self.seed)
 
     def _build_scene_index(self):
@@ -199,7 +243,24 @@ class _H5Split(torch.utils.data.Dataset):
                 }
         # directory: scan all .h5 files and collect their top-level keys
         scene_to_h5 = {}
+        # easy way
+        if self._is_dir:
+            for scene in self.scenes or []:
+                if (self.h5_path / f"{scene}.h5").exists():
+                    scene_to_h5[scene] = self.h5_path / f"{scene}.h5"
+        if self.scenes is not None and len(scene_to_h5) == len(self.scenes):
+            return scene_to_h5
+        logger.info(
+            "Scene index incomplete (%d/%d), scanning all .h5 files in %s",
+            len(scene_to_h5),
+            len(self.scenes) if self.scenes is not None else -1,
+            self.h5_path,
+        )
+        # fallback: scan all .h5 files and collect their top-level keys
         for h5_file in sorted(self.h5_path.glob("*.h5")):
+            if h5_file.stem in self.scenes:
+                scene_to_h5[h5_file.stem] = h5_file
+                continue
             with h5py.File(h5_file, "r") as h5:
                 for scene in h5.keys():
                     if self.scenes is None or scene in self.scenes:
@@ -218,100 +279,179 @@ class _H5Split(torch.utils.data.Dataset):
             self._views_groups[scene] = self._get_scene_group(scene)["views"]
         return self._views_groups[scene]
 
-    def sample_groups(self, seed):
-        self.items = []
+    def sample_scene(self, scene, sg, seed):
+        """Sample pairs for a single scene group. Returns (items, num_views)."""
         num_per_scene = self.conf.get(f"{self.split}_num_per_scene")
         balance_views = self.conf.get("balance_views", False)
         balance_overlap = self.conf.get("balance_overlap", False)
 
+        if self.conf.use_pairs and "pairs" in sg:
+            n = int(sg.attrs["num_views"])
+            pairs = sg["pairs"][()].astype(np.float32)
+            pairs[:, 2] /= 100.0
+            ov = pairs[:, 2]
+            mask = (ov >= self.conf.min_overlap) & (ov <= self.conf.max_overlap)
+            pairs = pairs[mask]
+            if len(pairs) == 0:
+                return [], n
+            if num_per_scene is not None and len(pairs) > num_per_scene:
+                rng = np.random.RandomState(seed)
+                if balance_views:
+                    sel = _balance_views_sample(
+                        pairs[:, :2].astype(int),
+                        n,
+                        num_per_scene,
+                        rng,
+                        overlap_vals=pairs[:, 2] if balance_overlap else None,
+                    )
+                elif balance_overlap:
+                    sel = _balance_overlap_sample(pairs[:, 2], num_per_scene, rng)
+                else:
+                    sel = rng.choice(len(pairs), num_per_scene, replace=False)
+                pairs = pairs[sel]
+            items = [
+                (
+                    scene,
+                    (int(id0), int(id1)),
+                    np.array([[1.0, ov], [ov, 1.0]], dtype=np.float32),
+                )
+                for id0, id1, ov in pairs
+            ]
+            return items, n
+
+        elif "overlaps" in sg:
+            n = int(sg.attrs["num_views"])
+            mat = _build_overlap_matrix(sg, n)
+            overlap_min = np.minimum(mat, mat.T)
+            overlap_max = overlap_min
+            rng = np.random.RandomState(seed)
+            if balance_views:
+                rows, cols = _sample_stratified_pairs_from_overlaps(
+                    overlap_min,
+                    overlap_max,
+                    self.conf.min_overlap,
+                    self.conf.max_overlap,
+                    num_per_scene,
+                    rng,
+                    balance_overlap=balance_overlap,
+                )
+            else:
+                rows, cols = np.where(
+                    (overlap_min >= self.conf.min_overlap)
+                    & (overlap_max <= self.conf.max_overlap)
+                )
+                mask = rows < cols
+                rows, cols = rows[mask], cols[mask]
+                if num_per_scene is not None and len(rows) > num_per_scene:
+                    if balance_overlap:
+                        sel = _balance_overlap_sample(
+                            overlap_min[rows, cols], num_per_scene, rng
+                        )
+                    else:
+                        sel = rng.choice(len(rows), num_per_scene, replace=False)
+                    rows, cols = rows[sel], cols[sel]
+            if len(rows) == 0:
+                return [], n
+            overlap_mats = np.empty((len(rows), 2, 2), dtype=np.float32)
+            overlap_mats[:, 0, 0] = 1.0
+            overlap_mats[:, 1, 1] = 1.0
+            overlap_mats[:, 0, 1] = mat[rows, cols]
+            overlap_mats[:, 1, 0] = mat[cols, rows]
+            items = [
+                (scene, (int(i), int(j)), om)
+                for i, j, om in zip(rows, cols, overlap_mats)
+            ]
+            return items, n
+
+        else:
+            logger.warning("Scene %s has no pairs or overlaps, skipping.", scene)
+            return [], 0
+
+    def sample_scene_cached(self, scene, h5_file, seed):
+        """Load sampling for one scene from npz cache. Returns (None, None) on miss."""
+        from filelock import FileLock
+
+        key = _scene_cache_key(self.conf, self.split, seed, h5_file)
+        cp = _scene_cache_path(scene, h5_file)
+        if not cp.exists():
+            return None, None
+        # Same lock as save_scene_cache's atomic rename, so a read can never
+        # interleave with a concurrent writer swapping the underlying inode
+        # (which otherwise surfaces as a stale-file-handle error on NFS).
+        with FileLock(str(cp) + ".lock"):
+            if not cp.exists():
+                return None, None
+            try:
+                npz = np.load(cp, allow_pickle=False)
+            except (EOFError, ValueError, zipfile.BadZipFile):
+                logger.warning(
+                    "Corrupt sampling cache %s — deleting and recomputing.", cp
+                )
+                cp.unlink(missing_ok=True)
+                return None, None
+            if f"{key}_ids" not in npz:
+                return None, None
+            items = [
+                (scene, (int(i[0]), int(i[1])), ov)
+                for i, ov in zip(npz[f"{key}_ids"], npz[f"{key}_overlaps"])
+            ]
+            return items, int(npz[f"{key}_num_views"])
+
+    def save_scene_cache(self, scene, h5_file, seed, items, num_views):
+        from filelock import FileLock
+
+        key = _scene_cache_key(self.conf, self.split, seed, h5_file)
+        cp = _scene_cache_path(scene, h5_file)
+        with FileLock(str(cp) + ".lock"):
+            try:
+                data = dict(np.load(cp, allow_pickle=False)) if cp.exists() else {}
+            except (EOFError, ValueError, zipfile.BadZipFile):
+                logger.warning("Corrupt sampling cache %s — overwriting.", cp)
+                data = {}
+            data[f"{key}_ids"] = (
+                np.array([[it[1][0], it[1][1]] for it in items], dtype=np.int32)
+                if items
+                else np.zeros((0, 2), dtype=np.int32)
+            )
+            data[f"{key}_overlaps"] = (
+                np.array([it[2] for it in items], dtype=np.float32)
+                if items
+                else np.zeros((0, 2, 2), dtype=np.float32)
+            )
+            data[f"{key}_num_views"] = np.int32(num_views)
+            tmp = cp.with_name(cp.stem + ".tmp.npz")
+            np.savez(tmp, **data)
+            tmp.replace(cp)  # atomic on POSIX — readers never see a partial write
+
+    def sample_groups(self, seed):
+        self.items = []
         for scene, h5_file in tqdm(
             self.scene_to_h5.items(), desc=f"Sampling {self.conf.data_path} groups"
         ):
-            with h5py.File(h5_file, "r") as h5:
-                sg = h5[scene]
-                if self.conf.use_pairs and "pairs" in sg:
-                    n = int(sg.attrs["num_views"])
-                    self.scene_num_views[scene] = n
-                    pairs = sg["pairs"][()].astype(np.float32)
-                    pairs[:, 2] /= 100.0
-                    ov = pairs[:, 2]
-                    mask = (ov >= self.conf.min_overlap) & (ov <= self.conf.max_overlap)
-                    pairs = pairs[mask]
-                    if len(pairs) == 0:
-                        continue
-                    if num_per_scene is not None and len(pairs) > num_per_scene:
-                        rng = np.random.RandomState(seed)
-                        if balance_views:
-                            sel = _balance_views_sample(
-                                pairs[:, :2].astype(int),
-                                n,
-                                num_per_scene,
-                                rng,
-                                overlap_vals=pairs[:, 2] if balance_overlap else None,
-                            )
-                        elif balance_overlap:
-                            sel = _balance_overlap_sample(
-                                pairs[:, 2], num_per_scene, rng
-                            )
-                        else:
-                            sel = rng.choice(len(pairs), num_per_scene, replace=False)
-                        pairs = pairs[sel]
-                    for id0, id1, ov in pairs:
-                        overlap_mat = np.array([[1.0, ov], [ov, 1.0]], dtype=np.float32)
-                        self.items.append((scene, (int(id0), int(id1)), overlap_mat))
-
-                elif "overlaps" in sg:
-                    n = int(sg.attrs["num_views"])
-                    self.scene_num_views[scene] = n
-                    mat = _build_overlap_matrix(sg, n)
-                    overlap_min = np.minimum(mat, mat.T)
-                    overlap_max = overlap_min
-                    rng = np.random.RandomState(seed)
-                    if balance_views:
-                        rows, cols = _sample_stratified_pairs_from_overlaps(
-                            overlap_min,
-                            overlap_max,
-                            self.conf.min_overlap,
-                            self.conf.max_overlap,
-                            num_per_scene,
-                            rng,
-                            balance_overlap=balance_overlap,
-                        )
-                    else:
-                        rows, cols = np.where(
-                            (overlap_min >= self.conf.min_overlap)
-                            & (overlap_max <= self.conf.max_overlap)
-                        )
-                        mask = rows < cols
-                        rows, cols = rows[mask], cols[mask]
-                        if num_per_scene is not None and len(rows) > num_per_scene:
-                            if balance_overlap:
-                                sel = _balance_overlap_sample(
-                                    overlap_min[rows, cols], num_per_scene, rng
-                                )
-                            else:
-                                sel = rng.choice(
-                                    len(rows), num_per_scene, replace=False
-                                )
-                            rows, cols = rows[sel], cols[sel]
-                    if len(rows) == 0:
-                        continue
-                    overlap_mats = np.empty((len(rows), 2, 2), dtype=np.float32)
-                    overlap_mats[:, 0, 0] = 1.0
-                    overlap_mats[:, 1, 1] = 1.0
-                    overlap_mats[:, 0, 1] = mat[rows, cols]
-                    overlap_mats[:, 1, 0] = mat[cols, rows]
-                    self.items.extend(
-                        (scene, (int(i), int(j)), om)
-                        for i, j, om in zip(rows, cols, overlap_mats)
-                    )
-
-                else:
-                    logger.warning(
-                        "Scene %s has no pairs or overlaps, skipping.", scene
-                    )
-
+            scene_items, num_views = None, None
+            if self.conf.cache_sampling:
+                scene_items, num_views = self.sample_scene_cached(scene, h5_file, seed)
+            if scene_items is None:
+                with h5py.File(h5_file, "r", rdcc_nbytes=0) as f:
+                    scene_items, num_views = self.sample_scene(scene, f[scene], seed)
+                if self.conf.cache_sampling:
+                    self.save_scene_cache(scene, h5_file, seed, scene_items, num_views)
+            if num_views > 0:
+                self.scene_num_views[scene] = num_views
+            self.items.extend(scene_items)
         np.random.RandomState(seed).shuffle(self.items)
+
+    def worker_init(self, worker_id):
+        if not self.conf.preload_files:
+            return
+        logger.info(f"Worker {worker_id} preloading h5 files and view groups...")
+        self._h5_files = {}
+        self._views_groups = {}
+        for scene, h5_file in self.scene_to_h5.items():
+            key = str(h5_file)
+            if key not in self._h5_files:
+                self._h5_files[key] = h5py.File(h5_file, "r", rdcc_nbytes=0)
+            self._views_groups[scene] = self._h5_files[key][scene]["views"]
 
     def _read_view(self, scene, idx):
         view = self._get_views_group(scene)[str(idx)]
