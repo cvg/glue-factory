@@ -387,7 +387,7 @@ class Pose(tensor.TensorWrapper):
 
 
 class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
-    share_df: bool = True  # share fx, fy updates (global): has no impact outside BA
+    share_df: bool = False  # share fx, fy updates (global): has no impact outside BA
 
     def __init__(self, data_: torch.Tensor, share_df: bool = False):
         assert data_.shape[-1] in {6, 8, 10}
@@ -432,16 +432,20 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
         )
 
     @classmethod
-    def data_from_K(cls, K: torch.Tensor):
+    def data_from_K(cls, K: torch.Tensor, hw: Tuple[int, int] = None):
         cx, cy = K[..., 0, 2], K[..., 1, 2]
         fx, fy = K[..., 0, 0], K[..., 1, 1]
         data = torch.stack([2 * cx, 2 * cy, fx, fy, cx, cy], -1)
+        if hw is not None:
+            h, w = hw
+            data[..., 0] = w
+            data[..., 1] = h
         return data
 
     @classmethod
     @tensor.autocast
-    def from_calibration_matrix(cls, K: torch.Tensor):
-        return cls(cls.data_from_K(K))
+    def from_calibration_matrix(cls, K: torch.Tensor, hw: Tuple[int, int] = None):
+        return cls(cls.data_from_K(K, hw=hw))
 
     @classmethod
     def from_image(cls, img: torch.Tensor):
@@ -559,23 +563,33 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
 
     @tensor.autocast
     def compose_image_transform(
-        self, new_t_img: torch.Tensor, inplace: bool = False
+        self,
+        new_t_img: torch.Tensor,
+        inplace: bool = False,
+        hw: tuple = None,
     ) -> "Camera":
         """Update the camera parameters after an image space transformation.
         Args:
             new_t_img: 3x3 image transformation matrix.
             inplace: whether to update the current camera or return a new one.
+            hw: (height, width) of the output image. If None, inferred from the
+                linear part of new_t_img (correct for pure scale; wrong for crop+trim).
         """
-        K = self.calibration_matrix()
-        new_K = new_t_img.to(K) @ K
+        new_t_img = new_t_img.to(self.data_)
+        new_K = new_t_img @ self.calibration_matrix()
+        if hw is not None:
+            new_size = self.data_.new_tensor([hw[1], hw[0]])
+        else:
+            # Scale stored image size by the linear (non-translation) part of the transform.
+            new_size = (new_t_img[..., :2, :2] @ self.size.unsqueeze(-1)).squeeze(-1)
         cls = self.__class__
-        newdata_ = cls.data_from_K(new_K)
-
+        # data_from_K returns [w, h, ...intrinsics...]; replace w/h with transform-derived size.
+        newdata_ = torch.cat([new_size, cls.data_from_K(new_K)[..., 2:]], -1)
         alldata_ = torch.cat([newdata_, self.dist], -1)
         if inplace:
             self.data_ = alldata_
             return self
-        return cls(alldata_)
+        return self.__class__(alldata_)
 
     def empty_image(self, rgb: bool = False) -> torch.Tensor:  # H X W or 3 X H X W
         """Create an empty image with the camera size."""
@@ -584,12 +598,12 @@ class Camera(tensor.TensorWrapper, tensor_only=False, nocast=True):
         dims = (3, h, w) if rgb else (h, w)
         return torch.zeros(dims, dtype=self.data_.dtype, device=self.data_.device)
 
-    def crop(self, left_top: Tuple[float], size: Tuple[int]):
-        """Update the camera parameters after cropping an image."""
-        left_top = self.data_.new_tensor(left_top, device=self.data_.device)
-        size = self.data_.new_tensor(size, device=self.data_.device)
-        data = torch.cat([size, self.f, self.c - left_top, self.dist], -1)
-        return self.__class__(data)
+    # def crop(self, left_top: Tuple[float], size: Tuple[int]):
+    #     """Update the camera parameters after cropping an image."""
+    #     left_top = self.data_.new_tensor(left_top, device=self.data_.device)
+    #     size = self.data_.new_tensor(size, device=self.data_.device)
+    #     data = torch.cat([size, self.f, self.c - left_top, self.dist], -1)
+    #     return self.__class__(data)
 
     # @tensor.autocast
     @tensor.autovmap
@@ -774,10 +788,15 @@ class PerspectiveCamera(Camera):
         return cls(data)
 
     @classmethod
-    def data_from_K(cls, K: torch.Tensor):
+    def data_from_K(cls, K: torch.Tensor, hw: tuple = None):
         cx, cy = K[..., 0, 2], K[..., 1, 2]
-        data = torch.concat([2 * cx[..., None], 2 * cy[..., None], K.flatten(-2)], -1)
-        return data
+        if hw is not None:
+            w_val = torch.ones_like(cx[..., None]) * hw[1]
+            h_val = torch.ones_like(cy[..., None]) * hw[0]
+        else:
+            w_val = 2 * cx[..., None]
+            h_val = 2 * cy[..., None]
+        return torch.concat([w_val, h_val, K.flatten(-2)], -1)
 
     @classmethod
     def from_image(cls, img):

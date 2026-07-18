@@ -14,7 +14,7 @@ def autocast(func):
     """
 
     @functools.wraps(func)
-    def wrap(self, *args):
+    def wrap(self, *args, **kwargs):
         device = torch.device("cpu")
         dtype = None
         if isinstance(self, torch.Tensor):
@@ -29,7 +29,7 @@ def autocast(func):
                 arg = torch.from_numpy(arg)
                 arg = arg.to(device=device, dtype=dtype)
             cast_args.append(arg)
-        return func(self, *cast_args)
+        return func(self, *cast_args, **kwargs)
 
     return wrap
 
