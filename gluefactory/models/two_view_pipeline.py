@@ -15,6 +15,7 @@ from omegaconf import OmegaConf
 from ..utils import misc
 from . import get_model
 from .base_model import BaseModel
+from .train_eval_switch import build_with_train_alternative
 
 to_ctr = OmegaConf.to_container  # convert DictConfig to dict
 
@@ -45,7 +46,7 @@ class TwoViewPipeline(BaseModel):
 
     def _init(self, conf):
         if conf.extractor.name:
-            self.extractor = get_model(conf.extractor.name)(to_ctr(conf.extractor))
+            self.extractor = build_with_train_alternative(conf.extractor)
 
         if conf.matcher.name:
             self.matcher = get_model(conf.matcher.name)(to_ctr(conf.matcher))
@@ -62,24 +63,31 @@ class TwoViewPipeline(BaseModel):
             )
 
     def _precompute_covisible_bboxes(self, data, num_views):
-        """Inject covisible bounding boxes into each view's data dict."""
+        """Inject covisible bounding boxes (and the underlying mask) into each
+        view's data dict."""
         from ..geometry.depth import covisible_bbox
 
         pad = self.conf.extractor.get("cell_size", 16)
+        stride = self.conf.extractor.get("covisible_stride", 4)
         if "T_0to1" in data and "T_1to0" not in data:
             data["T_1to0"] = data["T_0to1"].inv()
         for i in range(num_views):
             j = 1 - i
             vi, vj = data[f"view{i}"], data[f"view{j}"]
             if "depth" in vi and "camera" in vi and f"T_{i}to{j}" in data:
-                vi["covisible_bbox"] = covisible_bbox(
+                bbox, covis = covisible_bbox(
                     vi["depth"],
                     vi["camera"],
                     vj["camera"],
                     data[f"T_{i}to{j}"],
                     depth_j=vj.get("depth", None),
                     pad=pad,
+                    stride=stride,
+                    return_mask=True,
                 )
+                vi["covisible_bbox"] = bbox
+                vi["covisible_mask"] = covis
+                vi["covisible_mask_stride"] = stride
 
     def extract_view(self, data_i):
         pred_i = data_i.get("cache", {})

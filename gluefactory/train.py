@@ -119,9 +119,10 @@ def main_worker(rank, conf, output_dir, args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if rank == 0 and not args.quiet:
-        logger.info(
-            "Starting training with configuration:\n%s", OmegaConf.to_yaml(conf)
-        )
+        logger.info("Starting training, config: %s", output_dir / "config.yaml")
+        cli_conf = OmegaConf.load(output_dir / "cli_config.yaml")
+        if cli_conf:
+            logger.info("CLI overrides:\n%s", OmegaConf.to_yaml(cli_conf))
     if distributed:
         device = init_process(output_dir, rank, conf.train.num_devices)
     if rank == 0:

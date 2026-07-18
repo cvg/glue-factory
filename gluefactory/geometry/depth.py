@@ -129,7 +129,8 @@ def covisible_bbox(
     max_rel_depth_error: float = 0.05,
     th_consistency: float = 10,
     stride: int = 4,
-) -> torch.Tensor:
+    return_mask: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
     """Bounding box of pixels in view i that project into view j.
 
     Args:
@@ -142,8 +143,12 @@ def covisible_bbox(
         max_rel_depth_error: maximum relative depth error for circle consistency (default 0.05)
         th_consistency: reprojection error threshold for circle consistency (default 10 pixels)
         stride: use every n-th pixel in each dimension (default 1, no subsampling)
+        return_mask: if True, also return the per-pixel covisibility mask this
+            bbox was derived from (at 1/stride resolution), instead of
+            discarding it.
     Returns:
-        (B, 4) tensor of [wmin, hmin, wmax, hmax] in pixels, clamped to image
+        (B, 4) tensor of [wmin, hmin, wmax, hmax] in pixels, clamped to image.
+        If return_mask, also a (B, H//stride, W//stride) bool covisibility mask.
     """
     h, w = depth_i.shape[-2:]
     depth_s = depth_i[..., ::stride, ::stride]
@@ -185,7 +190,10 @@ def covisible_bbox(
     hmin = (hmin - pad).clamp(min=0)
     wmax = (wmax + pad).clamp(max=w)
     hmax = (hmax + pad).clamp(max=h)
-    return torch.stack([wmin, hmin, wmax, hmax], dim=-1)
+    bbox = torch.stack([wmin, hmin, wmax, hmax], dim=-1)
+    if return_mask:
+        return bbox, covis
+    return bbox
 
 
 def dense_warp_consistency(

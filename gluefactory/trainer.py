@@ -5,6 +5,7 @@ Author: Philipp Lindenberger
 """
 
 import collections
+import gc
 import shutil
 import signal
 from pathlib import Path
@@ -93,6 +94,15 @@ def compose_loss(
     return loss
 
 
+def eval_model(
+    model: torch.nn.parallel.DistributedDataParallel | BaseModel,
+) -> BaseModel:
+    model.eval()  # Set to eval mode to disable training-specific behavior (e.g. sync_bn stats update)
+    is_ddp = isinstance(model, torch.nn.parallel.DistributedDataParallel)
+    model = model.module if is_ddp else model  # Get the original model
+    return model
+
+
 @torch.compiler.set_stance("force_eager")
 @torch.no_grad()
 def run_evaluation(
@@ -105,9 +115,8 @@ def run_evaluation(
     max_iters: int | None = None,
     compose_loss_str: str | None = None,
 ) -> tuple[Any, ...]:
-    model.eval()
     is_ddp = isinstance(model, torch.nn.parallel.DistributedDataParallel)
-    model = model.module if is_ddp else model  # Get the original model
+    model = eval_model(model)
     results = {}
     pr_metrics = collections.defaultdict(tools.PRMetric)
     figures = []
@@ -750,8 +759,16 @@ class Trainer:
             memory_total = device_stats["global_total"]
             tools.write_dict_summaries(writer, "memory", device_stats, tot_n_samples)
 
+        import psutil
+
+        cpu_rss_gb = psutil.Process().memory_info().rss / 1024**3
+        if writer is not None:
+            writer.add_scalar("memory/cpu_rss_gb", cpu_rss_gb, tot_n_samples)
+
         return (
-            f"[Used {memory_used:.1f}/{memory_total:.1f} GB | {steps_per_sec:.1f} it/s]"
+            f"[VRAM {memory_used:.1f}/{memory_total:.1f} GB"
+            f" | CPU {cpu_rss_gb:.1f} GB"
+            f" | {steps_per_sec:.1f} it/s]"
         )
 
     def log_data(
@@ -1021,7 +1038,7 @@ class Trainer:
             )
             if should_plot and self.rank == 0:
                 with torch.no_grad():
-                    figures = self.model.visualize(pred, data)
+                    figures = eval_model(self.model).visualize(pred, data)
                 tools.write_image_summaries(
                     writer, "training", figures, self.current_it
                 )
@@ -1176,6 +1193,7 @@ class Trainer:
             self._apply_finetune_scales(dataset)
 
             # Create data loader
+            self.info("Creating train data loader (sampling)...")
             train_loader = dataset.get_data_loader(
                 self.conf.train_split,
                 distributed=self.distributed,
@@ -1183,6 +1201,7 @@ class Trainer:
                 pinned=True,
                 overfit=self.conf.overfit,
             )
+            self.info("Train data loader ready.")
             self.epoch_tracker.set_epoch_length(len(train_loader))
             self.info(f"Training loader has {len(train_loader)} batches")
 
@@ -1191,6 +1210,7 @@ class Trainer:
                 output_dir, train_loader, writer, max_iters=self.conf.train_iters
             )
             del train_loader  # shutdown multiprocessing pool
+            gc.collect()  # ensure workers are dead before val spawns
 
             self.epoch += 1
             # Checkpointing
@@ -1281,8 +1301,11 @@ def init_trainer(
         assert (
             dummy_batch_fn is not None
         ), "dummy_batch_fn must be provided for lazy_init"
+        logger.info("Building dummy dataset and sampling...")
         dummy_batch = dummy_batch_fn()
+        logger.info("Moving dummy batch to device...")
         dummy_batch = misc.batch_to_device(dummy_batch, device, non_blocking=False)
+        logger.info("Running model forward on dummy batch...")
         with torch.no_grad():
             model(dummy_batch)
         del dummy_batch

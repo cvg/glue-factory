@@ -659,6 +659,57 @@ def sample_random_keypoints(n, transform, original_image_size, device=None, bbox
     return (t[:2, :] @ rand_h.T).T
 
 
+def sample_valid_keypoints(mask, n, stride=1, dtype=torch.float32):
+    """Sample n distinct random True positions per batch row of a boolean mask.
+
+    Fully vectorized over the batch (no Python loop, no ragged nonzero()),
+    via topk on random keys with invalid positions masked to -1.
+
+    Args:
+        mask: (B, H, W) bool tensor. True = eligible position, in the mask's
+            own (possibly coarsened) grid.
+        n: number of positions to sample per batch item.
+        stride: pixels each mask cell spans in each dimension (e.g. 4 for a
+            mask computed at 1/4 resolution). Sampled cell indices are scaled
+            by stride and jittered by an independent uniform offset in
+            [0, stride) per axis, so points don't collapse onto a
+            stride-aligned lattice. stride=1 gives ordinary per-pixel jitter.
+        dtype: dtype of the returned coordinates.
+
+    Returns:
+        (B, n, 2) tensor of (x, y) coordinates in full-resolution pixel space.
+    """
+    B, H, W = mask.shape
+    valid_counts = mask.sum(dim=(-2, -1))
+    if not torch.all(valid_counts >= n):
+        raise ValueError(
+            f"sample_valid_keypoints: requested n={n} valid positions per "
+            f"batch item, but the sparsest item in this batch has only "
+            f"{int(valid_counts.min())} True entries in the ({H}x{W}) mask."
+        )
+    keys = torch.rand(B, H, W, device=mask.device).masked_fill(~mask, -1.0)
+    flat_idx = keys.flatten(-2).topk(n, dim=-1).indices  # (B, n), distinct
+    row, col = flat_idx // W, flat_idx % W
+    jitter = torch.rand(B, n, 2, device=mask.device, dtype=dtype) * stride
+    x = col.to(dtype) * stride + jitter[..., 0]
+    y = row.to(dtype) * stride + jitter[..., 1]
+    return torch.stack([x, y], dim=-1)
+
+
+def erode_mask(mask, margin):
+    """Erode a (B, H, W) bool mask by `margin` cells in every direction.
+
+    Cells within `margin` of a False cell, or within `margin` of the tensor's
+    own border, become False. margin <= 0 is a no-op.
+    """
+    if margin <= 0:
+        return mask
+    inv = (~mask).to(torch.float32)[:, None]
+    inv = F.pad(inv, [margin] * 4, mode="constant", value=1.0)
+    dilated_inv = F.max_pool2d(inv, kernel_size=2 * margin + 1, stride=1)
+    return dilated_inv[:, 0] < 0.5
+
+
 def pad_and_stack(
     sequences: Sequence[torch.Tensor],
     length: Optional[int] = None,

@@ -47,6 +47,8 @@ def worker_init_fn(i):
         tools.set_num_threads(conf.num_threads)
     else:
         tools.set_num_threads(1)
+    if hasattr(info.dataset, "worker_init"):
+        info.dataset.worker_init(info.id)
 
 
 def collate(batch):
@@ -187,7 +189,9 @@ class BaseDataset(metaclass=ABCMeta):
     @functools.cache
     def get_dummy_batch(self, split: str = "val", batch_size: int | None = 2, **kwargs):
         loader = self.get_dummy_loader(split, batch_size=batch_size, **kwargs)
+        logger.info("Fetching dummy batch from %s split...", split)
         dummy_batch = next(iter(loader))
+        logger.info("Dummy batch fetched.")
         del loader
         return dummy_batch
 

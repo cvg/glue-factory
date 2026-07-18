@@ -175,7 +175,8 @@ class ComposedSplit(torch.utils.data.Dataset):
                 ):
                     view["camera"] = PerspectiveCamera.from_pinhole(view["camera"])
                 element[f"view{i}"]["camera"] = view["camera"].compose_image_transform(
-                    element[f"view{i}"]["transform"]
+                    element[f"view{i}"]["transform"],
+                    hw=element[f"view{i}"]["image"].shape[-2:],
                 )
         if hasattr(self, "dataset_valid"):
             element["valid_geometry"] = self.dataset_valid[dataset_idx]
@@ -210,6 +211,11 @@ class ComposedSplit(torch.utils.data.Dataset):
                     element["overlap"] = np.eye(2, dtype=np.float32)
 
         return element
+
+    def worker_init(self, worker_id):
+        for dataset in self.datasets:
+            if hasattr(dataset, "worker_init"):
+                dataset.worker_init(worker_id)
 
     def stats(self):
         metrics, figures = {}, {}
