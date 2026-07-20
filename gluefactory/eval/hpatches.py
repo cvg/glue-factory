@@ -1,32 +1,22 @@
+"""HPatches Evaluation Pipeline."""
+
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
-from pprint import pprint
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from omegaconf import OmegaConf
 from tqdm import tqdm
 
-from ..datasets import get_dataset
+from .. import datasets
 from ..models.cache_loader import CacheLoader
-from ..settings import EVAL_PATH
-from ..utils.export_predictions import export_predictions
-from ..utils.tensor import map_tensor
-from ..utils.tools import AUCMetric
-from ..visualization.viz2d import plot_cumulative
-from .eval_pipeline import EvalPipeline
-from .io import get_eval_parser, load_model, parse_eval_args
-from .utils import (
-    eval_homography_dlt,
-    eval_homography_robust,
-    eval_matches_homography,
-    eval_poses,
-)
+from ..utils import misc, tools
+from ..utils.export import export_predictions
+from ..visualization import viz2d
+from . import eval_pipeline, io, utils
 
 
-class HPatchesPipeline(EvalPipeline):
+class HPatchesPipeline(eval_pipeline.EvalPipeline):
     default_conf = {
         "data": {
             "batch_size": 1,
@@ -44,21 +34,21 @@ class HPatchesPipeline(EvalPipeline):
         },
         "eval": {
             "estimator": "poselib",
-            "ransac_th": 1.0,  # -1 runs a bunch of thresholds and selects the best
+            "ransac_th": -1.0,  # -1 runs a bunch of thresholds and selects the best
         },
     }
-    export_keys = [
+    export_keys = (
         "keypoints0",
         "keypoints1",
-        "keypoint_scores0",
-        "keypoint_scores1",
         "matches0",
         "matches1",
         "matching_scores0",
         "matching_scores1",
-    ]
+    )
 
-    optional_export_keys = [
+    optional_export_keys = (
+        "keypoint_scores0",
+        "keypoint_scores1",
         "lines0",
         "lines1",
         "orig_lines0",
@@ -67,7 +57,9 @@ class HPatchesPipeline(EvalPipeline):
         "line_matches1",
         "line_matching_scores0",
         "line_matching_scores1",
-    ]
+        "confidence_map0",
+        "confidence_map1",
+    )
 
     def _init(self, conf):
         pass
@@ -75,14 +67,14 @@ class HPatchesPipeline(EvalPipeline):
     @classmethod
     def get_dataloader(self, data_conf=None):
         data_conf = data_conf if data_conf else self.default_conf["data"]
-        dataset = get_dataset("hpatches")(data_conf)
-        return dataset.get_data_loader("test")
+        dataset = datasets.get_dataset("hpatches")(data_conf)
+        return dataset.get_data_loader("test", num_samples=self.num_samples)
 
     def get_predictions(self, experiment_dir, model=None, overwrite=False):
         pred_file = experiment_dir / "predictions.h5"
         if not pred_file.exists() or overwrite:
             if model is None:
-                model = load_model(self.conf.model, self.conf.checkpoint)
+                model = io.load_model(self.conf.model, self.conf.checkpoint)
             export_predictions(
                 self.get_dataloader(self.conf.data),
                 model,
@@ -99,7 +91,11 @@ class HPatchesPipeline(EvalPipeline):
         conf = self.conf.eval
 
         test_thresholds = (
-            ([conf.ransac_th] if conf.ransac_th > 0 else [0.5, 1.0, 1.5, 2.0, 2.5, 3.0])
+            (
+                [conf.ransac_th]
+                if conf.ransac_th > 0
+                else [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 7.0, 10.0, 15.0]
+            )
             if not isinstance(conf.ransac_th, Iterable)
             else conf.ransac_th
         )
@@ -108,15 +104,15 @@ class HPatchesPipeline(EvalPipeline):
         for i, data in enumerate(tqdm(loader)):
             pred = cache_loader(data)
             # Remove batch dimension
-            data = map_tensor(data, lambda t: torch.squeeze(t, dim=0))
+            data = misc.map_tensor(data, lambda t: torch.squeeze(t, dim=0))
             # add custom evaluations here
             if "keypoints0" in pred:
-                results_i = eval_matches_homography(data, pred)
-                results_i = {**results_i, **eval_homography_dlt(data, pred)}
+                results_i = utils.eval_matches_homography(data, pred)
+                results_i = {**results_i, **utils.eval_homography_dlt(data, pred)}
             else:
                 results_i = {}
             for th in test_thresholds:
-                pose_results_i = eval_homography_robust(
+                pose_results_i = utils.eval_homography_robust(
                     data,
                     pred,
                     {"estimator": conf.estimator, "ransac_th": th},
@@ -132,19 +128,27 @@ class HPatchesPipeline(EvalPipeline):
 
         # summarize results as a dict[str, float]
         # you can also add your custom evaluations here
+        scenes = np.array(results["scenes"])
+        is_viewpoint = np.char.startswith(scenes, "v_")
+        is_illumination = np.char.startswith(scenes, "i_")
         summaries = {}
         for k, v in results.items():
             arr = np.array(v)
-            if not np.issubdtype(np.array(v).dtype, np.number):
+            if not np.issubdtype(arr.dtype, np.number):
                 continue
             summaries[f"m{k}"] = round(np.median(arr), 3)
+            if k.startswith("prec@"):
+                summaries[f"m{k}_viewpoint"] = round(np.median(arr[is_viewpoint]), 3)
+                summaries[f"m{k}_illumination"] = round(
+                    np.median(arr[is_illumination]), 3
+                )
 
         auc_ths = [1, 3, 5]
-        best_pose_results, best_th = eval_poses(
+        best_pose_results, best_th = utils.eval_poses(
             pose_results, auc_ths=auc_ths, key="H_error_ransac", unit="px"
         )
         if "H_error_dlt" in results.keys():
-            dlt_aucs = AUCMetric(auc_ths, results["H_error_dlt"]).compute()
+            dlt_aucs = tools.AUCMetric(auc_ths, results["H_error_dlt"]).compute()
             for i, ath in enumerate(auc_ths):
                 summaries[f"H_error_dlt@{ath}px"] = dlt_aucs[i]
 
@@ -155,7 +159,7 @@ class HPatchesPipeline(EvalPipeline):
         }
 
         figures = {
-            "homography_recall": plot_cumulative(
+            "homography_recall": viz2d.plot_cumulative(
                 {
                     "DLT": results["H_error_dlt"],
                     self.conf.eval.estimator: results["H_error_ransac"],
@@ -170,34 +174,4 @@ class HPatchesPipeline(EvalPipeline):
 
 
 if __name__ == "__main__":
-    dataset_name = Path(__file__).stem
-    parser = get_eval_parser()
-    args = parser.parse_intermixed_args()
-
-    default_conf = OmegaConf.create(HPatchesPipeline.default_conf)
-
-    # mingle paths
-    output_dir = Path(EVAL_PATH, dataset_name)
-    output_dir.mkdir(exist_ok=True, parents=True)
-
-    name, conf = parse_eval_args(
-        dataset_name,
-        args,
-        "configs/",
-        default_conf,
-    )
-
-    experiment_dir = output_dir / name
-    experiment_dir.mkdir(exist_ok=True)
-
-    pipeline = HPatchesPipeline(conf)
-    s, f, r = pipeline.run(
-        experiment_dir, overwrite=args.overwrite, overwrite_eval=args.overwrite_eval
-    )
-
-    # print results
-    pprint(s)
-    if args.plot:
-        for name, fig in f.items():
-            fig.canvas.manager.set_window_title(name)
-        plt.show()
+    io.run_cli(HPatchesPipeline, name=Path(__file__).stem)

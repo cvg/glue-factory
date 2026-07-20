@@ -1,0 +1,11 @@
+model:
+  name: two_view_pipeline
+  allow_no_extract: true
+
+pipeline:
+  name: reconstruction.colmap
+
+benchmarks:
+  eth3d_reconstruction:
+    pipeline:
+      name: reconstruction.colmap

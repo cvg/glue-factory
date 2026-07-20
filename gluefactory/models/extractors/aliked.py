@@ -7,7 +7,8 @@ from torch import nn
 from torch.nn.modules.utils import _pair
 from torchvision.models import resnet
 
-from gluefactory.models.base_model import BaseModel
+from ...utils import misc
+from ..base_model import BaseModel
 
 # coordinates system
 #  ------------------------------>  [ x: range=-1.0~1.0; w: range=0~W ]
@@ -124,9 +125,9 @@ class DKD(nn.Module):
         nms_scores[:, :, :, : self.radius] = 0
         if image_size is not None:
             for i in range(scores_map.shape[0]):
-                w, h = image_size[i].long()
-                nms_scores[i, :, h.item() - self.radius :, :] = 0
-                nms_scores[i, :, :, w.item() - self.radius :] = 0
+                wr, hr = image_size[i].long()
+                nms_scores[i, :, hr.item() - self.radius :, :] = 0
+                nms_scores[i, :, :, wr.item() - self.radius :] = 0
         else:
             nms_scores[:, :, -self.radius :, :] = 0
             nms_scores[:, :, :, -self.radius :] = 0
@@ -596,6 +597,7 @@ class ALIKED(BaseModel):
         "force_num_keypoints": False,
         "pretrained": True,
         "nms_radius": 2,
+        "dense_outputs": False,
     }
 
     checkpoint_url = "https://github.com/Shiaoming/ALIKED/raw/main/models/{}.pth"
@@ -767,22 +769,32 @@ class ALIKED(BaseModel):
     def _forward(self, data):
         image = data["image"]
         feature_map, score_map = self.extract_dense_map(image)
-        keypoints, kptscores, scoredispersitys = self.dkd(
-            score_map, image_size=data.get("image_size")
-        )
+        if "keypoints" in data and "keypoint_scores" in data:
+            keypoints_i = data["keypoints"]
+            keypoints = misc.normalize_coords(keypoints_i, image.shape[-2:])
+            kptscores = data["keypoint_scores"]
+            scoredispersitys = torch.zeros_like(kptscores)
+        else:
+            keypoints, kptscores, scoredispersitys = self.dkd(
+                score_map, image_size=data.get("image_size")
+            )
         descriptors, _ = self.desc_head(feature_map, keypoints)
 
         _, _, h, w = image.shape
         wh = torch.tensor([w - 1, h - 1], device=image.device)
         # no padding required,
         # we can set detection_threshold=-1 and conf.max_num_keypoints
-        return {
-            "keypoints": wh * (torch.stack(keypoints) + 1) / 2.0,  # B N 2
+        pred = {
             "descriptors": torch.stack(descriptors),  # B N D
-            "keypoint_scores": torch.stack(kptscores),  # B N
-            "score_dispersity": torch.stack(scoredispersitys),
             "score_map": score_map,  # Bx1xHxW
         }
+        if "keypoints" not in data:
+            pred["keypoints"] = wh * (torch.stack(keypoints) + 1) / 2.0  # B N 2
+            pred["keypoint_scores"] = torch.stack(kptscores)  # B N
+            pred["score_dispersity"] = torch.stack(scoredispersitys)  # B N
+        if self.conf.dense_outputs:
+            pred["image_features_fine"] = feature_map  # BxDxHxW
+        return pred
 
     def loss(self, pred, data):
         raise NotImplementedError

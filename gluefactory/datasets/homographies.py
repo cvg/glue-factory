@@ -18,25 +18,18 @@ import torch
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
-from ..geometry.homography import (
-    compute_homography,
-    sample_homography_corners,
-    warp_points,
-)
-from ..models.cache_loader import CacheLoader, pad_local_features
-from ..settings import DATA_PATH
-from ..utils.image import read_image
-from ..utils.tools import fork_rng
-from ..visualization.viz2d import plot_image_grid
-from .augmentations import IdentityAugmentation, augmentations
-from .base_dataset import BaseDataset
+from .. import settings
+from ..geometry import homography, reconstruction
+from ..models import cache_loader
+from ..utils import misc, preprocess, tools
+from . import augmentations, base_dataset
 
 logger = logging.getLogger(__name__)
 
 
 def sample_homography(img, conf: dict, size: list):
     data = {}
-    H, _, coords, _ = sample_homography_corners(img.shape[:2][::-1], **conf)
+    H, _, coords, _ = homography.sample_homography_corners(img.shape[:2][::-1], **conf)
     data["image"] = cv2.warpPerspective(img, H, tuple(size))
     data["H_"] = H.astype(np.float32)
     data["coords"] = coords.astype(np.float32)
@@ -44,7 +37,7 @@ def sample_homography(img, conf: dict, size: list):
     return data
 
 
-class HomographyDataset(BaseDataset):
+class HomographyDataset(base_dataset.BaseDataset):
     default_conf = {
         # image search
         "data_dir": "revisitop1m",  # the top-level directory
@@ -68,16 +61,18 @@ class HomographyDataset(BaseDataset):
             "n_angles": 10,
             "patch_shape": [640, 480],
             "min_convexity": 0.05,
+            "affine": False,
         },
         "photometric": {
             "name": "dark",
             "p": 0.75,
             # 'difficulty': 1.0,  # currently unused
         },
+        "add_dummy_pose_depth": False,  # for compatibility with some pipelines
         # feature loading
         "load_features": {
             "do": False,
-            **CacheLoader.default_conf,
+            **cache_loader.CacheLoader.default_conf,
             "collate": False,
             "thresh": 0.0,
             "max_num_keypoints": -1,
@@ -86,7 +81,7 @@ class HomographyDataset(BaseDataset):
     }
 
     def _init(self, conf):
-        data_dir = DATA_PATH / conf.data_dir
+        data_dir = settings.DATA_PATH / conf.data_dir
         if not data_dir.exists():
             if conf.data_dir == "revisitop1m":
                 logger.info("Downloading the revisitop1m dataset.")
@@ -110,9 +105,10 @@ class HomographyDataset(BaseDataset):
             if not image_list.exists():
                 raise FileNotFoundError(f"Cannot find image list {image_list}.")
             images = image_list.read_text().rstrip("\n").split("\n")
-            for image in images:
-                if self.conf.check_file_exists and not (image_dir / image).exists():
-                    raise FileNotFoundError(image_dir / image)
+            if self.conf.check_file_exists:
+                for image in images:
+                    if not (image_dir / image).exists():
+                        raise FileNotFoundError(image_dir / image)
             logger.info("Found %d images in list file.", len(images))
         elif isinstance(conf.image_list, omegaconf.listconfig.ListConfig):
             images = conf.image_list.to_container()
@@ -129,7 +125,7 @@ class HomographyDataset(BaseDataset):
         self.images = {"train": train_images, "val": val_images}
 
     def download_revisitop1m(self):
-        data_dir = DATA_PATH / self.conf.data_dir
+        data_dir = settings.DATA_PATH / self.conf.data_dir
         tmp_dir = data_dir.parent / "revisitop1m_tmp"
         if tmp_dir.exists():  # The previous download failed.
             shutil.rmtree(tmp_dir)
@@ -148,7 +144,7 @@ class HomographyDataset(BaseDataset):
             tar_path.unlink()
         shutil.move(tmp_dir, data_dir)
 
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         return _Dataset(self.conf, self.images[split], split)
 
 
@@ -157,27 +153,29 @@ class _Dataset(torch.utils.data.Dataset):
         self.conf = conf
         self.split = split
         self.image_names = np.array(image_names)
-        self.image_dir = DATA_PATH / conf.data_dir / conf.image_dir
+        self.image_dir = settings.DATA_PATH / conf.data_dir / conf.image_dir
 
         aug_conf = conf.photometric
         aug_name = aug_conf.name
         assert (
-            aug_name in augmentations.keys()
-        ), f'{aug_name} not in {" ".join(augmentations.keys())}'
-        self.photo_augment = augmentations[aug_name](aug_conf)
+            aug_name in augmentations.augmentations.keys()
+        ), f'{aug_name} not in {" ".join(augmentations.augmentations.keys())}'
+        self.photo_augment = augmentations.augmentations[aug_name](aug_conf)
         self.left_augment = (
-            IdentityAugmentation() if conf.right_only else self.photo_augment
+            augmentations.IdentityAugmentation()
+            if conf.right_only
+            else self.photo_augment
         )
-        self.img_to_tensor = IdentityAugmentation()
+        self.img_to_tensor = augmentations.IdentityAugmentation()
 
         if conf.load_features.do:
-            self.feature_loader = CacheLoader(conf.load_features)
+            self.feature_loader = cache_loader.CacheLoader(conf.load_features)
 
     def _transform_keypoints(self, features, data):
         """Transform keypoints by a homography, threshold them,
         and potentially keep only the best ones."""
         # Warp points
-        features["keypoints"] = warp_points(
+        features["keypoints"] = homography.warp_points(
             features["keypoints"], data["H_"], inverse=False
         )
         h, w = data["image"].shape[1:3]
@@ -201,7 +199,7 @@ class _Dataset(torch.utils.data.Dataset):
             features = {k: v[inds[:n]] for k, v in features.items()}
 
             if self.conf.load_features.force_num_keypoints:
-                features = pad_local_features(
+                features = cache_loader.pad_local_features(
                     features, self.conf.load_features.max_num_keypoints
                 )
 
@@ -209,7 +207,7 @@ class _Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         if self.conf.reseed:
-            with fork_rng(self.conf.seed + idx, False):
+            with tools.fork_rng(self.conf.seed + idx, False):
                 return self.getitem(idx)
         else:
             return self.getitem(idx)
@@ -234,7 +232,7 @@ class _Dataset(torch.utils.data.Dataset):
 
     def getitem(self, idx):
         name = self.image_names[idx]
-        img = read_image(self.image_dir / name, False)
+        img = preprocess.read_image(self.image_dir / name, False)
         if img is None:
             logging.warning("Image %s could not be read.", name)
             img = np.zeros((1024, 1024) + (() if self.conf.grayscale else (3,)))
@@ -249,7 +247,7 @@ class _Dataset(torch.utils.data.Dataset):
         data0 = self._read_view(img, left_conf, ps, left=True)
         data1 = self._read_view(img, self.conf.homography, ps, left=False)
 
-        H = compute_homography(data0["coords"], data1["coords"], [1, 1])
+        H = homography.compute_homography(data0["coords"], data1["coords"], [1, 1])
 
         data = {
             "name": name,
@@ -263,8 +261,12 @@ class _Dataset(torch.utils.data.Dataset):
         if self.conf.triplet:
             # Generate third image
             data2 = self._read_view(img, self.conf.homography, ps, left=False)
-            H02 = compute_homography(data0["coords"], data2["coords"], [1, 1])
-            H12 = compute_homography(data1["coords"], data2["coords"], [1, 1])
+            H02 = homography.compute_homography(
+                data0["coords"], data2["coords"], [1, 1]
+            )
+            H12 = homography.compute_homography(
+                data1["coords"], data2["coords"], [1, 1]
+            )
 
             data = {
                 "H_0to2": H02.astype(np.float32),
@@ -273,6 +275,38 @@ class _Dataset(torch.utils.data.Dataset):
                 **data,
             }
 
+        for view in misc.iterelements(data):
+            view["name"] = name
+        data["scene"] = name
+
+        if self.conf.add_dummy_pose_depth:
+            assert not self.conf.triplet
+            # Unify it with other datasets by adding dummy pose and depth
+            for i in range(2):
+                data[f"view{i}"]["T_w2cam"] = reconstruction.Pose.identity()
+                data[f"view{i}"]["camera"] = (
+                    reconstruction.PerspectiveCamera.from_image(
+                        torch.as_tensor(img).permute(2, 0, 1)
+                    ).compose_image_transform(data[f"view{i}"].pop("H_"))
+                )
+
+                data[f"view{i}"]["depth"] = torch.ones_like(
+                    data[f"view{i}"]["image"][0]
+                )
+                data[f"view{i}"]["scene"] = name
+                del data[f"view{i}"]["coords"]
+
+            data["T_0to1"] = data["view1"]["T_w2cam"].compose(
+                data["view0"]["T_w2cam"].inv()
+            )
+            data["T_1to0"] = data["T_0to1"].inv()
+            data["overlap_0to1"] = 1.0  # @TODO: compute actual overlap
+            data["overlap_1to0"] = 1.0  # @TODO: compute actual overlap
+
+            data["overlap"] = np.ones((2, 2), dtype=np.float32)
+            data["idx"] = idx
+            del data["H_0to1"]
+            del data["original_image_size"]
         return data
 
     def __len__(self):
@@ -280,6 +314,8 @@ class _Dataset(torch.utils.data.Dataset):
 
 
 def visualize(args):
+    from ..visualization import viz2d
+
     conf = {
         "batch_size": 1,
         "num_workers": 1,
@@ -290,13 +326,13 @@ def visualize(args):
     loader = dataset.get_data_loader("train")
     logger.info("The dataset has %d elements.", len(loader))
 
-    with fork_rng(seed=dataset.conf.seed):
+    with tools.fork_rng(seed=dataset.conf.seed):
         images = []
         for _, data in zip(range(args.num_items), loader):
             images.append(
                 [data[f"view{i}"]["image"][0].permute(1, 2, 0) for i in range(2)]
             )
-    plot_image_grid(images, dpi=args.dpi)
+    viz2d.plot_image_grid(images, dpi=args.dpi)
     plt.tight_layout()
     plt.show()
 

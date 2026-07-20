@@ -130,8 +130,6 @@ def capture_outputs(filename, cleanup_interval=None):
             os.dup2(saved_stdout_fd, original_stdout_fd)
             os.dup2(saved_stderr_fd, original_stderr_fd)
 
-            tee_stdout.wait(timeout=1)
-            tee_stderr.wait(timeout=1)
             os.close(saved_stdout_fd)
             os.close(saved_stderr_fd)
 

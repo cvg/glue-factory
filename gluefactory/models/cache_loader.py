@@ -3,39 +3,46 @@ import string
 import h5py
 import torch
 
-from ..datasets.base_dataset import collate
-from ..settings import DATA_PATH
-from ..utils.tensor import batch_to_device
+from gluefactory.geometry import transforms as gtr
+
+from .. import settings
+from ..datasets import base_dataset
+from ..utils import misc
+from ..utils.preprocess import ImagePreprocessor
 from .base_model import BaseModel
-from .utils.misc import pad_to_length
+
+# `interpolate`/`uninterpolate` only use their arguments (not the instance
+# config), so a single throwaway preprocessor can be reused for any
+# dataset/config.
+_dense_preprocessor = ImagePreprocessor({})
 
 
 def pad_local_features(pred: dict, seq_l: int):
-    pred["keypoints"] = pad_to_length(
+    pred["keypoints"] = misc.pad_to_length(
         pred["keypoints"],
         seq_l,
         -2,
         mode="random_c",
     )
     if "keypoint_scores" in pred.keys():
-        pred["keypoint_scores"] = pad_to_length(
+        pred["keypoint_scores"] = misc.pad_to_length(
             pred["keypoint_scores"], seq_l, -1, mode="zeros"
         )
     if "descriptors" in pred.keys():
-        pred["descriptors"] = pad_to_length(
+        pred["descriptors"] = misc.pad_to_length(
             pred["descriptors"], seq_l, -2, mode="random"
         )
     if "scales" in pred.keys():
-        pred["scales"] = pad_to_length(pred["scales"], seq_l, -1, mode="zeros")
+        pred["scales"] = misc.pad_to_length(pred["scales"], seq_l, -1, mode="zeros")
     if "oris" in pred.keys():
-        pred["oris"] = pad_to_length(pred["oris"], seq_l, -1, mode="zeros")
+        pred["oris"] = misc.pad_to_length(pred["oris"], seq_l, -1, mode="zeros")
 
     if "depth_keypoints" in pred.keys():
-        pred["depth_keypoints"] = pad_to_length(
+        pred["depth_keypoints"] = misc.pad_to_length(
             pred["depth_keypoints"], seq_l, -1, mode="zeros"
         )
     if "valid_depth_keypoints" in pred.keys():
-        pred["valid_depth_keypoints"] = pad_to_length(
+        pred["valid_depth_keypoints"] = misc.pad_to_length(
             pred["valid_depth_keypoints"], seq_l, -1, mode="zeros"
         )
     return pred
@@ -45,15 +52,51 @@ def pad_line_features(pred, seq_l: int = None):
     raise NotImplementedError
 
 
+# Registry of TensorWrapper types for h5 deserialization
+H5_TYPE_REGISTRY = {
+    "Pose": "gluefactory.geometry.reconstruction.Pose",
+    "Camera": "gluefactory.geometry.reconstruction.Camera",
+    "PerspectiveCamera": "gluefactory.geometry.reconstruction.PerspectiveCamera",
+}
+
+
+def _get_view(key: str, data: dict):
+    """Return the view dict (`data` or `data[f"view{idx}"]`) a per-view
+    prediction key belongs to, based on its trailing view-index suffix
+    (0/1), or the top level for single-view data."""
+    if key[-1:] in ("0", "1") and f"view{key[-1]}" in data:
+        return data[f"view{key[-1]}"]
+    if "image" in data:
+        return data
+    return None
+
+
+def _load_from_type(ds):
+    """Load a dataset with a _type attribute as a TensorWrapper."""
+    type_name = ds.attrs["_type"]
+    if type_name not in H5_TYPE_REGISTRY:
+        raise ValueError(f"Unknown h5 type: {type_name}")
+    import importlib
+
+    module_path, class_name = H5_TYPE_REGISTRY[type_name].rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    cls = getattr(module, class_name)
+    return cls.from_h5(ds)
+
+
 def recursive_load(grp, pkeys):
-    return {
-        k: (
-            torch.from_numpy(grp[k].__array__())
-            if isinstance(grp[k], h5py.Dataset)
-            else recursive_load(grp[k], list(grp.keys()))
-        )
-        for k in pkeys
-    }
+    result = {}
+    for k in pkeys:
+        if k not in grp:
+            result[k] = grp.attrs[k]
+        elif isinstance(grp[k], h5py.Dataset):
+            if "_type" in grp[k].attrs:
+                result[k] = _load_from_type(grp[k])
+            else:
+                result[k] = torch.from_numpy(grp[k].__array__())
+        else:
+            result[k] = recursive_load(grp[k], list(grp[k].keys()))
+    return result
 
 
 class CacheLoader(BaseModel):
@@ -64,10 +107,12 @@ class CacheLoader(BaseModel):
         "trainable": False,
         "add_data_path": True,
         "collate": True,
-        "scale": ["keypoints", "lines", "orig_lines"],
+        "scale": ["keypoints", "lines", "orig_lines", "p2d0_i", "p2d1_i"],
+        "dense_scale": None,  # prefixes of dense (image-like) preds; None = auto-detect by shape
         "padding_fn": None,
         "padding_length": None,  # required for batching!
         "numeric_type": "float32",  # [None, "float16", "float32", "float64"]
+        "check_valid": False,  # check if points are inside the image after scaling
     }
 
     required_data_keys = ["name"]  # we need an identifier
@@ -101,11 +146,13 @@ class CacheLoader(BaseModel):
         for i, name in enumerate(data["name"]):
             fpath = self.conf.path.format(**{k: data[k][i] for k in var_names})
             if self.conf.add_data_path:
-                fpath = DATA_PATH / fpath
-            hfile = h5py.File(str(fpath), "r")
+                fpath = settings.DATA_PATH / fpath
+            hfile = h5py.File(str(fpath), "r", locking=False)
             grp = hfile[name]
             pkeys = (
-                self.conf.data_keys if self.conf.data_keys is not None else grp.keys()
+                self.conf.data_keys
+                if self.conf.data_keys is not None
+                else grp.keys() | grp.attrs.keys()
             )
             pred = recursive_load(grp, pkeys)
             if self.numeric_dtype is not None:
@@ -118,27 +165,66 @@ class CacheLoader(BaseModel):
                     )
                     for k, v in pred.items()
                 }
-            pred = batch_to_device(pred, device)
+            pred = misc.batch_to_device(pred, device)
+            scaled_keys = set()
             for k, v in pred.items():
                 for pattern in self.conf.scale:
                     if k.startswith(pattern):
                         view_idx = k.replace(pattern, "")
-                        scales = (
-                            data["scales"]
+                        norm_t_img = (
+                            data["transform"]
                             if len(view_idx) == 0
-                            else data[f"view{view_idx}"]["scales"]
+                            else data[f"view{view_idx}"]["transform"]
                         )
-                        pred[k] = pred[k] * scales[i]
+                        pred[k] = gtr.transform_points(
+                            (torch.as_tensor(norm_t_img[i]).to(pred[k].dtype)), pred[k]
+                        )
+                        if self.conf.check_valid:
+                            image_size = (
+                                data["image_size"]
+                                if len(view_idx) == 0
+                                else data[f"view{view_idx}"]["image_size"]
+                            )
+                            valid = gtr.is_inside(
+                                pred[k], torch.as_tensor(image_size[i])
+                            )
+                            for kk, vv in pred.items():
+                                if vv.shape[0] == valid.shape[0]:
+                                    pred[kk] = vv[valid]
+                        scaled_keys.add(k)
+                        break
+
+            # dense (image-like) predictions: warp from the original image
+            # resolution they were exported at into the current run's
+            # preprocessed image space (inverse of the de-padding/resizing
+            # `uninterpolate` performs in export_predictions).
+            for k, v in pred.items():
+                if k in scaled_keys or not isinstance(v, torch.Tensor) or v.dim() < 2:
+                    continue
+                view = _get_view(k, data)
+                if view is None or "image" not in view:
+                    continue
+                if self.conf.dense_scale is not None:
+                    if not any(k.startswith(p) for p in self.conf.dense_scale):
+                        continue
+                else:
+                    orig_wh = view["original_image_size"][i]
+                    if tuple(v.shape[-2:]) != (int(orig_wh[1]), int(orig_wh[0])):
+                        continue
+                target_hw = tuple(view["image"].shape[-2:])
+                pred[k] = _dense_preprocessor.interpolate(
+                    v, view["transform"][i], target_hw
+                )
             # use this function to fix number of keypoints etc.
             if self.padding_fn is not None:
                 pred = self.padding_fn(pred, self.conf.padding_length)
             preds.append(pred)
             hfile.close()
         if self.conf.collate:
-            return batch_to_device(collate(preds), device)
+            return misc.batch_to_device(base_dataset.collate(preds), device)
         else:
             assert len(preds) == 1
-            return batch_to_device(preds[0], device)
+            return misc.batch_to_device(preds[0], device)
 
     def loss(self, pred, data):
         raise NotImplementedError

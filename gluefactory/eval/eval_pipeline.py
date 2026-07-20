@@ -1,9 +1,19 @@
+import collections
 import json
 import logging
+import multiprocessing as mp
+from typing import Any, Callable, Iterable, Sequence
 
 import h5py
 import numpy as np
 from omegaconf import OmegaConf
+from tqdm import tqdm
+
+from .. import datasets
+from ..models.cache_loader import CacheLoader
+from ..utils import export, misc, tools
+from ..visualization import viz2d
+from . import io, utils
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +53,7 @@ def save_eval(dir, summaries, figures, results):
         json.dump(s, f, indent=4)
 
     for fig_name, fig in figures.items():
-        fig.savefig(dir / f"{fig_name}.png")
+        fig.savefig(dir / f"{fig_name}.png", bbox_inches="tight")
 
 
 def exists_eval(dir):
@@ -51,19 +61,38 @@ def exists_eval(dir):
 
 
 class EvalPipeline:
-    default_conf = {}
+    default_conf = {
+        "num_samples": None,  # Number of samples to run eval on (None=all)
+    }
+    eval_data_conf = {}
 
-    export_keys = []
-    optional_export_keys = []
+    export_keys = ()
+    optional_export_keys = ()
+
+    default_x: str | None = None  # Default x-axis for inspection plots
+    default_y: str | None = None  # Default y-axis for inspection plots
+
+    num_samples: int | None = None  # Number of samples to run eval on (None=all)
+
+    main_metric = "???"  # You need to define this.
+    default_plot: str | None = None  # Default plot for inspection
 
     def __init__(self, conf):
         """Assumes"""
         self.default_conf = OmegaConf.create(self.default_conf)
-        self.conf = OmegaConf.merge(self.default_conf, conf)
+        self.conf = OmegaConf.merge(EvalPipeline.default_conf, self.default_conf, conf)
+        self.__class__.num_samples = self.conf.num_samples
+        self.export_keys = list(self.export_keys)
+        self.optional_export_keys = list(self.optional_export_keys)
         self._init(self.conf)
 
     def _init(self, conf):
         pass
+
+    @classmethod
+    def get_dataset(self, data_conf=None):
+        """Returns a dataset with samples for each eval datapoint"""
+        return self.get_dataloader(data_conf).dataset
 
     @classmethod
     def get_dataloader(self, data_conf=None):
@@ -93,7 +122,12 @@ class EvalPipeline:
         f = {}
         if not exists_eval(experiment_dir) or overwrite_eval or overwrite:
             logger.info(f"Loop 2: Evaluating predictions in {pred_file}.")
-            s, f, r = self.run_eval(self.get_dataloader(), pred_file)
+            s, f, r = self.run_eval(
+                self.get_dataloader(
+                    OmegaConf.merge(self.default_conf["data"], self.eval_data_conf)
+                ),
+                pred_file,
+            )
             save_eval(experiment_dir, s, f, r)
             logger.info(f"Loop 2 finished. Results saved to {experiment_dir}.")
         s, r = load_eval(experiment_dir)
@@ -104,14 +138,255 @@ class EvalPipeline:
         conf_output_path = experiment_dir / "conf.yaml"
         if conf_output_path.exists():
             saved_conf = OmegaConf.load(conf_output_path)
-            if (saved_conf.data != self.conf.data) or (
-                saved_conf.model != self.conf.model
-            ):
-                assert (
-                    overwrite
-                ), "configs changed, add --overwrite to rerun experiment with new conf"
-            if saved_conf.eval != self.conf.eval:
-                assert (
-                    overwrite or overwrite_eval
-                ), "eval configs changed, add --overwrite_eval to rerun evaluation"
+            # if (saved_conf.data != self.conf.data) or (
+            #     saved_conf.model != self.conf.model
+            # ):
+            #     assert (
+            #         overwrite
+            #     ), "configs changed, add --overwrite to rerun experiment with new conf"
+            # if saved_conf.eval != self.conf.eval:
+            #     assert (
+            #         overwrite or overwrite_eval
+            #     ), "eval configs changed, add --overwrite_eval to rerun evaluation"
         OmegaConf.save(self.conf, experiment_dir / "conf.yaml")
+
+
+# ----------------------------------------------------------------------------
+# Common specializations (Relative Pose, Homography, SfM, ...)
+# ----------------------------------------------------------------------------
+
+
+class RelativePosePipeline(EvalPipeline):
+    default_conf = {
+        "data": {
+            "name": "???",
+        },
+        "model": {
+            "ground_truth": {
+                "name": None,  # remove gt matches
+            }
+        },
+        "eval": {
+            "estimator": ["poselib", "opencv"],
+            "ransac_th": -1.0,  # -1 runs a bunch of thresholds and selects the best
+            "n_processes": None,  # 0 is sequential
+            "max_tasks": 100,  # max tasks in the pool
+        },
+    }
+
+    main_metric = "rel_pose_error_mAA"
+    default_plot = "epipolar_matches"
+
+    export_keys = (
+        "keypoints0",
+        "keypoints1",
+        "matches0",
+        "matches1",
+        "matching_scores0",
+        "matching_scores1",
+    )
+    optional_export_keys = ()
+
+    # Add custom evals here (dataset specific)
+    eval_hooks: Sequence[Callable[[Any, Any], dict[str, float]]] = ()
+
+    def __init__(self, conf):
+        """Assumes"""
+        self.default_conf = OmegaConf.create(self.default_conf)
+        conf = OmegaConf.merge(
+            RelativePosePipeline.default_conf,
+            self.default_conf,
+            conf,
+        )
+        super().__init__(conf)
+
+    def _init(self, conf):
+        raise NotImplementedError("Add download instructions here")
+
+    @classmethod
+    def get_dataloader(self, data_conf=None):
+        """Returns a data loader with samples for each eval datapoint"""
+        data_conf = data_conf if data_conf else self.default_conf["data"]
+        dataset = datasets.get_dataset(data_conf["name"])(data_conf)
+        return dataset.get_data_loader("test", num_samples=self.num_samples)
+
+    def get_predictions(self, experiment_dir, model=None, overwrite=False):
+        """Export a prediction file for each eval datapoint"""
+        pred_file = experiment_dir / "predictions.h5"
+        if not pred_file.exists() or overwrite:
+            if model is None:
+                model = io.load_model(self.conf.model, self.conf.checkpoint)
+            export.export_predictions(
+                self.get_dataloader(self.conf.data),
+                model,
+                pred_file,
+                keys=self.export_keys,
+                optional_keys=self.optional_export_keys,
+            )
+        return pred_file
+
+    def load_evaluate_relative_pose(self, cache_loader: CacheLoader, data):
+        pred = cache_loader(data)
+        pose_results = self.evaluate_relative_pose(data, pred)
+        pose_results["names"] = data["name"][0]
+        return pose_results
+
+    def evaluate_relative_pose(
+        self,
+        data: dict[str, Any],
+        pred: dict[str, Any],
+    ):
+        conf = self.conf.eval
+        test_thresholds = (
+            ([conf.ransac_th] if conf.ransac_th > 0 else [0.5, 1.5, 2.0, 3.0])
+            if not isinstance(conf.ransac_th, Iterable)
+            else conf.ransac_th
+        )
+        pose_results_i = collections.defaultdict(dict)
+        estimators = (
+            [conf.estimator] if isinstance(conf.estimator, str) else conf.estimator
+        )
+        for estimator in estimators:
+            for th in test_thresholds:
+                pose_results_i[estimator][th] = utils.eval_relative_pose_robust(
+                    data,
+                    pred,
+                    {"estimator": estimator, "ransac_th": th},
+                )
+        pose_results_i["names"] = data["name"][0]
+        return dict(pose_results_i)
+
+    def run_eval(self, loader, pred_file):
+        """Run the eval on cached predictions"""
+        conf = self.conf.eval
+        results = collections.defaultdict(list)
+        cache_loader = CacheLoader(
+            {
+                "path": str(pred_file),
+                "collate": None,
+                "check_valid": False,
+                "scale": ("keypoints",),
+            },
+        ).eval()
+        pose_results = []
+
+        if conf.n_processes != 0:
+            ctx = mp.get_context("spawn")
+            pool = ctx.Pool(processes=conf.n_processes)
+
+        results = []
+        pose_results = []
+        pose_results_batch = []
+        for i, data in enumerate(tqdm(loader, desc="Evaluation: ")):
+            pred = cache_loader(data)
+            # add custom evaluations here
+            results_i = utils.eval_matches_epipolar(data, pred)
+            if "depth" in data["view0"].keys():
+                results_i.update(utils.eval_matches_depth(data, pred))
+
+            for eval_hook in self.eval_hooks:
+                results_i.update(eval_hook(data, pred))
+
+            # we also store the names for later reference
+            results_i["names"] = data["name"][0]
+            if "scene" in data.keys():
+                results_i["scenes"] = data["scene"][0]
+
+            # if "overlap" in data.keys():
+            #     results_i["overlap"] = data["overlap"][0].item()
+
+            if conf.n_processes == 0:
+                pose_results.append(self.evaluate_relative_pose(data, pred))
+            else:
+                pose_results_batch.append(
+                    pool.apply_async(
+                        self.evaluate_relative_pose,
+                        args=(data, pred),
+                    )
+                )
+
+            if (
+                conf.n_processes != 0
+                and (i + 1) % conf.max_tasks == 0
+                or (i + 1) == len(loader)
+            ):
+                logger.info(
+                    "Processing pose results batch %d / %d...",
+                    (i + 1) // conf.max_tasks,
+                    len(loader) // conf.max_tasks,
+                )
+                pose_results_batch = [p.get() for p in pose_results_batch]
+                pose_results.extend(pose_results_batch)
+                pose_results_batch = []
+
+            results.append(results_i)
+
+        results = misc.pack_tree(results)
+        if conf.n_processes != 0:
+            pool.close()
+            pool.join()
+            pool.terminate()
+        pose_results = misc.pack_tree(pose_results, sep=None)
+        pose_names = pose_results.pop("names")  # To fix order
+
+        # Fix the order to be consistent (usually a no-op, but better safe)
+        if conf.n_processes != 0:
+            reorder = [pose_names.index(pname) for pname in results["names"]]
+            pose_results = misc.flat_map(
+                pose_results,
+                lambda k, v: [v[i] for i in reorder],
+                sep=None,
+                unflatten=True,
+            )
+
+        # summarize results as a dict[str, float]
+        # you can also add your custom evaluations here
+        summaries = {}
+        for k, v in results.items():
+            arr = np.array(v)
+            if k.endswith("pose_error"):
+                thresholds = [1, 3, 5, 10, 20]
+                aucs = tools.AUCMetric(thresholds, elements=v).compute()
+                for i, th in enumerate(thresholds):
+                    summaries[f"{k}@{th}°"] = round(aucs[i], 3)
+            if not np.issubdtype(np.array(v).dtype, np.number):
+                continue
+            summaries[f"m{k}"] = round(np.mean(arr), 3)
+
+        best_pose = {}
+        for estimator, pose_results_e in pose_results.items():
+            prefix = f"est_{estimator}:"
+            best_summary_e, best_th = utils.eval_poses(
+                pose_results_e, auc_ths=[1, 3, 5, 10, 20], key="rel_pose_error"
+            )
+            results = {
+                **results,
+                **misc.add_prefix(pose_results_e[best_th], prefix),
+            }
+            best_pose[best_summary_e["rel_pose_error_mAA"]] = (
+                best_summary_e,
+                pose_results_e[best_th],
+            )
+            if len(pose_results) > 1:
+                summaries = {
+                    **summaries,
+                    **{
+                        f"est_{estimator}:{k}": v
+                        for k, v in best_summary_e.items()
+                        if k.startswith("rel_pose_error")
+                    },
+                }
+
+        best_pose_summary, best_pose_results = best_pose[max(best_pose.keys())]
+        summaries = {**summaries, **best_pose_summary}
+        results = {**results, **best_pose_results}
+
+        figures = {
+            "pose_recall": viz2d.plot_cumulative(
+                {est: results[f"est_{est}:rel_pose_error"] for est in pose_results},
+                [0, 30],
+                unit="°",
+                title="Pose ",
+            )
+        }
+        return summaries, figures, results

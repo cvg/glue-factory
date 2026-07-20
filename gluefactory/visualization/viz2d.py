@@ -66,7 +66,9 @@ def cm_grad2d(xy):
     return rgb.clip(0, 1)
 
 
-def plot_images(imgs, titles=None, cmaps="gray", dpi=100, pad=0.5, adaptive=True):
+def plot_images(
+    imgs, titles=None, cmaps="gray", dpi=100, pad=0.5, adaptive=True, **kwargs
+):
     """Plot a set of images horizontally.
     Args:
         imgs: a list of NumPy or PyTorch images, RGB (H, W, 3) or mono (H, W).
@@ -94,7 +96,7 @@ def plot_images(imgs, titles=None, cmaps="gray", dpi=100, pad=0.5, adaptive=True
     if n == 1:
         axs = [axs]
     for i, (img, ax) in enumerate(zip(imgs, axs)):
-        ax.imshow(img, cmap=plt.get_cmap(cmaps[i]))
+        ax.imshow(img, cmap=plt.get_cmap(cmaps[i]), **kwargs)
         ax.set_axis_off()
         if titles:
             ax.set_title(titles[i])
@@ -112,6 +114,7 @@ def plot_image_grid(
     figs=2.0,
     return_fig=False,
     set_lim=False,
+    **kwargs,
 ):
     """Plot a grid of images.
     Args:
@@ -132,18 +135,21 @@ def plot_image_grid(
     figsize = [sum(ratios) * figs, nr * figs]
     if fig is None:
         fig, axs = plt.subplots(
-            nr, n, figsize=figsize, dpi=dpi, gridspec_kw={"width_ratios": ratios}
+            nr,
+            n,
+            figsize=figsize,
+            dpi=dpi,
+            gridspec_kw={"width_ratios": ratios},
+            squeeze=False,
         )
     else:
         axs = fig.subplots(nr, n, gridspec_kw={"width_ratios": ratios})
         fig.figure.set_size_inches(figsize)
-    if nr == 1:
-        axs = [axs]
 
     for j in range(nr):
         for i in range(n):
             ax = axs[j][i]
-            ax.imshow(imgs[j][i], cmap=plt.get_cmap(cmaps[i]))
+            ax.imshow(imgs[j][i], cmap=plt.get_cmap(cmaps[i]), **kwargs)
             ax.set_axis_off()
             if set_lim:
                 ax.set_xlim([0, imgs[j][i].shape[1]])
@@ -158,13 +164,14 @@ def plot_image_grid(
         return axs
 
 
-def plot_keypoints(kpts, colors="lime", ps=4, axes=None, a=1.0):
+def plot_keypoints(kpts, colors="lime", ps=4, axes=None, a=1.0, **kwargs):
     """Plot keypoints for existing images.
     Args:
         kpts: list of ndarrays of size (N, 2).
         colors: string, or list of list of tuples (one for each keypoints).
         ps: size of the keypoints as float.
     """
+    artists = []
     if not isinstance(colors, list):
         colors = [colors] * len(kpts)
     if not isinstance(a, list):
@@ -174,7 +181,10 @@ def plot_keypoints(kpts, colors="lime", ps=4, axes=None, a=1.0):
     for ax, k, c, alpha in zip(axes, kpts, colors, a):
         if isinstance(k, torch.Tensor):
             k = k.detach().cpu().numpy()
-        ax.scatter(k[:, 0], k[:, 1], c=c, s=ps, linewidths=0, alpha=alpha)
+        artists.append(
+            ax.scatter(k[:, 0], k[:, 1], c=c, s=ps, linewidths=0, alpha=alpha, **kwargs)
+        )
+    return artists
 
 
 def plot_matches(kpts0, kpts1, color=None, lw=1.5, ps=4, a=1.0, labels=None, axes=None):
@@ -199,6 +209,10 @@ def plot_matches(kpts0, kpts1, color=None, lw=1.5, ps=4, a=1.0, labels=None, axe
         kpts0 = kpts0.detach().cpu().numpy()
     if isinstance(kpts1, torch.Tensor):
         kpts1 = kpts1.detach().cpu().numpy()
+
+    if len(kpts0) == 0:
+        return None
+
     if color is None:
         kpts0_norm = (kpts0 - np.min(kpts0, axis=0)) / (np.ptp(kpts0, axis=0) + 1e-6)
         color = cm_grad2d(kpts0_norm).tolist()
@@ -229,19 +243,25 @@ def plot_matches(kpts0, kpts1, color=None, lw=1.5, ps=4, a=1.0, labels=None, axe
     ax0.autoscale(enable=False)
     ax1.autoscale(enable=False)
 
+    scatters = []
     if ps > 0:
-        ax0.scatter(
-            kpts0[:, 0],
-            kpts0[:, 1],
-            c=color,
-            s=ps,
+        scatters.append(
+            ax0.scatter(
+                kpts0[:, 0],
+                kpts0[:, 1],
+                c=color,
+                s=ps,
+            )
         )
-        ax1.scatter(
-            kpts1[:, 0],
-            kpts1[:, 1],
-            c=color,
-            s=ps,
+        scatters.append(
+            ax1.scatter(
+                kpts1[:, 0],
+                kpts1[:, 1],
+                c=color,
+                s=ps,
+            )
         )
+    return scatters
 
 
 def add_text(
@@ -360,15 +380,28 @@ def plot_epipolar_lines(
             )
 
 
-def plot_heatmaps(heatmaps, vmin=0.0, vmax=None, cmap="Spectral", a=0.5, axes=None):
+def plot_heatmaps(
+    heatmaps,
+    vmin=0.0,
+    vmax=None,
+    cmap="Spectral",
+    a=0.5,
+    axes=None,
+    log: bool = False,
+    ax_idxs=None,
+):
     if axes is None:
         axes = plt.gcf().axes
+    if isinstance(heatmaps[0], torch.Tensor):
+        heatmaps = [h.detach().cpu().numpy() for h in heatmaps]
     artists = []
-    for i in range(len(axes)):
+    if ax_idxs is None:
+        ax_idxs = range(len(axes))
+    for i, ax_idx in enumerate(ax_idxs):
         a_ = a if isinstance(a, float) else a[i]
-        art = axes[i].imshow(
-            heatmaps[i],
-            alpha=(heatmaps[i] > vmin).float() * a_,
+        art = axes[ax_idx].imshow(
+            heatmaps[i] if not log else np.log(heatmaps[i]),
+            alpha=(heatmaps[i] > vmin).astype(float) * a_,
             vmin=vmin,
             vmax=vmax,
             cmap=cmap,
@@ -509,3 +542,61 @@ def plot_cumulative(
     plt.tight_layout()
 
     return plt.gcf()
+
+
+def features_to_RGB(
+    *Fs, skip: int = 0, norm: bool = False, offset: int = 0, fit_points=None
+):
+    """Project a list of d-dimensional feature maps (..., D) to RGB using PCA.
+
+    Args:
+        Fs: feature maps of shape (..., D).
+        skip: subsample factor when fitting PCA on all features.
+        norm: L2-normalize features before PCA.
+        offset: skip the first `offset` PCA components.
+        fit_points: optional list of (N_i, D) arrays to fit PCA on instead of
+            the full feature maps. When given, PCA is fit on their concatenation
+            and then applied to the full maps.
+    """
+    from sklearn.decomposition import PCA
+
+    if isinstance(Fs[0], torch.Tensor):
+        Fs = [F.detach().cpu().numpy() for F in Fs]
+
+    def normalize(x):
+        if norm:
+            return x / np.linalg.norm(x, axis=-1, keepdims=True)
+        return x
+
+    flatten = []
+    for F in Fs:
+        F = F.reshape(-1, F.shape[-1])
+        flatten.append(F)
+    flatten = np.concatenate(flatten, axis=0)
+
+    pca = PCA(n_components=3 + offset)
+    if fit_points is not None:
+        if isinstance(fit_points[0], torch.Tensor):
+            fit_points = [fp.detach().cpu().numpy() for fp in fit_points]
+        fit_data = np.concatenate(
+            [fp.reshape(-1, fp.shape[-1]) for fp in fit_points], axis=0
+        )
+        pca.fit(normalize(fit_data))
+        flatten = pca.transform(normalize(flatten))
+    elif skip > 1:
+        pca.fit(normalize(flatten[::skip]))
+        flatten = pca.transform(normalize(flatten))
+    else:
+        flatten = pca.fit_transform(normalize(flatten))
+
+    flatten = flatten[:, offset:]
+    flatten = flatten / np.linalg.norm(flatten, axis=-1, keepdims=True)
+    flatten = (flatten + 1) / 2
+
+    f_rgbs = []
+    for f_in in Fs:
+        f_rgb, flatten = np.split(flatten, [np.prod(f_in.shape[:-1])], axis=0)
+        f_rgb = f_rgb.reshape(f_in.shape[:-1] + (3,))
+        f_rgbs.append(f_rgb)
+    assert flatten.shape[0] == 0
+    return f_rgbs

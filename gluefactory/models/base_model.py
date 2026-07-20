@@ -2,12 +2,18 @@
 Base class for trainable models.
 """
 
+import logging
 from abc import ABCMeta, abstractmethod
 from copy import copy
 
 import omegaconf
+import torch
 from omegaconf import OmegaConf
 from torch import nn
+
+from gluefactory.utils import misc
+
+logger = logging.getLogger(__name__)
 
 
 class MetaModel(ABCMeta):
@@ -56,6 +62,11 @@ class BaseModel(nn.Module, metaclass=MetaModel):
         "trainable": True,  # if false: do not optimize this model parameters
         "freeze_batch_normalization": False,  # use test-time statistics
         "timeit": False,  # time forward pass
+        "visualize": True,  # visualize model predictions
+        "compile": True,  # compile the model for faster inference
+        "compile_loss": True,  # compile losses for faster inference
+        "run_loss_in_forward": False,  # compute losses inside forward
+        "force_f32": False,
     }
     required_data_keys = []
     strict_conf = False
@@ -65,6 +76,7 @@ class BaseModel(nn.Module, metaclass=MetaModel):
     def __init__(self, conf):
         """Perform some logic and call the _init method of the child model."""
         super().__init__()
+        self.input_conf = conf
         default_conf = OmegaConf.merge(
             self.base_default_conf, OmegaConf.create(self.default_conf)
         )
@@ -106,12 +118,21 @@ class BaseModel(nn.Module, metaclass=MetaModel):
 
         def recursive_key_check(expected, given):
             for key in expected:
-                assert key in given, f"Missing key {key} in data"
+                assert (
+                    key in given
+                ), f"Missing key {key} in data {str(list(given.keys()))}"
                 if isinstance(expected, dict):
                     recursive_key_check(expected[key], given[key])
 
         recursive_key_check(self.required_data_keys, data)
-        return self._forward(data)
+        if self.conf.force_f32:
+            pred = misc.force_f32(self._forward)(data)
+        else:
+            pred = self._forward(data)
+
+        if self.conf.run_loss_in_forward:
+            pred["loss"] = self.loss(pred, data)
+        return pred
 
     @abstractmethod
     def _init(self, conf):
@@ -128,9 +149,49 @@ class BaseModel(nn.Module, metaclass=MetaModel):
         """To be implemented by the child class."""
         raise NotImplementedError
 
-    def load_state_dict(self, *args, **kwargs):
-        """Load the state dict of the model, and set the model to initialized."""
-        ret = super().load_state_dict(*args, **kwargs)
+    def loss_metrics(self, pred, data):
+        """Wrapper around loss and metrics computation."""
+
+        if self.conf.run_loss_in_forward:
+            return pred.pop("loss")
+        else:
+            return self.loss(pred, data)
+
+    def visualize(self, pred, data, **kwargs):
+        """To be implemented by the child class."""
+        return {}
+
+    def pr_metrics(self, pred, data):
+        """To be implemented by the child class."""
+        return {}
+
+    def load_state_dict(self, state_dict, strict=True, **kwargs):
+        """Load the state dict of the model, and set the model to initialized.
+        If strict=False, parameters with mismatched shapes are skipped
+        (default-initialized) and logged."""
+        if not strict:
+            model_state = self.state_dict()
+            mismatched = []
+            for key in list(state_dict.keys()):
+                if key not in model_state:
+                    continue
+                try:
+                    shapes_match = state_dict[key].shape == model_state[key].shape
+                except RuntimeError:
+                    continue  # UninitializedParameter (LazyLinear etc.)
+                if not shapes_match:
+                    mismatched.append(
+                        f"{key}: checkpoint {list(state_dict[key].shape)}"
+                        f" vs model {list(model_state[key].shape)}"
+                    )
+                    del state_dict[key]
+            if mismatched:
+                logger.warning(
+                    "Skipped %d parameters with mismatched shapes:\n  %s",
+                    len(mismatched),
+                    "\n  ".join(mismatched),
+                )
+        ret = super().load_state_dict(state_dict, strict=strict, **kwargs)
         self.set_initialized()
         return ret
 
@@ -152,6 +213,34 @@ class BaseModel(nn.Module, metaclass=MetaModel):
     def set_initialized(self, to: bool = True):
         """Recursively set the initialization state."""
         self.are_weights_initialized = to
-        for _, w in self.named_parameters():
+        for _, w in self.named_children():
             if isinstance(w, BaseModel):
                 w.set_initialized(to)
+
+    def make_ddp(self, *args, **kwargs) -> nn.parallel.DistributedDataParallel:
+        """Make the model DDP compatible."""
+        model = nn.SyncBatchNorm.convert_sync_batchnorm(self)
+        model = nn.parallel.DistributedDataParallel(model, *args, **kwargs)
+        # Add key methods to the DDP model
+        model.loss = self.loss
+        model.loss_metrics = self.loss_metrics
+        model.visualize = self.visualize
+        model.pr_metrics = self.pr_metrics
+        model.load_state_dict = self.load_state_dict
+        return model
+
+    def compile(self, *args, **kwargs) -> "BaseModel":
+        """Compile the model for faster inference."""
+        if self.conf.compile:
+            logger.info("Compiling %s", str(type(self)))
+            self._compile(*args, **kwargs)
+            if self.conf.compile_loss:
+                self._compile_loss(*args, **kwargs)
+        return self
+
+    def _compile(self, *args, **kwargs) -> None:
+        """Compile the model for faster inference."""
+        super().compile(*args, **kwargs)
+
+    def _compile_loss(self, *args, **kwargs) -> None:
+        self.loss = torch.compile(self.loss, *args, **kwargs)

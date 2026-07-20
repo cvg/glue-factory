@@ -1,0 +1,33 @@
+defaults:
+  - model: two_view_pipeline
+  - model@model.extractor: extractor/raco
+  - model@model.matcher: matcher/lightglue_pretrained
+  - _self_
+
+model:
+    extractor:
+        remove_borders: 0
+        max_num_keypoints: 2048
+    matcher:
+      features: raco-aliked
+benchmarks:
+    megadepth1500:
+      data:
+        preprocessing:
+          side: long
+          resize: 1600
+    scannet1500:
+      data:
+        preprocessing:
+          side: long
+          keep_original_image: true
+      model:
+        extractor:
+          detector:
+            resize_original_image: 1600
+    hpatches:
+      eval:
+        estimator: opencv
+      model:
+        extractor:
+          max_num_keypoints: 1024  # overwrite config above

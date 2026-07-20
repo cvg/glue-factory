@@ -46,5 +46,9 @@ def matcher_metrics(pred, data, prefix="", prefix_gt=None):
         f"{prefix}match_precision": prec,
         f"{prefix}accuracy": acc,
         f"{prefix}average_precision": ap,
+        "num_matchable": (data[f"gt_{prefix_gt}matches0"] > -1).sum(1),
+        "num_unmatchable": (data[f"gt_{prefix_gt}matches0"] == -1).sum(1),
+        "num_matches": (pred[f"{prefix}matches0"] > -1).sum(1),
+        "average_match_score": pred[f"{prefix}matching_scores0"].mean(1),
     }
     return metrics

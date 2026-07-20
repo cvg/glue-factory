@@ -54,7 +54,7 @@ import torch
 from torch import nn
 
 from gluefactory.models.base_model import BaseModel
-from gluefactory.models.utils.misc import pad_and_stack
+from gluefactory.utils import misc, preprocess
 
 
 def simple_nms(scores, radius):
@@ -138,7 +138,12 @@ def sample_descriptors(keypoints, descriptors, s):
 def sample_descriptors_fix_sampling(keypoints, descriptors, s: int = 8):
     """Interpolate descriptors at keypoint locations"""
     b, c, h, w = descriptors.shape
-    keypoints = keypoints / (keypoints.new_tensor([w, h]) * s)
+    keypoints = keypoints - s / 2 + 0.5
+    keypoints /= torch.tensor(
+        [(w * s - s / 2 - 0.5), (h * s - s / 2 - 0.5)],
+    ).to(
+        keypoints
+    )[None]
     keypoints = keypoints * 2 - 1  # normalize to (-1, 1)
     descriptors = torch.nn.functional.grid_sample(
         descriptors, keypoints.view(b, 1, -1, 2), mode="bilinear", align_corners=False
@@ -199,11 +204,14 @@ class SuperPoint(BaseModel):
             torch.hub.load_state_dict_from_url(str(self.checkpoint_url)), strict=False
         )
 
+        rgb_to_grayscale = torch.tensor([0.299, 0.587, 0.114]).view(1, 3, 1, 1)
+        self.register_buffer("rgb_to_grayscale", rgb_to_grayscale, persistent=False)
+
+    @preprocess.highres_inference
     def _forward(self, data):
         image = data["image"]
         if image.shape[1] == 3:  # RGB
-            scale = image.new_tensor([0.299, 0.587, 0.114]).view(1, 3, 1, 1)
-            image = (image * scale).sum(1, keepdim=True)
+            image = (image * self.rgb_to_grayscale).sum(1, keepdim=True)
 
         # Shared Encoder
         x = self.relu(self.conv1a(image))
@@ -242,16 +250,29 @@ class SuperPoint(BaseModel):
 
             # Discard keypoints near the image borders
             if self.conf.remove_borders:
-                scores[:, : self.conf.remove_borders] = -1
-                scores[:, :, : self.conf.remove_borders] = -1
-                if "image_size" in data:
-                    for i in range(scores.shape[0]):
-                        w, h = data["image_size"][i]
-                        scores[i, int(h.item()) - self.conf.remove_borders :] = -1
-                        scores[i, :, int(w.item()) - self.conf.remove_borders :] = -1
+                rb = self.conf.remove_borders
+                if "transform" in data:
+                    xy_min, xy_max = misc.content_bounds(
+                        data["transform"],
+                        data["original_image_size"],
+                        scores.device,
+                        scores.dtype,
+                    )
+                    H, W = scores.shape[1], scores.shape[2]
+                    h_idx = torch.arange(H, device=scores.device).view(1, H, 1)
+                    w_idx = torch.arange(W, device=scores.device).view(1, 1, W)
+                    valid = (
+                        (h_idx >= xy_min[:, 1:2, None] + rb)
+                        & (h_idx < xy_max[:, 1:2, None] - rb)
+                        & (w_idx >= xy_min[:, 0:1, None] + rb)
+                        & (w_idx < xy_max[:, 0:1, None] - rb)
+                    )
+                    scores = torch.where(valid, scores, -1.0)
                 else:
-                    scores[:, -self.conf.remove_borders :] = -1
-                    scores[:, :, -self.conf.remove_borders :] = -1
+                    scores[:, :rb] = -1
+                    scores[:, -rb:] = -1
+                    scores[:, :, :rb] = -1
+                    scores[:, :, -rb:] = -1
 
             # Extract keypoints
             best_kp = torch.where(scores > self.conf.detection_threshold)
@@ -302,19 +323,17 @@ class SuperPoint(BaseModel):
             keypoints = [torch.flip(k, [1]).float() for k in keypoints]
 
             if self.conf.force_num_keypoints:
-                keypoints = pad_and_stack(
+                keypoints = misc.pad_and_stack(
                     keypoints,
                     max_kps,
                     -2,
                     mode="random_c",
                     bounds=(
                         0,
-                        data.get("image_size", torch.tensor(image.shape[-2:]))
-                        .min()
-                        .item(),
+                        data.get("image_size", torch.tensor(image.shape[-2:])).min(),
                     ),
                 )
-                scores = pad_and_stack(scores, max_kps, -1, mode="zeros")
+                scores = misc.pad_and_stack(scores, max_kps, -1, mode="zeros")
             else:
                 keypoints = torch.stack(keypoints, 0)
                 scores = torch.stack(scores, 0)

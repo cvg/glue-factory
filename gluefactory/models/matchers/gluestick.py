@@ -7,9 +7,9 @@ import torch
 import torch.utils.checkpoint
 from torch import nn
 
-from ...settings import DATA_PATH
+from ... import settings
+from ...utils.metrics import matcher_metrics
 from ..base_model import BaseModel
-from ..utils.metrics import matcher_metrics
 
 warnings.filterwarnings("ignore", category=UserWarning)
 ETH_EPS = 1e-8
@@ -113,7 +113,9 @@ class GlueStick(BaseModel):
 
         if conf.weights:
             assert isinstance(conf.weights, (Path, str))
-            fname = DATA_PATH / "weights" / f"{conf.weights}_{conf.version}.tar"
+            fname = (
+                settings.DATA_PATH / "weights" / f"{conf.weights}_{conf.version}.tar"
+            )
             fname.parent.mkdir(exist_ok=True, parents=True)
             if Path(conf.weights).exists():
                 logging.info(f'Loading GlueStick model from "{conf.weights}"')

@@ -13,8 +13,8 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 
+from ...utils import misc
 from ..base_model import BaseModel
-from ..utils.misc import pad_and_stack
 
 
 def sample_descriptors(keypoints, descriptors, s: int = 8):
@@ -176,7 +176,7 @@ class SuperPoint(BaseModel):
             scores.append(s)
 
         if self.conf.force_num_keypoints:
-            keypoints = pad_and_stack(
+            keypoints = misc.pad_and_stack(
                 keypoints,
                 self.conf.max_num_keypoints,
                 -2,
@@ -186,7 +186,7 @@ class SuperPoint(BaseModel):
                     data.get("image_size", torch.tensor(image.shape[-2:])).min().item(),
                 ),
             )
-            scores = pad_and_stack(
+            scores = misc.pad_and_stack(
                 scores, self.conf.max_num_keypoints, -1, mode="zeros"
             )
         else:

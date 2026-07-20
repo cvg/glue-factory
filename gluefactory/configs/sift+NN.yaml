@@ -1,15 +1,18 @@
+defaults:
+  - model: two_view_pipeline
+  - model@model.extractor: extractor/sift
+  - _self_
+
 model:
-    name: two_view_pipeline
     extractor:
-        name: extractors.sift
-        detector: pycolmap_cuda
-        max_num_keypoints: 2048
+        max_num_keypoints: 4096
         detection_threshold: 0.00666666
-        nms_radius: -1
+        nms_radius: null
         pycolmap_options:
           first_octave: -1
     matcher:
         name: matchers.nearest_neighbor_matcher
+        ratio_thresh: 0.8
 benchmarks:
     megadepth1500:
         data:
@@ -18,11 +21,9 @@ benchmarks:
             resize: 1600
         eval:
             estimator: opencv
-            ransac_th: 0.5
     hpatches:
         eval:
             estimator: opencv
-            ransac_th: 0.5
         model:
             extractor:
                 max_num_keypoints: 1024  # overwrite config above

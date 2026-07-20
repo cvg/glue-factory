@@ -7,9 +7,10 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from ..geometry.wrappers import Camera, Pose
-from ..settings import DATA_PATH
-from ..utils.image import ImagePreprocessor, load_image
+from .. import settings
+from ..geometry import reconstruction
+from ..models import cache_loader
+from ..utils import preprocess
 from .base_dataset import BaseDataset
 
 
@@ -17,7 +18,7 @@ def names_to_pair(name0, name1, separator="/"):
     return separator.join((name0.replace("/", "-"), name1.replace("/", "-")))
 
 
-def parse_homography(homography_elems) -> Camera:
+def parse_homography(homography_elems) -> reconstruction.Camera:
     return (
         np.array([float(x) for x in homography_elems[:9]])
         .reshape(3, 3)
@@ -25,21 +26,21 @@ def parse_homography(homography_elems) -> Camera:
     )
 
 
-def parse_camera(calib_elems) -> Camera:
+def parse_camera(calib_elems) -> reconstruction.Camera:
     # assert len(calib_list) == 9
     K = np.array([float(x) for x in calib_elems[:9]]).reshape(3, 3).astype(np.float32)
-    return Camera.from_calibration_matrix(K)
+    return reconstruction.Camera.from_calibration_matrix(K)
 
 
-def parse_relative_pose(pose_elems) -> Pose:
+def parse_relative_pose(pose_elems) -> reconstruction.Pose:
     if len(pose_elems) == 12:
         R, t = pose_elems[:9], pose_elems[9:12]
         R = np.array([float(x) for x in R]).reshape(3, 3).astype(np.float32)
         t = np.array([float(x) for x in t]).astype(np.float32)
-        return Pose.from_Rt(R, t)
+        return reconstruction.Pose.from_Rt(R, t)
     elif len(pose_elems) == 16:
         T = np.array([float(x) for x in pose_elems]).reshape(4, 4).astype(np.float32)
-        return Pose.from_4x4mat(T)
+        return reconstruction.Pose.from_4x4mat(T)
     else:
         raise ValueError(f"Can not interpret pose {pose_elems}.")
 
@@ -48,25 +49,55 @@ class ImagePairs(BaseDataset, torch.utils.data.Dataset):
     default_conf = {
         "pairs": "???",  # ToDo: add image folder interface
         "root": "???",
-        "preprocessing": ImagePreprocessor.default_conf,
+        "preprocessing": preprocess.ImagePreprocessor.default_conf,
+        "draft_size": None,  # JPEG draft decode size (faster loading for large images)
         "extra_data": None,  # relative_pose, homography
+        "load_features": {
+            "do": False,
+            **cache_loader.CacheLoader.default_conf,
+            "collate": False,
+        },
     }
 
     def _init(self, conf):
         pair_f = (
-            Path(conf.pairs) if Path(conf.pairs).exists() else DATA_PATH / conf.pairs
+            Path(conf.pairs)
+            if Path(conf.pairs).exists()
+            else settings.DATA_PATH / conf.pairs
         )
         with open(str(pair_f), "r") as f:
             self.items = [line.rstrip() for line in f]
-        self.preprocessor = ImagePreprocessor(conf.preprocessing)
+        self.preprocessor = preprocess.ImagePreprocessor(conf.preprocessing)
 
-    def get_dataset(self, split):
+        if conf.load_features.do:
+            self.feature_loader = cache_loader.CacheLoader(conf.load_features)
+
+    def get_dataset(self, split: str, epoch: int = 0):
         return self
 
     def _read_view(self, name):
-        path = DATA_PATH / self.conf.root / name
-        img = load_image(path)
-        return self.preprocessor(img)
+        if (Path(self.conf.root) / name).exists():
+            path = Path(self.conf.root) / name
+        else:
+            path = settings.DATA_PATH / self.conf.root / name
+        img = preprocess.load_image(path, draft_size=self.conf.draft_size)
+        data = self.preprocessor(img)
+        data["name"] = name
+        if self.conf.draft_size is not None:
+            # draft mode loads a smaller image, so the preprocessor's transform
+            # maps draft coords → preprocessed coords. Fix it to map from the
+            # true original coords instead, so that inv(transform) correctly
+            # recovers original-image coordinates (needed by export and COLMAP).
+            true_size = preprocess.get_image_size(path)  # (w_orig, h_orig)
+            draft_size = data["original_image_size"]  # (w_draft, h_draft)
+            s = (draft_size / true_size).astype(np.float32)
+            orig_to_draft = np.diag([s[0], s[1], 1.0])
+            data["transform"] = data["transform"] @ orig_to_draft
+            data["original_image_size"] = true_size
+        if self.conf.load_features.do:
+            features = self.feature_loader({k: [v] for k, v in data.items()})
+            data = {"cache": features, **data}
+        return data
 
     def __getitem__(self, idx):
         line = self.items[idx]
@@ -80,12 +111,12 @@ class ImagePairs(BaseDataset, torch.utils.data.Dataset):
             "view1": data1,
         }
         if self.conf.extra_data == "relative_pose":
-            data["view0"]["camera"] = parse_camera(pair_data[2:11]).scale(
-                data0["scales"]
-            )
-            data["view1"]["camera"] = parse_camera(pair_data[11:20]).scale(
-                data1["scales"]
-            )
+            data["view0"]["camera"] = parse_camera(
+                pair_data[2:11]
+            ).compose_image_transform(data0["transform"])
+            data["view1"]["camera"] = parse_camera(
+                pair_data[11:20]
+            ).compose_image_transform(data1["transform"])
             data["T_0to1"] = parse_relative_pose(pair_data[20:])
             data["T_1to0"] = data["T_0to1"].inv()
         elif self.conf.extra_data == "homography":

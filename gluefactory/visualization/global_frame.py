@@ -1,17 +1,17 @@
+import copy
 import functools
 import traceback
-from copy import deepcopy
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.widgets import Button
 from omegaconf import OmegaConf
 
-from ..datasets.base_dataset import collate
+from ..datasets import base_dataset
 
 # from ..eval.export_predictions import load_predictions
 from ..models.cache_loader import CacheLoader
-from .tools import RadioHideTool
+from . import tools as vtools
 
 
 class GlobalFrame:
@@ -20,7 +20,7 @@ class GlobalFrame:
         "y": "???",
         "diff": False,
         "child": {},
-        "remove_outliers": False,
+        "remove_outliers": True,
     }
 
     child_frame = None  # MatchFrame
@@ -32,7 +32,14 @@ class GlobalFrame:
     scatters = {}
 
     def __init__(
-        self, conf, results, loader, predictions, title=None, child_frame=None
+        self,
+        conf,
+        results,
+        dataset,
+        predictions,
+        title=None,
+        child_frame=None,
+        eval_predictions=None,
     ):
         self.child_frame = child_frame
         if self.child_frame is not None:
@@ -41,8 +48,9 @@ class GlobalFrame:
 
         self.conf = OmegaConf.merge(self.default_conf, conf)
         self.results = results
-        self.loader = loader
+        self.dataset = dataset
         self.predictions = predictions
+        self.eval_predictions = eval_predictions or {}
         self.metrics = set()
         for k, v in results.items():
             self.metrics.update(v.keys())
@@ -51,34 +59,37 @@ class GlobalFrame:
         self.conf.x = conf["x"] if conf["x"] else self.metrics[0]
         self.conf.y = conf["y"] if conf["y"] else self.metrics[1]
 
-        assert self.conf.x in self.metrics
-        assert self.conf.y in self.metrics
+        assert self.conf.x in self.metrics, self.metrics
+        assert self.conf.y in self.metrics, self.metrics
 
         self.names = list(results)
         self.fig, self.axes = self.init_frame()
         if title is not None:
             self.fig.canvas.manager.set_window_title(title)
 
-        self.xradios = self.fig.canvas.manager.toolmanager.add_tool(
+        tm = self.fig.canvas.manager.toolmanager
+        self.xradios = tm.add_tool(
             "x",
-            RadioHideTool,
+            vtools.RadioHideTool,
             options=self.metrics,
             callback_fn=self.update_x,
             active=self.conf.x,
-            keymap="x",
         )
+        tm.update_keymap("x", "x")
 
-        self.yradios = self.fig.canvas.manager.toolmanager.add_tool(
+        self.yradios = tm.add_tool(
             "y",
-            RadioHideTool,
+            vtools.RadioHideTool,
             options=self.metrics,
             callback_fn=self.update_y,
             active=self.conf.y,
-            keymap="y",
         )
-        if self.fig.canvas.manager.toolbar is not None:
-            self.fig.canvas.manager.toolbar.add_tool("x", "navigation")
-            self.fig.canvas.manager.toolbar.add_tool("y", "navigation")
+        tm.update_keymap("y", "y")
+
+        toolbar = self.fig.canvas.manager.toolbar
+        if toolbar is not None and hasattr(toolbar, "add_tool"):
+            toolbar.add_tool("x", "navigation")
+            toolbar.add_tool("y", "navigation")
 
     def init_frame(self):
         """initialize frame"""
@@ -100,8 +111,12 @@ class GlobalFrame:
 
         refx = 0.0
         refy = 0.0
-        x_cat = isinstance(self.results[self.names[0]][self.conf.x][0], (bytes, str))
-        y_cat = isinstance(self.results[self.names[0]][self.conf.y][0], (bytes, str))
+        x_cat = isinstance(
+            self.results[self.names[0]][self.conf.x][0], (bytes, str, np.object_)
+        )
+        y_cat = isinstance(
+            self.results[self.names[0]][self.conf.y][0], (bytes, str, np.object_)
+        )
 
         if self.conf.diff:
             if not x_cat:
@@ -111,7 +126,10 @@ class GlobalFrame:
         for name in list(self.results.keys()):
             x = np.array(self.results[name][self.conf.x])
             y = np.array(self.results[name][self.conf.y])
-
+            if x_cat and isinstance(x, object):
+                x = np.char.decode(x.astype(bytes), "utf-8")
+            if y_cat and isinstance(y, object):
+                y = np.char.decode(y.astype(bytes), "utf-8")
             if x_cat and np.char.isdigit(x.astype(str)).all():
                 x = x.astype(int)
             if y_cat and np.char.isdigit(y.astype(str)).all():
@@ -165,6 +183,25 @@ class GlobalFrame:
                 )
             if x_cat and x.dtype == object and xunique.shape[0] > 5:
                 self.axes.set_xticklabels(xunique[sort_ax], rotation=90)
+
+        if self.conf.remove_outliers:
+            all_x, all_y = [], []
+            for name in self.results:
+                if not x_cat:
+                    all_x.append(np.array(self.results[name][self.conf.x]) - refx)
+                if not y_cat:
+                    all_y.append(np.array(self.results[name][self.conf.y]) - refy)
+            if all_x:
+                all_x = np.concatenate(all_x)
+                lo, hi = np.nanpercentile(all_x, [2, 98])
+                margin = (hi - lo) * 0.05
+                self.axes.set_xlim(lo - margin, hi + margin)
+            if all_y:
+                all_y = np.concatenate(all_y)
+                lo, hi = np.nanpercentile(all_y, [2, 98])
+                margin = (hi - lo) * 0.05
+                self.axes.set_ylim(lo - margin, hi + margin)
+
         self.axes.legend()
 
     def on_scatter_pick(self, handle):
@@ -200,7 +237,7 @@ class GlobalFrame:
         if self.child_frame is None:
             return
 
-        data = collate([self.loader.dataset[ind]])
+        data = base_dataset.collate([self.dataset[ind]])
 
         preds = {}
 
@@ -208,29 +245,35 @@ class GlobalFrame:
             preds[name] = CacheLoader({"path": str(pfile), "add_data_path": False})(
                 data
             )
+            # Merge eval_predictions if available
+            if name in self.eval_predictions:
+                eval_pred = CacheLoader(
+                    {"path": str(self.eval_predictions[name]), "add_data_path": False}
+                )(data)
+                preds[name].update(eval_pred)
         summaries_i = {
             name: {k: v[ind] for k, v in res.items() if k != "names"}
             for name, res in self.results.items()
         }
         frame = self.child_frame(
             self.conf.child,
-            deepcopy(data),
+            copy.deepcopy(data),
             preds,
             title=str(data["name"][0]),
             event=event,
             summaries=summaries_i,
         )
 
-        frame.fig.canvas.mpl_connect(
-            "key_press_event",
-            functools.partial(
-                self.on_childframe_key_event, frame=frame, ind=ind, event=event
-            ),
-        )
+        if hasattr(frame, "fig") and hasattr(frame.fig, "canvas"):
+            frame.fig.canvas.mpl_connect(
+                "key_press_event",
+                functools.partial(
+                    self.on_childframe_key_event, frame=frame, ind=ind, event=event
+                ),
+            )
         self.childs.append(frame)
-        # if plt.rcParams['backend'] == 'webagg':
-        #     self.fig.canvas.manager_class.refresh_all()
-        self.childs[-1].fig.show()
+        if hasattr(frame, "fig"):
+            self.childs[-1].show()
 
     def hover(self, event):
         if event.inaxes == self.axes:
@@ -272,19 +315,19 @@ class GlobalFrame:
 
     def on_childframe_key_event(self, key_event, frame, ind, event):
         if key_event.key == "delete":
-            plt.close(frame.fig)
+            frame.close()
             self.childs.remove(frame)
         elif key_event.key in ["left", "right", "shift+left", "shift+right"]:
             key = key_event.key
             if key.startswith("shift+"):
                 key = key.replace("shift+", "")
             else:
-                plt.close(frame.fig)
+                frame.close()
                 if frame in self.childs:
                     self.childs.remove(frame)
             new_ind = ind + 1 if key_event.key == "right" else ind - 1
             self.spawn_child(
                 self.names[0],
-                new_ind % len(self.loader),
+                new_ind % len(self.dataset),
                 event=event,
             )

@@ -41,6 +41,14 @@ def batched_eye_like(x: torch.Tensor, n: int):
     return torch.eye(n).to(x)[None].repeat(len(x), 1, 1)
 
 
+def eye_like(tensor: torch.Tensor) -> torch.Tensor:
+    batch_dims = tensor.shape[:-2]
+    identity = torch.eye(*tensor.shape[-2:], dtype=tensor.dtype, device=tensor.device)
+    for _ in batch_dims:
+        identity = identity[None]
+    return identity.repeat(*batch_dims, 1, 1)
+
+
 def skew_symmetric(v):
     """Create a skew-symmetric matrix from a (batched) vector of size (..., 3)."""
     z = torch.zeros_like(v[..., 0])
@@ -66,7 +74,7 @@ def transform_points(T, points):
 
 
 def is_inside(pts, shape):
-    return (pts > 0).all(-1) & (pts < shape[:, None]).all(-1)
+    return (pts > 0).all(-1) & (pts < shape).all(-1)
 
 
 def so3exp_map(w, eps: float = 1e-7):
@@ -91,10 +99,9 @@ def distort_points(pts, dist):
     """Distort normalized 2D coordinates
     and check for validity of the distortion model.
     """
-    dist = dist.unsqueeze(-2)  # add point dimension
     ndist = dist.shape[-1]
     undist = pts
-    valid = torch.ones(pts.shape[:-1], device=pts.device, dtype=torch.bool)
+    valid = torch.ones_like(pts[..., 0], dtype=torch.bool)
     if ndist > 0:
         k1, k2 = dist[..., :2].split(1, -1)
         r2 = torch.sum(pts**2, -1, keepdim=True)
@@ -153,15 +160,87 @@ def J_distort_points(pts, dist):
     return J
 
 
-def get_image_coords(img):
-    h, w = img.shape[-2:]
-    return (
-        torch.stack(
-            torch.meshgrid(
-                torch.arange(h, dtype=torch.float32, device=img.device),
-                torch.arange(w, dtype=torch.float32, device=img.device),
-                indexing="ij",
-            )[::-1],
-            dim=0,
-        ).permute(1, 2, 0)
-    )[None] + 0.5
+def rotate_intrinsics(K, image_shape, rot):
+    """image_shape is the shape of the image after rotation"""
+    assert rot <= 3
+    h, w = image_shape[:2][:: -1 if (rot % 2) else 1]
+    fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
+    rot = rot % 4
+    if rot == 1:
+        return np.array(
+            [[fy, 0.0, cy], [0.0, fx, w - cx], [0.0, 0.0, 1.0]], dtype=K.dtype
+        )
+    elif rot == 2:
+        return np.array(
+            [[fx, 0.0, w - cx], [0.0, fy, h - cy], [0.0, 0.0, 1.0]],
+            dtype=K.dtype,
+        )
+    else:  # if rot == 3:
+        return np.array(
+            [[fy, 0.0, h - cy], [0.0, fx, cx], [0.0, 0.0, 1.0]], dtype=K.dtype
+        )
+
+
+def rotate_pose_inplane(i_T_w, rot):
+    rotation_matrices = [
+        np.array(
+            [
+                [np.cos(r), -np.sin(r), 0.0, 0.0],
+                [np.sin(r), np.cos(r), 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        for r in [np.deg2rad(d) for d in (0, 270, 180, 90)]
+    ]
+    return np.dot(rotation_matrices[rot], i_T_w)
+
+
+def scale_intrinsics(K, scales):
+    """Scale intrinsics after resizing the corresponding image."""
+    scales = np.diag(np.concatenate([scales, [1.0]]))
+    return np.dot(scales.astype(K.dtype, copy=False), K)
+
+
+def wahba_rotation(
+    b_dst: torch.Tensor,
+    b_src: torch.Tensor,
+    weights: torch.Tensor | None = None,
+    eps: float = 0.0,
+) -> torch.Tensor:
+    """Solve for R such that b_dst = R @ b_src (weighted Wahba problem).
+
+    Args:
+        b_dst: (B, N, 3) target unit vectors.
+        b_src: (B, N, 3) source unit vectors.
+        weights: (B, N) optional per-correspondence weights.
+
+    Returns:
+        dst_R_src: (B, 3, 3) rotation matrices.
+    """
+    if weights is not None:
+        H = (weights[..., None] * b_dst).transpose(-1, -2) @ b_src
+    else:
+        H = b_dst.transpose(-1, -2) @ b_src
+    # Regularize to prevent degenerate SVD (e.g. all-zero weights)
+    H = H + eps * torch.eye(3, device=H.device, dtype=H.dtype)[None]
+    U, S, Vt = torch.linalg.svd(H.float())
+    d = torch.det((U @ Vt).float())
+    D = torch.diag_embed(
+        torch.stack([torch.ones_like(d), torch.ones_like(d), d], dim=-1)
+    )
+    return (U @ D @ Vt).to(b_dst.dtype)
+
+
+def focal2fov(focal: torch.Tensor, size: torch.Tensor) -> torch.Tensor:
+    """Compute (vertical/horizontal) field of view from focal length.
+
+    Args:
+        focal (torch.Tensor): Focal length in pixels.
+        size (torch.Tensor): Image height / width in pixels.
+
+    Returns:
+        torch.Tensor: Field of view in radians.
+    """
+    return 2 * torch.arctan(size / (2 * focal))

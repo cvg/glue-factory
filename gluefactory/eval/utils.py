@@ -2,13 +2,9 @@ import numpy as np
 import torch
 from kornia.geometry.homography import find_homography_dlt
 
-from ..geometry.depth import symmetric_reprojection_error
-from ..geometry.epipolar import generalized_epi_dist, relative_pose_error
-from ..geometry.gt_generation import IGNORE_FEATURE, gt_matches_from_pose_depth
-from ..geometry.homography import homography_corner_error, sym_homography_error
-from ..robust_estimators import load_estimator
-from ..utils.tensor import batch_to_device, index_batch
-from ..utils.tools import AUCMetric
+from .. import robust_estimators
+from ..geometry import depth, epipolar, gt_generation, homography, reconstruction
+from ..utils import misc, tools, types
 
 
 def check_keys_recursive(d, pattern):
@@ -16,7 +12,9 @@ def check_keys_recursive(d, pattern):
         {check_keys_recursive(d[k], v) for k, v in pattern.items()}
     else:
         for k in pattern:
-            assert k in d.keys()
+            assert (
+                k in d.keys()
+            ), f"Key {k} not found in dictionary. Available keys: {list(d.keys())}"
 
 
 def get_matches_scores(kpts0, kpts1, matches0, mscores0):
@@ -32,13 +30,13 @@ def eval_per_batch_item(data: dict, pred: dict, eval_f, *args, **kwargs):
     # Batched data
     results = [
         eval_f(data_i, pred_i, *args, **kwargs)
-        for data_i, pred_i in zip(index_batch(data), index_batch(pred))
+        for data_i, pred_i in zip(misc.index_batch(data), misc.index_batch(pred))
     ]
     # Return a dictionary of lists with the evaluation of each item
     return {k: [r[k] for r in results] for k in results[0].keys()}
 
 
-def eval_matches_epipolar(data: dict, pred: dict) -> dict:
+def eval_matches_epipolar(data: dict, pred: dict, essential: bool = False) -> dict:
     check_keys_recursive(data, ["view0", "view1", "T_0to1"])
     check_keys_recursive(
         pred, ["keypoints0", "keypoints1", "matches0", "matching_scores0"]
@@ -51,18 +49,25 @@ def eval_matches_epipolar(data: dict, pred: dict) -> dict:
     results = {}
 
     # match metrics
-    n_epi_err = generalized_epi_dist(
+    n_epi_err = epipolar.generalized_epi_dist(
         pts0[None],
         pts1[None],
         data["view0"]["camera"],
         data["view1"]["camera"],
         data["T_0to1"],
         False,
-        essential=True,
+        essential=essential,
     )[0]
-    results["epi_prec@1e-4"] = (n_epi_err < 1e-4).float().mean().nan_to_num()
-    results["epi_prec@5e-4"] = (n_epi_err < 5e-4).float().mean().nan_to_num()
-    results["epi_prec@1e-3"] = (n_epi_err < 1e-3).float().mean().nan_to_num()
+    if essential:
+        results["epi_prec@1e-4"] = (n_epi_err < 1e-4).float().mean().nan_to_num()
+        results["epi_prec@5e-4"] = (n_epi_err < 5e-4).float().mean().nan_to_num()
+        results["epi_prec@1e-3"] = (n_epi_err < 1e-3).float().mean().nan_to_num()
+    else:
+        results["epi_prec@1px"] = (n_epi_err < 1).float().mean().nan_to_num()
+        results["epi_prec@3px"] = (n_epi_err < 3).float().mean().nan_to_num()
+        results["epi_prec@5px"] = (n_epi_err < 5).float().mean().nan_to_num()
+        results["epi_matches@1px"] = (n_epi_err < 1).float().sum().nan_to_num()
+        results["epi_matches@3px"] = (n_epi_err < 3).float().sum().nan_to_num()
 
     results["num_matches"] = pts0.shape[0]
     results["num_keypoints"] = (kp0.shape[0] + kp1.shape[0]) / 2.0
@@ -88,7 +93,7 @@ def eval_matches_depth(data: dict, pred: dict) -> dict:
     depth0 = data["view0"]["depth"]
     depth1 = data["view1"]["depth"]
 
-    reproj_error, valid = symmetric_reprojection_error(
+    reproj_error, valid = depth.symmetric_reprojection_error(
         pts0[None],
         pts1[None],
         camera0,
@@ -96,6 +101,7 @@ def eval_matches_depth(data: dict, pred: dict) -> dict:
         T_0to1,
         depth0,
         depth1,
+        ccth=None,
     )
     reproj_error, valid = reproj_error[0], valid[0]
 
@@ -104,17 +110,24 @@ def eval_matches_depth(data: dict, pred: dict) -> dict:
     results["reproj_prec@1px"] = (reproj_error < 1).float().mean().nan_to_num().item()
     results["reproj_prec@3px"] = (reproj_error < 3).float().mean().nan_to_num().item()
     results["reproj_prec@5px"] = (reproj_error < 5).float().mean().nan_to_num().item()
+    results["reproj_matches@1px"] = (reproj_error < 1).float().sum().nan_to_num().item()
+    results["reproj_matches@3px"] = (reproj_error < 3).float().sum().nan_to_num().item()
+    results["reproj_error"] = reproj_error.clip(max=10).mean().item()
+    results["reproj_error_median"] = reproj_error.clip(max=10).median().item()
+
     results["covisible"] = valid.float().sum().item()
     results["covisible_percent"] = valid.float().mean().item() * 100.0
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    gt_pred = gt_matches_from_pose_depth(
+    gt_pred = gt_generation.gt_matches_from_pose_depth(
         kp0[None].to(device),
         kp1[None].to(device),
-        batch_to_device(data, device),
+        misc.batch_to_device(data, device),
         pos_th=3.0,
         neg_th=5.0,
     )
+
+    gt_pred = misc.batch_to_device(gt_pred, "cpu", non_blocking=False)
 
     def recall(m, gt_m):
         mask = (gt_m > -1).float()
@@ -131,6 +144,26 @@ def eval_matches_depth(data: dict, pred: dict) -> dict:
     results["gt_match_precision@3px"] = precision(
         pred["matches0"][None], gt_pred["matches0"].cpu()
     )[0].item()
+
+    if "pred_depth_keypoints0" in pred and "pred_depth_keypoints1" in pred:
+        mgt0 = gt_pred["matches0"][0]
+        mvalid = mgt0 > -1
+        mgt_pts0 = kp0[mvalid]
+        mgt_pts1 = kp1[mgt0[mvalid]]
+
+        mgt_depth0 = pred["pred_depth_keypoints0"][mvalid]
+        mgt_depth1 = pred["pred_depth_keypoints1"][mgt0[mvalid]]
+        m_scores = (mgt_depth0 > 0) & (mgt_depth1 > 0)
+        mgt_xyz0 = camera0[0].image2cam(mgt_pts0) * mgt_depth0[:, None]
+        mgt_xyz1 = camera1[0].image2cam(mgt_pts1) * mgt_depth1[:, None]
+        c0_t_c1, _, _ = depth.align_pointclouds(mgt_xyz0[m_scores], mgt_xyz1[m_scores])
+        if c0_t_c1 is None:
+            c0_t_c1 = reconstruction.Pose.identity().to(mgt0.device)
+        dpose = c0_t_c1.inv().angular_error(T_0to1[0])
+        results["procrustes_pose_error"] = dpose
+        results["procrustes_pose_error<5°"] = (dpose < 5.0).float()
+        results["procrustes_pose_error<10°"] = (dpose < 10.0).float()
+        results["procrustes_pose_error<20°"] = (dpose < 20.0).float()
     return results
 
 
@@ -147,12 +180,57 @@ def eval_matches_homography(data: dict, pred: dict) -> dict:
     kp0, kp1 = pred["keypoints0"], pred["keypoints1"]
     m0, scores0 = pred["matches0"], pred["matching_scores0"]
     pts0, pts1, scores = get_matches_scores(kp0, kp1, m0, scores0)
-    err = sym_homography_error(pts0, pts1, H_gt)
+    err = homography.sym_homography_error(pts0, pts1, H_gt)
     results = {}
     results["prec@1px"] = (err < 1).float().mean().nan_to_num().item()
     results["prec@3px"] = (err < 3).float().mean().nan_to_num().item()
     results["num_matches"] = pts0.shape[0]
     results["num_keypoints"] = (kp0.shape[0] + kp1.shape[0]) / 2.0
+    return results
+
+
+def eval_matches_fundamental(data: dict, pred: dict, conf) -> dict:
+    """Epipolar-consistency evaluation for benchmarks with hand-labeled GT
+    correspondences but no camera pose/depth (e.g. HardMatch): a Fundamental
+    matrix is estimated from the predicted matches via RANSAC, then the GT
+    correspondences are checked for consistency with that estimated F.
+    """
+    check_keys_recursive(data, ["gt_pts0", "gt_pts1"])
+    check_keys_recursive(
+        pred, ["keypoints0", "keypoints1", "matches0", "matching_scores0"]
+    )
+
+    kp0, kp1 = pred["keypoints0"], pred["keypoints1"]
+    m0, scores0 = pred["matches0"], pred["matching_scores0"]
+    pts0, pts1, _ = get_matches_scores(kp0, kp1, m0, scores0)
+
+    estimator = robust_estimators.load_estimator(
+        "fundamental_matrix", conf["estimator"]
+    )(conf)
+    est = estimator({"m_kpts0": pts0, "m_kpts1": pts1})
+
+    gt_pts0, gt_pts1 = data["gt_pts0"][0], data["gt_pts1"][0]
+    thresholds = list(range(20))
+    if not est["success"] or gt_pts0.shape[0] == 0:
+        pck = [0.0 for _ in thresholds]
+    else:
+        F = est["M_0to1"].to(gt_pts0)
+        # NB: squared=True then sqrt (not squared=False) to match kornia's
+        # symmetrical_epipolar_distance (used by the original HardMatch
+        # benchmark) — gluefactory's own squared=False path computes a
+        # different quantity (mean of two one-sided distances).
+        sq_errors = epipolar.sym_epipolar_distance(
+            gt_pts0[None], gt_pts1[None], F[None], squared=True, symmetric=True
+        )[0]
+        errors = sq_errors.clamp(min=0).sqrt()
+        pck = [(errors <= th).float().mean().item() for th in thresholds]
+
+    results = {}
+    results["epi_pck"] = pck
+    results["num_matches"] = pts0.shape[0]
+    results["ransac_inl"] = (
+        est["inliers"].float().sum().item() if est["success"] else 0.0
+    )
     return results
 
 
@@ -169,13 +247,22 @@ def eval_relative_pose_robust(data, pred, conf):
 
     results = {}
 
-    estimator = load_estimator("relative_pose", conf["estimator"])(conf)
+    estimator = robust_estimators.load_estimator("relative_pose", conf["estimator"])(
+        conf
+    )
     data_ = {
         "m_kpts0": pts0,
         "m_kpts1": pts1,
         "camera0": data["view0"]["camera"][0],
         "camera1": data["view1"]["camera"][0],
+        "m_scores": scores,
     }
+
+    if "pred_depth_keypoints0" in pred:
+        data_["m_depth0"] = pred["pred_depth_keypoints0"][m0 > -1]
+    if "pred_depth_keypoints1" in pred:
+        data_["m_depth1"] = pred["pred_depth_keypoints1"][m0[m0 > -1]]
+
     est = estimator(data_)
 
     if not est["success"]:
@@ -184,12 +271,12 @@ def eval_relative_pose_robust(data, pred, conf):
         results["ransac_inl%"] = 0
     else:
         # R, t, inl = ret
-        M = est["M_0to1"]
+        M: reconstruction.Pose = est["M_0to1"]
         inl = est["inliers"].numpy()
-        t_error, r_error = relative_pose_error(T_gt, M.R, M.t)
+        t_error, r_error = M.angular_drdt(T_gt[0])
         results["rel_pose_error"] = max(r_error, t_error)
         results["ransac_inl"] = np.sum(inl)
-        results["ransac_inl%"] = np.mean(inl)
+        results["ransac_inl%"] = np.mean(inl) if len(inl) > 0 else 0.0
 
     return results
 
@@ -199,7 +286,7 @@ def eval_homography_robust(data, pred, conf):
     if H_gt.ndim > 2:
         return eval_per_batch_item(data, pred, eval_relative_pose_robust, conf)
 
-    estimator = load_estimator("homography", conf["estimator"])(conf)
+    estimator = robust_estimators.load_estimator("homography", conf["estimator"])(conf)
 
     data_ = {}
     if "keypoints0" in pred:
@@ -224,7 +311,9 @@ def eval_homography_robust(data, pred, conf):
     est = estimator(data_)
     if est["success"]:
         M = est["M_0to1"]
-        error_r = homography_corner_error(M, H_gt, data["view0"]["image_size"]).item()
+        error_r = homography.homography_corner_error(
+            M, H_gt, data["view0"]["image_size"]
+        ).item()
     else:
         error_r = float("inf")
 
@@ -256,21 +345,23 @@ def eval_homography_dlt(data, pred):
     except AssertionError:
         h_dlt = H_inf
 
-    error_dlt = homography_corner_error(h_dlt, H_gt, data["view0"]["image_size"])
+    error_dlt = homography.homography_corner_error(
+        h_dlt, H_gt, data["view0"]["image_size"]
+    )
     results["H_error_dlt"] = error_dlt.item()
     return results
 
 
-def eval_poses(pose_results, auc_ths, key, unit="°"):
+def eval_poses(pose_results, auc_ths, key, unit="°", estimator=""):
     pose_aucs = {}
     best_th = -1
     for th, results_i in pose_results.items():
-        pose_aucs[th] = AUCMetric(auc_ths, results_i[key]).compute()
+        pose_aucs[th] = tools.AUCMetric(auc_ths, results_i[key]).compute()
     mAAs = {k: np.mean(v) for k, v in pose_aucs.items()}
     best_th = max(mAAs, key=mAAs.get)
 
     if len(pose_aucs) > -1:
-        print("Tested ransac setup with following results:")
+        print(f"Tested {estimator} ransac setup with following results:")
         print("AUC", pose_aucs)
         print("mAA", mAAs)
         print("best threshold =", best_th)
@@ -295,7 +386,7 @@ def get_tp_fp_pts(pred_matches, gt_matches, pred_scores):
     to each match and the number of positives for a set of matches.
     """
     assert pred_matches.shape == pred_scores.shape
-    ignore_mask = gt_matches != IGNORE_FEATURE
+    ignore_mask = gt_matches != types.IGNORE_FEATURE
     pred_matches, gt_matches, pred_scores = (
         pred_matches[ignore_mask],
         gt_matches[ignore_mask],

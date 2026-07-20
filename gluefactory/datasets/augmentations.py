@@ -25,7 +25,7 @@ class RandomAdditiveShade(A.ImageOnlyTransform):
         always_apply=False,
         p=0.5,
     ):
-        super().__init__(always_apply, p)
+        super().__init__(p if not always_apply else 1.0)
         self.nb_ellipses = nb_ellipses
         self.transparency_limit = transparency_limit
         self.kernel_size_limit = kernel_size_limit
@@ -127,11 +127,11 @@ class BaseAugmentation(object):
             self.compose = A.Compose
         if self.conf.dtype == "uint8":
             self.dtype = np.uint8
-            self.preprocess = A.FromFloat(always_apply=True, dtype="uint8")
-            self.postprocess = A.ToFloat(always_apply=True)
+            self.preprocess = A.FromFloat(dtype="uint8")
+            self.postprocess = A.ToFloat()
         elif self.conf.dtype == "float32":
             self.dtype = np.float32
-            self.preprocess = A.ToFloat(always_apply=True)
+            self.preprocess = A.ToFloat()
             self.postprocess = IdentityTransform()
         else:
             raise ValueError(f"Unsupported dtype {self.conf.dtype}")
@@ -153,7 +153,9 @@ class BaseAugmentation(object):
             order = [i for i, _ in enumerate(transforms)]
             np.random.shuffle(order)
             transforms = [transforms[i] for i in order]
-        transformed = self.compose(transforms, p=self.conf.p)(**data)
+        # Set a seed dependent on np to propagate seeding
+        seed = np.random.randint(2**32 - 1)
+        transformed = self.compose(transforms, p=self.conf.p, seed=seed)(**data)
         if self.conf.verbose:
             print(replay_str(transformed["replay"]["transforms"]))
         transformed = self.postprocess(**transformed)
@@ -243,8 +245,92 @@ class LGAugmentation(BaseAugmentation):
         ]
 
 
+class StrongAugmentation(BaseAugmentation):
+    default_conf = {
+        "mult_noise": 0.3,
+        "noise": 0.2,
+        "blur": 0.3,
+        "gamma": 0.15,
+        "sharpen": 0.4,
+        "bright_contr": 0.75,
+        "hue": 0.75,
+        "tone": 0.2,
+        "shade": 0.5,
+        "p": 0.95,
+        "difficulty": 1.0,
+    }
+
+    def _init(self, conf):
+        d = self.conf.difficulty
+        self.transforms = [
+            A.MultiplicativeNoise(
+                multiplier=(1.0 - 0.2 * d, 1.0 + 0.2 * d),
+                per_channel=True,
+                elementwise=False,
+                p=conf.mult_noise,
+            ),
+            A.OneOf(
+                [
+                    A.MultiplicativeNoise(
+                        multiplier=(1.0 - 0.1 * d, 1.0 + 0.1 * d),
+                        per_channel=True,
+                        elementwise=True,
+                        p=0.34,
+                    ),
+                    A.GaussNoise(mean=0.0, var_limit=(2 * d, 10 * d), p=0.66),
+                ],
+                p=conf.noise,
+            ),
+            A.OneOf(
+                [
+                    A.MotionBlur(
+                        blur_limit=(3, 3 + 2 * round(6 * d)), p=0.2, allow_shifted=False
+                    ),
+                    A.MedianBlur(blur_limit=(3, 3 + 2 * round(2 * d)), p=0.1),
+                    A.Blur(blur_limit=(3, 3 + 2 * round(2 * d)), p=0.1),
+                ],
+                p=conf.blur,
+            ),
+            A.OneOf(
+                [  # These parameters are not so hard, so we do not scale
+                    A.CLAHE(clip_limit=(2, 8), p=1.0),
+                    A.Sharpen(p=1.0),
+                    A.Emboss(p=1.0),
+                ],
+                p=conf.sharpen,
+            ),
+            A.OneOf(
+                [
+                    A.RandomBrightnessContrast(
+                        brightness_limit=(-0.4 * d, -0.1 * d),
+                        contrast_limit=(-0.4 * d, -0.1 * d),
+                        p=0.50,
+                    ),
+                    A.RandomBrightnessContrast(
+                        brightness_limit=(0.1 * d, 0.2 * d),
+                        contrast_limit=(0.1 * d, 0.4 * d),
+                        p=0.50,
+                    ),
+                ],
+                p=conf.bright_contr,
+            ),
+            A.RandomGamma(
+                p=conf.gamma, gamma_limit=(100 - int(70 * d), 100 + int(50 * d))
+            ),
+            A.HueSaturationValue(
+                p=conf.hue,
+                val_shift_limit=(-20 * d, 20 * d),
+                hue_shift_limit=(-30 * d, 30 * d),
+                sat_shift_limit=(-50 * d, 50 * d),
+            ),
+            A.RandomToneCurve(p=conf.tone, scale=0.7 * d),
+            RandomAdditiveShade(p=conf.shade, transparency_limit=(-0.2 * d, 0.8 * d)),
+        ]
+
+
 augmentations = {
     "dark": DarkAugmentation,
     "lg": LGAugmentation,
     "identity": IdentityAugmentation,
+    "strong": StrongAugmentation,
 }

@@ -1,0 +1,26 @@
+defaults:
+  - lightglue_homography
+  - model@model.extractor: extractor/raco
+  - _self_
+
+data:
+  batch_size: 42
+  batch_size_per_gpu: true
+  homography:
+    max_angle: 90
+model:
+  extractor:
+    detector:
+      max_num_keypoints: 512
+      ranker: false
+      covariance_estimator: false
+    trainable: False
+  matcher:
+      input_dim: 128
+      flash: true
+train:
+  lr: 2e-4
+  mixed_precision: float16
+  load_strict: false
+  project_name: flexglue
+  writer: tensorboard,wandb

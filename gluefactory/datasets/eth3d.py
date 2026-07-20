@@ -12,11 +12,11 @@ import cv2
 import numpy as np
 import torch
 
-from ..geometry.wrappers import Camera, Pose
+from ..geometry import reconstruction
+from ..geometry import transforms as gtr
 from ..settings import DATA_PATH
-from ..utils.image import ImagePreprocessor, load_image
-from .base_dataset import BaseDataset
-from .utils import scale_intrinsics
+from ..utils import preprocess
+from . import base_dataset
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +32,8 @@ def read_cameras(camera_file, scale_factor=None):
         fx, fy, cx, cy = np.array(list(map(float, data[4:])))
         K = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float32)
         if scale_factor is not None:
-            K = scale_intrinsics(K, np.array([scale_factor, scale_factor]))
-        cameras.append(Camera.from_calibration_matrix(K).float())
+            K = gtr.scale_intrinsics(K, np.array([scale_factor, scale_factor]))
+        cameras.append(reconstruction.Camera.from_calibration_matrix(K).float())
     return cameras
 
 
@@ -60,7 +60,7 @@ def qvec2rotmat(qvec):
     )
 
 
-class ETH3DDataset(BaseDataset):
+class ETH3DDataset(base_dataset.BaseDataset):
     default_conf = {
         "data_dir": "ETH3D_undistorted",
         "grayscale": True,
@@ -155,7 +155,9 @@ class ETH3DDataset(BaseDataset):
                         "depth_path": str(Path(depth_folder, names[i][:-4]))
                         + depth_ext,
                         "camera": cameras[name_to_cam_idx[names[i]]["dist_camera_idx"]],
-                        "T_w2cam": Pose.from_4x4mat(T_world_to_camera[names[i]]),
+                        "T_w2cam": reconstruction.Pose.from_4x4mat(
+                            T_world_to_camera[names[i]]
+                        ),
                     },
                     "view1": {
                         "name": names[j][:-4],
@@ -163,17 +165,23 @@ class ETH3DDataset(BaseDataset):
                         "depth_path": str(Path(depth_folder, names[j][:-4]))
                         + depth_ext,
                         "camera": cameras[name_to_cam_idx[names[j]]["dist_camera_idx"]],
-                        "T_w2cam": Pose.from_4x4mat(T_world_to_camera[names[j]]),
+                        "T_w2cam": reconstruction.Pose.from_4x4mat(
+                            T_world_to_camera[names[j]]
+                        ),
                     },
-                    "T_world_to_ref": Pose.from_4x4mat(T_world_to_camera[names[i]]),
-                    "T_world_to_target": Pose.from_4x4mat(T_world_to_camera[names[j]]),
-                    "T_0to1": Pose.from_4x4mat(
+                    "T_world_to_ref": reconstruction.Pose.from_4x4mat(
+                        T_world_to_camera[names[i]]
+                    ),
+                    "T_world_to_target": reconstruction.Pose.from_4x4mat(
+                        T_world_to_camera[names[j]]
+                    ),
+                    "T_0to1": reconstruction.Pose.from_4x4mat(
                         np.float32(
                             T_world_to_camera[names[j]]
                             @ np.linalg.inv(T_world_to_camera[names[i]])
                         )
                     ),
-                    "T_1to0": Pose.from_4x4mat(
+                    "T_1to0": reconstruction.Pose.from_4x4mat(
                         np.float32(
                             T_world_to_camera[names[i]]
                             @ np.linalg.inv(T_world_to_camera[names[j]])
@@ -203,16 +211,16 @@ class ETH3DDataset(BaseDataset):
             zip_ref.extractall(tmp_dir)
         shutil.move(tmp_dir / zip_name.split(".")[0], data_dir)
 
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         return ETH3DDataset(self.conf)
 
     def _read_image(self, img_path):
-        img = load_image(img_path, grayscale=self.grayscale)
+        img = preprocess.load_image(img_path, grayscale=self.grayscale)
         shape = img.shape[-2:]
         # instead of INTER_AREA this does bilinear interpolation with antialiasing
-        img_data = ImagePreprocessor({"resize": max(shape) // self.downsize_factor})(
-            img
-        )
+        img_data = preprocess.ImagePreprocessor(
+            {"resize": max(shape) // self.downsize_factor}
+        )(img)
         return img_data
 
     def read_depth(self, depth_path):

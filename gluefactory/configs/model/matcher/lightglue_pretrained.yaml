@@ -1,0 +1,5 @@
+name: matchers.lightglue_pretrained
+features: ???
+depth_confidence: -1
+width_confidence: -1
+filter_threshold: 0.1

@@ -1,0 +1,3 @@
+name: extractors.sift
+backend: pycolmap_cpu
+max_num_keypoints: 4096

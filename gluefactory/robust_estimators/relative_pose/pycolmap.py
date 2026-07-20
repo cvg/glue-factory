@@ -1,8 +1,11 @@
-import pycolmap
+try:
+    import pycolmap
+except ImportError:
+    pycolmap = None
 import torch
 from omegaconf import OmegaConf
 
-from ...geometry.wrappers import Pose
+from ...geometry import reconstruction
 from ..base_estimator import BaseEstimator
 
 
@@ -34,10 +37,10 @@ class PycolmapTwoViewEstimator(BaseEstimator):
         if success:
             R = pycolmap.qvec_to_rotmat(info["qvec"])
             t = info["tvec"]
-            M = Pose.from_Rt(torch.tensor(R), torch.tensor(t)).to(pts0)
+            M = reconstruction.Pose.from_Rt(torch.tensor(R), torch.tensor(t)).to(pts0)
             inl = torch.tensor(info.pop("inliers")).to(pts0)
         else:
-            M = Pose.from_4x4mat(torch.eye(4)).to(pts0)
+            M = reconstruction.Pose.from_4x4mat(torch.eye(4)).to(pts0)
             inl = torch.zeros_like(pts0[:, 0]).bool()
 
         estimation = {

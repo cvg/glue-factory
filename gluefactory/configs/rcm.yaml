@@ -1,0 +1,47 @@
+model:
+  name: two_view_pipeline
+  matcher:
+    name: gluefactory_nonfree.rcm
+    weights: third_party/RCM/weights/rcm_outdoor.ckpt
+    match_threshold: 0.2
+    max_keypoints: 2048
+    nms_radius: 4
+    keypoint_threshold: 0.005
+    zero_pad: true
+data:
+  preprocessing:
+    side: long
+    resize: 832
+benchmarks:
+  megadepth1500:
+    data:
+      preprocessing:
+        side: long
+        resize: 832
+    model:
+      matcher:
+        weights: third_party/RCM/weights/rcm_outdoor.ckpt
+        match_threshold: 0.2
+        max_keypoints: 2048
+        nms_radius: 4
+        keypoint_threshold: 0.005
+        zero_pad: true
+    eval:
+      estimator: [poselib,opencv]
+      ransac_th: -1
+  scannet1500:
+    data:
+      preprocessing:
+        resize: 640
+        side: long
+    model:
+      matcher:
+        weights: third_party/RCM/weights/rcm_indoor.ckpt
+        match_threshold: 0.01
+        max_keypoints: -1
+        nms_radius: 1
+        keypoint_threshold: 0.001
+        zero_pad: false
+    eval:
+      estimator: [poselib,opencv]
+      ransac_th: -1

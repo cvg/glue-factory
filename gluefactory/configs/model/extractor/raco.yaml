@@ -1,0 +1,8 @@
+name: extractors.mixed
+detector:
+  name: extractors.raco
+  max_num_keypoints: 2048
+  detection_threshold: -1
+descriptor:
+  name: extractors.aliked
+  model_name: aliked-n16

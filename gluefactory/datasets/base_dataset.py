@@ -4,20 +4,25 @@ See mnist.py for an example of dataset.
 """
 
 import collections
+import dataclasses
+import functools
 import logging
+import os
 from abc import ABCMeta, abstractmethod
 
+import numpy as np
 import omegaconf
 import torch
+import torch.distributed as dist
 from omegaconf import OmegaConf
+from tensordict import TensorClass
 from torch.utils.data import DataLoader, Sampler, get_worker_info
 from torch.utils.data._utils.collate import (
     default_collate_err_msg_format,
     np_str_obj_array_pattern,
 )
 
-from ..utils.tensor import string_classes
-from ..utils.tools import set_num_threads, set_seed
+from ..utils import tools, types
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +43,12 @@ def worker_init_fn(i):
     info = get_worker_info()
     if hasattr(info.dataset, "conf"):
         conf = info.dataset.conf
-        set_seed(info.id + conf.seed)
-        set_num_threads(conf.num_threads)
+        tools.set_seed(info.id + conf.seed)
+        tools.set_num_threads(conf.num_threads)
     else:
-        set_num_threads(1)
+        tools.set_num_threads(1)
+    if hasattr(info.dataset, "worker_init"):
+        info.dataset.worker_init(info.id)
 
 
 def collate(batch):
@@ -60,6 +67,8 @@ def collate(batch):
             except AttributeError:
                 storage = elem.storage()._new_shared(numel)  # noqa: F841
         return torch.stack(batch, dim=0)
+    elif isinstance(elem, TensorClass):
+        return torch.stack(batch, dim=0)
     elif (
         elem_type.__module__ == "numpy"
         and elem_type.__name__ != "str_"
@@ -76,7 +85,7 @@ def collate(batch):
         return torch.tensor(batch, dtype=torch.float64)
     elif isinstance(elem, int):
         return torch.tensor(batch)
-    elif isinstance(elem, string_classes):
+    elif isinstance(elem, types.STRING_CLASSES):
         return batch
     elif isinstance(elem, collections.abc.Mapping):
         return {key: collate([d[key] for d in batch]) for key in elem}
@@ -92,6 +101,9 @@ def collate(batch):
         return [collate(samples) for samples in transposed]
     elif elem is None:
         return elem
+    elif dataclasses.is_dataclass(elem):
+        # do not convert dataclass until we move to tensordict
+        return batch
     else:
         # try to stack anyway in case the object implements stacking.
         return torch.stack(batch, 0)
@@ -127,6 +139,7 @@ class BaseDataset(metaclass=ABCMeta):
         "prefetch_factor": 2,
     }
     default_conf = {}
+    strict_conf = False
 
     def __init__(self, conf):
         """Perform some logic and call the _init method of the child model."""
@@ -134,7 +147,7 @@ class BaseDataset(metaclass=ABCMeta):
             OmegaConf.create(self.base_default_conf),
             OmegaConf.create(self.default_conf),
         )
-        OmegaConf.set_struct(default_conf, True)
+        OmegaConf.set_struct(default_conf, self.strict_conf)
         if isinstance(conf, dict):
             conf = OmegaConf.create(conf)
         self.conf = OmegaConf.merge(default_conf, conf)
@@ -148,19 +161,83 @@ class BaseDataset(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def get_dataset(self, split):
+    def get_dataset(self, split: str, epoch: int = 0):
         """To be implemented by the child class."""
         raise NotImplementedError
 
-    def get_data_loader(self, split, shuffle=None, pinned=False, distributed=False):
+    @functools.cache
+    def get_dummy_loader(
+        self, split: str = "val", batch_size: int | None = 2, **kwargs
+    ):
+        # Return a dummy batch from the dataset
+        if batch_size is None:
+            batch_size = self.conf.get(split + "_batch_size", self.conf.batch_size)
+        dataset = self.get_dataset(split)
+        return DataLoader(
+            dataset,
+            batch_size=batch_size,
+            pin_memory=True,
+            num_workers=0,
+            worker_init_fn=worker_init_fn,
+            collate_fn=collate,
+            prefetch_factor=None,
+            # shuffle=split == "train",
+            shuffle=True,
+            **kwargs,
+        )
+
+    @functools.cache
+    def get_dummy_batch(self, split: str = "val", batch_size: int | None = 2, **kwargs):
+        loader = self.get_dummy_loader(split, batch_size=batch_size, **kwargs)
+        logger.info("Fetching dummy batch from %s split...", split)
+        dummy_batch = next(iter(loader))
+        logger.info("Dummy batch fetched.")
+        del loader
+        return dummy_batch
+
+    def get_data_loader(
+        self,
+        split,
+        shuffle=None,
+        pinned=False,
+        distributed=False,
+        epoch: int = 0,
+        overfit: bool = False,
+        num_samples: int | None = None,
+        num_workers: int | None = None,
+    ):
         """Return a data loader for a given split."""
         assert split in ["train", "val", "test"]
-        dataset = self.get_dataset(split)
+        with tools.fork_rng(self.conf.seed + epoch):
+            if overfit:
+                return self.get_overfit_loader(split)
+            dataset = self.get_dataset(split, epoch=epoch)
         try:
             batch_size = self.conf[split + "_batch_size"]
         except omegaconf.MissingMandatoryValue:
             batch_size = self.conf.batch_size
-        num_workers = self.conf.get("num_workers", batch_size)
+        if num_samples is not None:
+            idxs = np.random.default_rng(42).permutation(np.arange(len(dataset.items)))
+            idxs = idxs[:num_samples]
+            dataset.items = [dataset.items[i] for i in idxs.tolist()]
+        max_num_workers = 0
+        if hasattr(os, "sched_getaffinity"):
+            max_num_workers = len(os.sched_getaffinity(0))
+        elif os.cpu_count() is not None:
+            max_num_workers = os.cpu_count()
+        if distributed or dist.is_initialized():
+            # limit num_workers per process in distributed training
+            max_num_workers = max_num_workers // dist.get_world_size()
+
+        if "SLURM_CPUS_PER_TASK" in os.environ:
+            max_num_workers = int(os.environ["SLURM_CPUS_PER_TASK"])
+
+        if num_workers is None:
+            num_workers = self.conf.get("num_workers", max_num_workers)
+        if num_workers is None or num_workers < 0:
+            num_workers = max_num_workers
+        num_workers = min(num_workers, max_num_workers)
+        logger.info(f"{split} DataLoader num_workers: {num_workers} {max_num_workers}")
         drop_last = True if split == "train" else False
         if distributed:
             shuffle = False
@@ -171,7 +248,7 @@ class BaseDataset(metaclass=ABCMeta):
             sampler = None
             if shuffle is None:
                 shuffle = split == "train" and self.conf.shuffle_training
-        return DataLoader(
+        loader = DataLoader(
             dataset,
             batch_size=batch_size,
             shuffle=shuffle,
@@ -180,9 +257,13 @@ class BaseDataset(metaclass=ABCMeta):
             collate_fn=collate,
             num_workers=num_workers,
             worker_init_fn=worker_init_fn,
-            prefetch_factor=self.conf.prefetch_factor,
+            prefetch_factor=self.conf.prefetch_factor if num_workers > 0 else None,
             drop_last=drop_last,
         )
+
+        if distributed:
+            sampler.set_epoch(epoch)
+        return loader
 
     def get_overfit_loader(self, split):
         """Return an overfit data loader.
@@ -192,18 +273,24 @@ class BaseDataset(metaclass=ABCMeta):
         correlate well.
         """
         assert split in ["train", "val", "test"]
-        dataset = self.get_dataset("train")
-        sampler = LoopSampler(
-            self.conf.batch_size,
-            len(dataset) if split == "train" else self.conf.batch_size,
-        )
-        num_workers = self.conf.get("num_workers", self.conf.batch_size)
-        return DataLoader(
-            dataset,
-            batch_size=self.conf.batch_size,
-            pin_memory=True,
-            num_workers=num_workers,
-            sampler=sampler,
-            worker_init_fn=worker_init_fn,
-            collate_fn=collate,
-        )
+        with tools.fork_rng(self.conf.seed):
+            dummy_loader = self.get_dummy_loader(split, batch_size=None)
+
+            class DummyDataset(torch.utils.data.Dataset):
+                def __init__(self, dummy_loader):
+                    self.dummy_loader = dummy_loader
+                    self.batch = next(iter(dummy_loader))
+
+                def __len__(self):
+                    return len(self.dummy_loader)
+
+                def __getitem__(self, idx):
+                    return self.batch
+
+            return DataLoader(
+                DummyDataset(dummy_loader),
+                batch_size=1,
+                num_workers=0,
+                worker_init_fn=worker_init_fn,
+                collate_fn=lambda x: x[0],  # already collated
+            )

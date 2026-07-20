@@ -1,0 +1,44 @@
+defaults:
+    - model: two_view_pipeline
+    - model@model.extractor: extractor/superpoint
+    - model@model.matcher: matcher/lightglue_pretrained
+    - _self_
+
+model:
+    matcher:
+      features: gim_superpoint
+benchmarks:
+    megadepth1500:
+      data:
+        preprocessing:
+          side: long
+          resize: 1600
+      eval:
+        estimator: opencv
+    hpatches:
+      eval:
+        estimator: opencv
+      model:
+        extractor:
+          max_num_keypoints: 1024  # overwrite config above
+    scannet1500:
+        eval:
+            estimator: [poselib,opencv]
+    inloc:
+      model:
+        extractor:
+            nms_radius: 4
+            max_num_keypoints: 4096
+      data:
+        preprocessing:
+          side: long
+          resize: 1600
+    zeb:
+      data:
+        preprocessing:
+          side: long
+          resize: 1600
+      eval:
+        estimator: [poselib,opencv]
+        
+
