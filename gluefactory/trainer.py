@@ -213,13 +213,14 @@ class Trainer:
         "lr_scaling": {},  # learning rate scaling for parameter name patterns
         "freeze_epochs": {},  # parameter name patterns -> epochs to keep frozen (lr=0)
         "eval_every_epoch": None,  # interval for evaluation on the validation set
+        "eval_init": False,  # run evaluation on the validation set before training
         "train_split": "train",  # split to use for training
         "eval_split": "val",  # split to use for evaluation
         "benchmark_every_epoch": 1,  # interval for evaluation on the test benchmarks
+        "benchmark_checkpoint": True,  # use the best checkpoint for benchmark evaluation (otherwise current model)
         "save_every_iter": 5000,  # interval for saving the current checkpoint
         "log_every_iter": 200,  # interval for logging the loss to the console
         "log_grad_every_iter": None,  # interval for logging gradient hists
-        "test_every_epoch": 1,  # interval for evaluation on the test benchmarks
         "keep_last_checkpoints": 1,  # keep only the last X checkpoints
         "load_experiment": None,  # initialize the model from a previous experiment
         "median_metrics": [],  # add the median of some metrics
@@ -1089,7 +1090,8 @@ class Trainer:
     ):
         """Interface for test loop."""
         logger.info(f"Running eval on {benchmark_name}")
-        model = self.sequential_model()  # no DDP
+        if not self.conf.benchmark_checkpoint:
+            model = self.sequential_model()  # no DDP
         self.info("Configuration: \n%s", OmegaConf.to_yaml(benchmark_conf))
         with torch.no_grad():
             eval_dir = output_dir / f"test_{self.epoch}" / benchmark_name
@@ -1098,7 +1100,7 @@ class Trainer:
                     benchmark_name,
                     benchmark_conf,
                     eval_dir,
-                    model.eval(),
+                    model=(None if self.conf.benchmark_checkpoint else model.eval()),
                 )
             # Create symlink to eval_dir at head
             symlink_dir = output_dir / benchmark_name
@@ -1178,8 +1180,9 @@ class Trainer:
         )
         if writer is None:
             writer = self.get_writer(output_dir, full_conf)
-        if self.conf.get("eval_init", False):
+        if self.conf.eval_init:
             self.run_eval(output_dir, dataset, writer, max_iters=self.conf.eval_iters)
+            self.save_checkpoint(output_dir, full_conf)
             self.run_all_benchmarks(output_dir, writer, force=True)
 
         # Start Loop
@@ -1326,6 +1329,7 @@ def init_trainer(
             {
                 "eval": conf.get("eval", {}),
                 "num_samples": num_samples,
+                "checkpoint": str(output_dir.relative_to(settings.TRAINING_PATH)),
             },
             OmegaConf.create(bench_conf),
         )

@@ -57,6 +57,8 @@ class HPatchesPipeline(eval_pipeline.EvalPipeline):
         "line_matches1",
         "line_matching_scores0",
         "line_matching_scores1",
+        "confidence_map0",
+        "confidence_map1",
     )
 
     def _init(self, conf):
@@ -126,12 +128,20 @@ class HPatchesPipeline(eval_pipeline.EvalPipeline):
 
         # summarize results as a dict[str, float]
         # you can also add your custom evaluations here
+        scenes = np.array(results["scenes"])
+        is_viewpoint = np.char.startswith(scenes, "v_")
+        is_illumination = np.char.startswith(scenes, "i_")
         summaries = {}
         for k, v in results.items():
             arr = np.array(v)
-            if not np.issubdtype(np.array(v).dtype, np.number):
+            if not np.issubdtype(arr.dtype, np.number):
                 continue
             summaries[f"m{k}"] = round(np.median(arr), 3)
+            if k.startswith("prec@"):
+                summaries[f"m{k}_viewpoint"] = round(np.median(arr[is_viewpoint]), 3)
+                summaries[f"m{k}_illumination"] = round(
+                    np.median(arr[is_illumination]), 3
+                )
 
         auc_ths = [1, 3, 5]
         best_pose_results, best_th = utils.eval_poses(

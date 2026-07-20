@@ -14,6 +14,22 @@ from tqdm import tqdm
 
 from ..geometry import transforms as gtr
 from . import misc
+from .preprocess import ImagePreprocessor
+
+# `uninterpolate` only uses its arguments (not the instance config), so a
+# single throwaway preprocessor can be reused for any dataset/config.
+_dense_preprocessor = ImagePreprocessor({})
+
+
+def _dense_view(key: str, data: dict):
+    """Return the view dict (`data` or `data[f"view{idx}"]`) that a dense,
+    image-like prediction key belongs to, based on its trailing view-index
+    suffix (0/1), or the top level for single-view data."""
+    if key[-1:] in ("0", "1") and f"view{key[-1]}" in data:
+        return data[f"view{key[-1]}"]
+    if "image" in data:
+        return data
+    return None
 
 
 @torch.no_grad()
@@ -84,6 +100,23 @@ def export_predictions(
             pred = {
                 k: v[0].cpu() for k, v in pred.items() if isinstance(v, torch.Tensor)
             }
+
+            # undo resize/homography/padding/cropping for dense (image-like)
+            # predictions: warp them back to the true original image
+            # resolution, matched to their view by shape.
+            for k, v in pred.items():
+                if v.dim() < 2:
+                    continue
+                view = _dense_view(k, data)
+                if view is None or "image" not in view:
+                    continue
+                if tuple(v.shape[-2:]) != tuple(view["image"].shape[-2:]):
+                    continue
+                orig_wh = view["original_image_size"][0]
+                original_hw = (int(orig_wh[1]), int(orig_wh[0]))
+                pred[k] = _dense_preprocessor.uninterpolate(
+                    v, view["transform"][0], original_hw
+                )
 
             if as_half:
                 pred = {

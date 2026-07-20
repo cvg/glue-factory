@@ -21,7 +21,7 @@ class HomographyMatcher(BaseModel):
     def _init(self, conf):
         # TODO (iago): Is this just boilerplate code?
         if self.conf.use_points:
-            self.required_data_keys += ["keypoints0", "keypoints1"]
+            self.required_data_keys += ["keypoints0", "keypoints1", "view0", "view1"]
         if self.conf.use_lines:
             self.required_data_keys += [
                 "lines0",
@@ -37,6 +37,7 @@ class HomographyMatcher(BaseModel):
                 data["keypoints0"],
                 data["keypoints1"],
                 data["H_0to1"],
+                data,
                 pos_th=self.conf.th_positive,
                 neg_th=self.conf.th_negative,
             )

@@ -136,13 +136,37 @@ class ImagePreprocessor:
         mode: str = "bilinear",
     ) -> dict:
         """Interpolate an image with a given transform to a target size."""
-        if self.conf.resize is None and self.conf.edge_divisible_by is None:
-            assert not self.conf.square_pad
+        if tuple(img.shape[-2:]) == tuple(int(x) for x in target_hw):
             return img
         return kornia.geometry.transform.warp_perspective(
             img[None],
             torch.as_tensor(norm_t_img, device=img.device, dtype=torch.float32)[None],
             dsize=target_hw,
+            mode=mode,
+            align_corners=False,
+        )[0]
+
+    def uninterpolate(
+        self,
+        img: torch.Tensor,
+        norm_t_img: np.ndarray,
+        original_hw: Tuple[int, int],
+        mode: str = "bilinear",
+    ) -> torch.Tensor:
+        """Inverse of `interpolate`: warp a dense prediction living in the
+        preprocessed (resized/homography-warped/padded/cropped) image space
+        back to the original image resolution, undoing every step in one
+        warp via the inverse of the same `transform` used to map points and
+        auxiliary images (e.g. depth) forward.
+        """
+        if tuple(img.shape[-2:]) == tuple(int(x) for x in original_hw):
+            return img
+        t_img_norm = torch.as_tensor(norm_t_img, dtype=torch.float32)
+        norm_t_img_inv = torch.linalg.inv(t_img_norm).to(img.device)
+        return kornia.geometry.transform.warp_perspective(
+            img[None],
+            norm_t_img_inv[None],
+            dsize=original_hw,
             mode=mode,
             align_corners=False,
         )[0]

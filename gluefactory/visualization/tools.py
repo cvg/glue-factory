@@ -262,6 +262,109 @@ class HeatmapPlot:
             x.remove()
 
 
+class ConfidenceMapPlot:
+    """Overlay per-pixel confidence maps on top of the raw images."""
+
+    plot_name = "confidence_maps"
+    required_keys = ["confidence_map0", "confidence_map1"]
+    log_scale = False
+    cmap = "viridis"
+    eps = 1e-6
+
+    def __init__(self, fig, axes, data, preds):
+        import numpy as np
+
+        self.fig = fig
+        self.axes = axes
+        self.sbpars = {
+            k: v
+            for k, v in vars(fig.subplotpars).items()
+            if k in ["left", "right", "top", "bottom"]
+        }
+        add_whitespace_bottom(fig, 0.1)
+
+        self.range_ax = fig.add_axes([0.1, 0.02, 0.3, 0.06])
+        self.slider = Slider(
+            self.range_ax,
+            label="Opacity",
+            valmin=0.0,
+            valmax=1.0,
+            valinit=0.6,
+            valstep=0.05,
+        )
+        self.slider.on_changed(self.update_slider)
+
+        def to_numpy(t):
+            return t.detach().cpu().numpy() if isinstance(t, torch.Tensor) else t
+
+        maps_per_row = [
+            [to_numpy(preds[name][f"confidence_map{k}"])[0, 0] for k in (0, 1)]
+            for name in preds
+        ]
+        if self.log_scale:
+            maps_per_row = [
+                [np.log(np.clip(m, self.eps, None)) for m in row]
+                for row in maps_per_row
+            ]
+
+        # Min/max over all confidence maps to visualize, for a shared color scale.
+        all_vals = np.concatenate([m.flatten() for row in maps_per_row for m in row])
+        self.data_min = float(all_vals.min())
+        self.data_max = float(all_vals.max())
+        self.vmin = self.data_min
+        self.vmax = float(np.percentile(all_vals, 99))
+        self.artists = []
+        self._masks = []
+        for i, maps in enumerate(maps_per_row):
+            self.artists += viz2d.plot_heatmaps(
+                maps,
+                vmin=self.vmin,
+                vmax=self.vmax,
+                cmap=self.cmap,
+                a=self.slider.val,
+                axes=axes[i],
+            )
+            self._masks += [m > self.vmin for m in maps]
+
+        # Second slider, next to Opacity: adjust the upper color-scale bound.
+        self._vmax_ax = fig.add_axes([0.6, 0.02, 0.3, 0.06])
+        self._vmax_slider = Slider(
+            self._vmax_ax,
+            label="Max value",
+            valmin=self.data_min,
+            valmax=self.data_max,
+            valinit=self.vmax,
+        )
+        self._vmax_slider.on_changed(self._update_vmax)
+
+    def _update_vmax(self, val):
+        self.vmax = val
+        for art in self.artists:
+            art.set_clim(self.vmin, self.vmax)
+        self.fig.canvas.draw_idle()
+
+    def update_slider(self, val):
+        for art, mask in zip(self.artists, self._masks):
+            art.set_alpha(mask.astype(float) * val)
+        self.fig.canvas.draw_idle()
+
+    def clear(self):
+        for art in self.artists:
+            art.remove()
+        self._vmax_ax.remove()
+        w, h = self.fig.get_size_inches()
+        self.fig.set_size_inches(w, h / 1.1)
+        self.fig.subplots_adjust(**self.sbpars)
+        self.range_ax.remove()
+
+
+class LogConfidenceMapPlot(ConfidenceMapPlot):
+    """Same as `ConfidenceMapPlot`, but color-maps the log of the confidence."""
+
+    plot_name = "confidence_maps_log"
+    log_scale = True
+
+
 class ImagePlot:
     plot_name = "images"
     required_keys = []

@@ -12,7 +12,9 @@ def check_keys_recursive(d, pattern):
         {check_keys_recursive(d[k], v) for k, v in pattern.items()}
     else:
         for k in pattern:
-            assert k in d.keys()
+            assert (
+                k in d.keys()
+            ), f"Key {k} not found in dictionary. Available keys: {list(d.keys())}"
 
 
 def get_matches_scores(kpts0, kpts1, matches0, mscores0):
@@ -184,6 +186,51 @@ def eval_matches_homography(data: dict, pred: dict) -> dict:
     results["prec@3px"] = (err < 3).float().mean().nan_to_num().item()
     results["num_matches"] = pts0.shape[0]
     results["num_keypoints"] = (kp0.shape[0] + kp1.shape[0]) / 2.0
+    return results
+
+
+def eval_matches_fundamental(data: dict, pred: dict, conf) -> dict:
+    """Epipolar-consistency evaluation for benchmarks with hand-labeled GT
+    correspondences but no camera pose/depth (e.g. HardMatch): a Fundamental
+    matrix is estimated from the predicted matches via RANSAC, then the GT
+    correspondences are checked for consistency with that estimated F.
+    """
+    check_keys_recursive(data, ["gt_pts0", "gt_pts1"])
+    check_keys_recursive(
+        pred, ["keypoints0", "keypoints1", "matches0", "matching_scores0"]
+    )
+
+    kp0, kp1 = pred["keypoints0"], pred["keypoints1"]
+    m0, scores0 = pred["matches0"], pred["matching_scores0"]
+    pts0, pts1, _ = get_matches_scores(kp0, kp1, m0, scores0)
+
+    estimator = robust_estimators.load_estimator(
+        "fundamental_matrix", conf["estimator"]
+    )(conf)
+    est = estimator({"m_kpts0": pts0, "m_kpts1": pts1})
+
+    gt_pts0, gt_pts1 = data["gt_pts0"][0], data["gt_pts1"][0]
+    thresholds = list(range(20))
+    if not est["success"] or gt_pts0.shape[0] == 0:
+        pck = [0.0 for _ in thresholds]
+    else:
+        F = est["M_0to1"].to(gt_pts0)
+        # NB: squared=True then sqrt (not squared=False) to match kornia's
+        # symmetrical_epipolar_distance (used by the original HardMatch
+        # benchmark) — gluefactory's own squared=False path computes a
+        # different quantity (mean of two one-sided distances).
+        sq_errors = epipolar.sym_epipolar_distance(
+            gt_pts0[None], gt_pts1[None], F[None], squared=True, symmetric=True
+        )[0]
+        errors = sq_errors.clamp(min=0).sqrt()
+        pck = [(errors <= th).float().mean().item() for th in thresholds]
+
+    results = {}
+    results["epi_pck"] = pck
+    results["num_matches"] = pts0.shape[0]
+    results["ransac_inl"] = (
+        est["inliers"].float().sum().item() if est["success"] else 0.0
+    )
     return results
 
 

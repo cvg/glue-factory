@@ -118,7 +118,9 @@ class BaseModel(nn.Module, metaclass=MetaModel):
 
         def recursive_key_check(expected, given):
             for key in expected:
-                assert key in given, f"Missing key {key} in data"
+                assert (
+                    key in given
+                ), f"Missing key {key} in data {str(list(given.keys()))}"
                 if isinstance(expected, dict):
                     recursive_key_check(expected[key], given[key])
 

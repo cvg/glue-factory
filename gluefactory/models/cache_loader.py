@@ -8,7 +8,13 @@ from gluefactory.geometry import transforms as gtr
 from .. import settings
 from ..datasets import base_dataset
 from ..utils import misc
+from ..utils.preprocess import ImagePreprocessor
 from .base_model import BaseModel
+
+# `interpolate`/`uninterpolate` only use their arguments (not the instance
+# config), so a single throwaway preprocessor can be reused for any
+# dataset/config.
+_dense_preprocessor = ImagePreprocessor({})
 
 
 def pad_local_features(pred: dict, seq_l: int):
@@ -54,6 +60,17 @@ H5_TYPE_REGISTRY = {
 }
 
 
+def _get_view(key: str, data: dict):
+    """Return the view dict (`data` or `data[f"view{idx}"]`) a per-view
+    prediction key belongs to, based on its trailing view-index suffix
+    (0/1), or the top level for single-view data."""
+    if key[-1:] in ("0", "1") and f"view{key[-1]}" in data:
+        return data[f"view{key[-1]}"]
+    if "image" in data:
+        return data
+    return None
+
+
 def _load_from_type(ds):
     """Load a dataset with a _type attribute as a TensorWrapper."""
     type_name = ds.attrs["_type"]
@@ -91,6 +108,7 @@ class CacheLoader(BaseModel):
         "add_data_path": True,
         "collate": True,
         "scale": ["keypoints", "lines", "orig_lines", "p2d0_i", "p2d1_i"],
+        "dense_scale": None,  # prefixes of dense (image-like) preds; None = auto-detect by shape
         "padding_fn": None,
         "padding_length": None,  # required for batching!
         "numeric_type": "float32",  # [None, "float16", "float32", "float64"]
@@ -148,6 +166,7 @@ class CacheLoader(BaseModel):
                     for k, v in pred.items()
                 }
             pred = misc.batch_to_device(pred, device)
+            scaled_keys = set()
             for k, v in pred.items():
                 for pattern in self.conf.scale:
                     if k.startswith(pattern):
@@ -172,6 +191,30 @@ class CacheLoader(BaseModel):
                             for kk, vv in pred.items():
                                 if vv.shape[0] == valid.shape[0]:
                                     pred[kk] = vv[valid]
+                        scaled_keys.add(k)
+                        break
+
+            # dense (image-like) predictions: warp from the original image
+            # resolution they were exported at into the current run's
+            # preprocessed image space (inverse of the de-padding/resizing
+            # `uninterpolate` performs in export_predictions).
+            for k, v in pred.items():
+                if k in scaled_keys or not isinstance(v, torch.Tensor) or v.dim() < 2:
+                    continue
+                view = _get_view(k, data)
+                if view is None or "image" not in view:
+                    continue
+                if self.conf.dense_scale is not None:
+                    if not any(k.startswith(p) for p in self.conf.dense_scale):
+                        continue
+                else:
+                    orig_wh = view["original_image_size"][i]
+                    if tuple(v.shape[-2:]) != (int(orig_wh[1]), int(orig_wh[0])):
+                        continue
+                target_hw = tuple(view["image"].shape[-2:])
+                pred[k] = _dense_preprocessor.interpolate(
+                    v, view["transform"][i], target_hw
+                )
             # use this function to fix number of keypoints etc.
             if self.padding_fn is not None:
                 pred = self.padding_fn(pred, self.conf.padding_length)

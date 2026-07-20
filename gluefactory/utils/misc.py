@@ -1,4 +1,5 @@
 import functools
+import logging
 import math
 import pprint
 from ast import arg
@@ -12,6 +13,8 @@ import torch.nn.functional as F
 import torchvision.transforms.functional as tvf
 
 from . import tensor, types
+
+logger = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------------
 # Wrappers
@@ -660,10 +663,16 @@ def sample_random_keypoints(n, transform, original_image_size, device=None, bbox
 
 
 def sample_valid_keypoints(mask, n, stride=1, dtype=torch.float32):
-    """Sample n distinct random True positions per batch row of a boolean mask.
+    """Sample n distinct random positions per batch row, preferring True cells.
 
-    Fully vectorized over the batch (no Python loop, no ragged nonzero()),
-    via topk on random keys with invalid positions masked to -1.
+    Fully vectorized over the batch (no Python loop, no ragged nonzero(), no
+    data-dependent branching/sync), via topk on random keys. Valid (True)
+    positions are always ranked above invalid ones, so topk fills entirely
+    from valid positions whenever there are at least n of them. If a batch
+    item has fewer than n valid positions (e.g. a degenerate covisible mask
+    with little/no overlap), the remaining slots are filled with a random
+    (not deterministic-tie-break) sample of invalid positions instead of
+    raising.
 
     Args:
         mask: (B, H, W) bool tensor. True = eligible position, in the mask's
@@ -680,14 +689,11 @@ def sample_valid_keypoints(mask, n, stride=1, dtype=torch.float32):
         (B, n, 2) tensor of (x, y) coordinates in full-resolution pixel space.
     """
     B, H, W = mask.shape
-    valid_counts = mask.sum(dim=(-2, -1))
-    if not torch.all(valid_counts >= n):
-        raise ValueError(
-            f"sample_valid_keypoints: requested n={n} valid positions per "
-            f"batch item, but the sparsest item in this batch has only "
-            f"{int(valid_counts.min())} True entries in the ({H}x{W}) mask."
-        )
-    keys = torch.rand(B, H, W, device=mask.device).masked_fill(~mask, -1.0)
+    base = torch.rand(B, H, W, device=mask.device)
+    # Valid keys live in [1, 2), invalid in [0, 1): valid positions always
+    # outrank invalid ones, but ties among invalid positions still break
+    # randomly (unlike a fixed -1 sentinel) when topk has to spill into them.
+    keys = torch.where(mask, base + 1.0, base)
     flat_idx = keys.flatten(-2).topk(n, dim=-1).indices  # (B, n), distinct
     row, col = flat_idx // W, flat_idx % W
     jitter = torch.rand(B, n, 2, device=mask.device, dtype=dtype) * stride

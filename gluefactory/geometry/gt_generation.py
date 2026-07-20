@@ -4,6 +4,7 @@ from scipy.optimize import linear_sum_assignment
 
 from ..utils import types
 from . import depth, epipolar, homography
+from . import transforms as gtr
 
 
 @torch.no_grad()
@@ -101,12 +102,22 @@ def gt_matches_from_pose_depth(
 
     # Dense warp consistency
     dense_proj_0to1, dense_matchable0, _ = depth.dense_warp_consistency(
-        depth0, depth1, T_0to1, camera0, camera1,
-        ccth=cc_th, max_rel_depth_error=max_rel_depth_error,
+        depth0,
+        depth1,
+        T_0to1,
+        camera0,
+        camera1,
+        ccth=cc_th,
+        max_rel_depth_error=max_rel_depth_error,
     )
     dense_proj_1to0, dense_matchable1, _ = depth.dense_warp_consistency(
-        depth1, depth0, T_1to0, camera1, camera0,
-        ccth=cc_th, max_rel_depth_error=max_rel_depth_error,
+        depth1,
+        depth0,
+        T_1to0,
+        camera1,
+        camera0,
+        ccth=cc_th,
+        max_rel_depth_error=max_rel_depth_error,
     )
 
     pred = {
@@ -189,7 +200,7 @@ def gt_matches_from_pose_depth(
 
 
 @torch.no_grad()
-def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
+def gt_matches_from_homography(kp0, kp1, H, data, pos_th=3, neg_th=6, **kw):
     if kp0.shape[1] == 0 or kp1.shape[1] == 0:
         b_size, n_kp0 = kp0.shape[:2]
         n_kp1 = kp1.shape[1]
@@ -201,6 +212,13 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
         return assignment, m0, m1
     kp0_1 = homography.warp_points_torch(kp0, H, inverse=False)
     kp1_0 = homography.warp_points_torch(kp1, H, inverse=True)
+
+    image_size0 = data["view0"]["image_size"]
+    image_size1 = data["view1"]["image_size"]
+    # visible0: kp0 warped into image1 (kp0_1) falls inside image1
+    visible0 = gtr.is_inside(kp0_1, image_size1.to(kp0_1).unsqueeze(-2))
+    # visible1: kp1 warped into image0 (kp1_0) falls inside image0
+    visible1 = gtr.is_inside(kp1_0, image_size0.to(kp1_0).unsqueeze(-2))
 
     # build a distance matrix of size [... x M x N]
     dist0 = torch.sum((kp0_1.unsqueeze(-2) - kp1.unsqueeze(-3)) ** 2, -1)
@@ -238,6 +256,8 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
         "matching_scores1": (m1 > -1).float(),
         "proj_0to1": kp0_1,
         "proj_1to0": kp1_0,
+        "visible0": visible0,
+        "visible1": visible1,
     }
 
 
