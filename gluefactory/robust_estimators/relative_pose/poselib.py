@@ -27,6 +27,7 @@ class PoseLibRelativePoseEstimator(BaseEstimator):
                 "max_epipolar_error": self.conf.ransac_th,
                 **OmegaConf.to_container(self.conf.options),
             },
+            {},  # bundle_opt: required as of poselib>=2.0.4, no longer optional in all builds
         )
         success = M is not None
         if success:
