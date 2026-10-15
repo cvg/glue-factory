@@ -46,7 +46,7 @@ eval:
 
 The default configurations can be found in the respective evaluation scripts, e.g. [MegaDepth1500](../gluefactory/eval/megadepth1500.py).
 
-To run an evaluation with a custom config, we expect them to be in the following format ([example](../gluefactory/configs/superpoint+lightglue.yaml)):
+To run an evaluation with a custom config, we expect them to be in the following format ([example](../gluefactory/configs/superpoint+lightglue-official.yaml)):
 
 ```yaml
 model:

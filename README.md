@@ -64,7 +64,7 @@ python -m gluefactory.eval.hpatches --conf superpoint+lightglue-official --overw
 Setting `eval.ransac_th=-1` auto-tunes the RANSAC inlier threshold by running the evaluation with a range of thresholds and reports results for the optimal value.
 Here are the results as Area Under the Curve (AUC) of the homography error at  1/3/5 pixels:
 
-| Methods                                                      | DLT         | [OpenCV](../gluefactory/robust_estimators/homography/opencv.py)       | [PoseLib](../gluefactory/robust_estimators/homography/poselib.py)      |
+| Methods                                                      | DLT         | [OpenCV](gluefactory/robust_estimators/homography/opencv.py)       | [PoseLib](gluefactory/robust_estimators/homography/poselib.py)      |
 | ------------------------------------------------------------ | ------------------ | ------------------ | ------------------ |
 | [SuperPoint + SuperGlue](gluefactory/configs/superpoint+superglue-official.yaml) | 32.1 / 65.0 / 75.7 | 32.9 / 55.7 / 68.0 | 37.0 / 68.2 / 78.7 |
 | [SuperPoint + LightGlue](gluefactory/configs/superpoint+lightglue-official.yaml) | 35.1 / 67.2 / 77.6 | 34.2 / 57.9 / 69.9 | 37.1 / 67.4 / 77.8 |
@@ -157,7 +157,7 @@ python -m gluefactory.eval.megadepth1500 --conf gluefactory/configs/superpoint+l
 
 Here are the results as Area Under the Curve (AUC) of the pose error at  5/10/20 degrees:
 
-| Methods                                                      | [pycolmap](../gluefactory/robust_estimators/relative_pose/pycolmap.py)         | [OpenCV](../gluefactory/robust_estimators/relative_pose/opencv.py)       | [PoseLib](../gluefactory/robust_estimators/relative_pose/poselib.py)      |
+| Methods                                                      | [pycolmap](gluefactory/robust_estimators/relative_pose/pycolmap.py)         | [OpenCV](gluefactory/robust_estimators/relative_pose/opencv.py)       | [PoseLib](gluefactory/robust_estimators/relative_pose/poselib.py)      |
 | ------------------------------------------------------------ | ------------------ | ------------------ | ------------------ |
 | [SuperPoint + SuperGlue](gluefactory/configs/superpoint+superglue-official.yaml) | 54.4 / 70.4 / 82.4 | 48.7 / 65.6 / 79.0 | 64.8 / 77.9 / 87.0 |
 | [SuperPoint + LightGlue](gluefactory/configs/superpoint+lightglue-official.yaml) | 56.7 / 72.4 / 83.7 | 51.0 / 68.1 / 80.7 | 66.8 / 79.3 / 87.9 |
@@ -186,12 +186,12 @@ python -m gluefactory.eval.scannet1500 --conf superpoint+lightglue-official \
 
 Here are the results as Area Under the Curve (AUC) of the pose error at  5/10/20 degrees:
 
-| Methods                                                      | [OpenCV](../gluefactory/robust_estimators/relative_pose/opencv.py) | [PoseLib](../gluefactory/robust_estimators/relative_pose/poselib.py) |
+| Methods                                                      | [OpenCV](gluefactory/robust_estimators/relative_pose/opencv.py) | [PoseLib](gluefactory/robust_estimators/relative_pose/poselib.py) |
 | ------------------------------------------------------------ | ------------------ | ------------------ |
-| [SuperPoint + SuperGlue](../gluefactory/configs/superpoint+superglue-official.yaml) | 17.9 / 35.4 / 49.5 | 22.7 / 39.5 / 54.3 |
-| [SuperPoint + LightGlue](../gluefactory/configs/superpoint+lightglue-official.yaml) | 17.8 / 34.0 / 52.0 | 21.9 / 39.8 / 55.7 |
-| [DISK + LightGlue](../gluefactory/configs/disk+lightglue-official.yaml) | 9.0 / 18.1 / 29.2 | 12.1 / 23.1 / 35.0 |
-| [ALIKED + LightGlue](../gluefactory/configs/aliked+lightglue-official.yaml) | 15.4 / 31.2 / 47.5 | 19.6 / 36.5 / 52.8 |
+| [SuperPoint + SuperGlue](gluefactory/configs/superpoint+superglue-official.yaml) | 17.9 / 35.4 / 49.5 | 22.7 / 39.5 / 54.3 |
+| [SuperPoint + LightGlue](gluefactory/configs/superpoint+lightglue-official.yaml) | 17.8 / 34.0 / 52.0 | 21.9 / 39.8 / 55.7 |
+| [DISK + LightGlue](gluefactory/configs/disk+lightglue-official.yaml) | 9.0 / 18.1 / 29.2 | 12.1 / 23.1 / 35.0 |
+| [ALIKED + LightGlue](gluefactory/configs/aliked+lightglue-official.yaml) | 15.4 / 31.2 / 47.5 | 19.6 / 36.5 / 52.8 |
 
 </details>
 
@@ -255,7 +255,8 @@ All training commands automatically download the datasets.
 We show how to train LightGlue with [SuperPoint](https://github.com/magicleap/SuperPointPretrainedNetwork).
 We first pre-train LightGlue on the homography dataset:
 ```bash
-python -m gluefactory.train sp+lg_homography \  # experiment name
+# sp+lg_homography is the experiment name
+python -m gluefactory.train sp+lg_homography \
     --conf gluefactory/configs/superpoint+lightglue_homography.yaml
 ```
 Feel free to use any other experiment name. By default the checkpoints are written to `outputs/training/`. The default batch size of 128 corresponds to the results reported in the paper and requires 2x 3090 GPUs with 24GB of VRAM each as well as PyTorch >= 2.0 (FlashAttention).
